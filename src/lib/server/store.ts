@@ -121,7 +121,12 @@ export class ServerStore {
       .prepare("SELECT MIN(seq) AS minSeq FROM changes")
       .get() as { minSeq: number | null };
     const minRetained = row.minSeq ?? 0;
-    if (afterSeq < minRetained) {
+    // Reset only when compaction has actually deleted rows the client still
+    // needs: client asks for changes > afterSeq, and rows <= droppedBelow
+    // have been purged. A fresh client (afterSeq=0) on an uncompacted log
+    // (droppedBelow=0) still receives all changes.
+    const droppedBelow = this.getDroppedBelow();
+    if (afterSeq < droppedBelow) {
       return { reset: true, changes: [], minRetainedSeq: minRetained };
     }
     const changes = this.db
@@ -133,6 +138,37 @@ export class ServerStore {
   getDurableVersion(roomId: string): Buffer | null {
     const row = this.getRoom(roomId);
     return row?.durableVersion ?? null;
+  }
+
+  /** Compact the change log (SPEC §35): drop rows below `minSeq`. */
+  purgeChangesBelow(minSeq: number): number {
+    const res = this.db
+      .prepare("DELETE FROM changes WHERE seq < ?")
+      .run(minSeq);
+    if (res.changes > 0) {
+      // Track the highest seq boundary we have actually deleted rows below.
+      // A client asking `after` < this needs full rediscovery.
+      const prev = Number(
+        (this.db.prepare("SELECT value FROM meta WHERE key = 'dropped_below'").get() as
+          | { value: string }
+          | undefined)?.value ?? 0,
+      );
+      this.db
+        .prepare(
+          "INSERT INTO meta (key, value) VALUES ('dropped_below', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .run(String(Math.max(prev, minSeq)));
+    }
+    return res.changes;
+  }
+
+  /** Highest change-log seq below which rows have been purged. */
+  getDroppedBelow(): number {
+    return Number(
+      (this.db.prepare("SELECT value FROM meta WHERE key = 'dropped_below'").get() as
+        | { value: string }
+        | undefined)?.value ?? 0,
+    );
   }
 
   listRooms(): {
