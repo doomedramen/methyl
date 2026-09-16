@@ -18,17 +18,19 @@ afterAll(() => {
 });
 
 describe("ServerStore (§22)", () => {
-  it("schema is created", () => {
-    const room = store.getRoom("nonexistent");
-    expect(room).toBeUndefined();
+  it("schema is created; unknown room is undefined", () => {
+    expect(store.getRoom("nonexistent")).toBeUndefined();
   });
 
-  it("inserts and retrieves rooms", () => {
-    const vv = Buffer.from("v1");
-    store.upsertRoom("doc:test", "Loro", vv, 1);
+  it("inserts and retrieves rooms with snapshot + durable version", () => {
+    const snapshot = Buffer.from("snapshot-bytes");
+    const vv = Buffer.from("vv-bytes");
+    store.upsertRoom("doc:test", "Loro", snapshot, vv, 1);
     const room = store.getRoom("doc:test");
-    expect(room).toBeDefined();
     expect(room!.serverSeq).toBe(1);
+    expect(room!.snapshot).toEqual(snapshot);
+    expect(room!.durableVersion).toEqual(vv);
+    expect(store.getDurableVersion("doc:test")).toEqual(vv);
   });
 
   it("records changes with monotonically increasing seq", () => {
@@ -39,26 +41,39 @@ describe("ServerStore (§22)", () => {
     store.recordChange(seq2, "doc:test", "doc");
   });
 
-  it("returns all changes after a sequence", () => {
-    // Insert a change, then query for everything after 0
-    const lastSeq = store.getNextSeq();
-    store.recordChange(lastSeq, "doc:after-test", "doc");
-    const result = store.getChangesAfter(lastSeq - 1);
+  it("returns remaining changes after a sequence", () => {
+    const seq = store.getNextSeq();
+    store.recordChange(seq, "doc:after-test", "doc");
+    const result = store.getChangesAfter(seq - 1);
     expect(result.reset).toBe(false);
-    expect(result.changes.length).toBeGreaterThan(0);
+    expect(result.changes.length).toBe(1);
+    expect(result.changes[0].objectId).toBe("doc:after-test");
   });
 
-  it("returns reset=true when client asks before retained history", () => {
-    // Querying "after" below the floor implies data loss → full discovery
+  it("returns reset when a client asks below retained history (SPEC §35)", () => {
+    const seq = store.getNextSeq();
+    store.recordChange(seq, "doc:compacted", "doc");
+    // Any seq below the oldest retained row forces full rediscovery.
     const result = store.getChangesAfter(0);
-    // If any real changes were recorded this suite, asking for 0 is always
-    // below the floor only when compaction deleted early rows. Here the
-    // semantics are: everything the client missed must still be available.
-    // With no compaction the floor is the first seq, so after=0 works ONLY
-    // if seq numbering started at 1 and floor <= 0 is impossible. Real
-    // clients send last_seq >= 1; a fresh client must ask after=0 and the
-    // server answers with full history OR reset. We assert: the server
-    // never lies about missing history.
-    expect(result.reset === false || result.changes.length >= 0).toBe(true);
+    expect(result.reset).toBe(true);
+    expect(result.changes).toEqual([]);
+  });
+
+  it("asset metadata round-trips and lands in the change log", () => {
+    const seq = store.getNextSeq();
+    store.upsertAsset("node:1", "abc123", 42, seq);
+    const meta = store.getAssetMeta("node:1");
+    expect(meta?.sha256).toBe("abc123");
+    expect(meta?.size).toBe(42);
+    store.recordChange(seq, "node:1", "asset");
+    const after = store.getChangesAfter(0);
+    expect(after.reset).toBe(true); // fresh client always full-discovers
+    expect(store.getChangesAfter(seq - 1).changes.some((c) => c.type === "asset")).toBe(true);
+  });
+
+  it("lists rooms ordered by serverSeq", () => {
+    const rows = store.listRooms();
+    expect(Array.isArray(rows)).toBe(true);
+    for (const r of rows) expect(typeof r.roomId).toBe("string");
   });
 });

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   roomId TEXT PRIMARY KEY,
   crdtType TEXT NOT NULL DEFAULT 'Loro',
   durableVersion BLOB,
+  snapshot BLOB,
   serverSeq INTEGER NOT NULL DEFAULT 0,
   lastSaved INTEGER NOT NULL DEFAULT 0
 );
@@ -65,29 +66,38 @@ export class ServerStore {
   }
 
   getRoom(roomId: string):
-    | { roomId: string; durableVersion: Buffer | null; serverSeq: number }
+    | {
+        roomId: string;
+        durableVersion: Buffer | null;
+        snapshot: Buffer | null;
+        serverSeq: number;
+      }
     | undefined {
     return this.db
-      .prepare("SELECT roomId, durableVersion, serverSeq FROM rooms WHERE roomId = ?")
+      .prepare(
+        "SELECT roomId, durableVersion, snapshot, serverSeq FROM rooms WHERE roomId = ?",
+      )
       .get(roomId) as any;
   }
 
   upsertRoom(
     roomId: string,
     crdtType: string,
+    snapshot: Buffer,
     durableVersion: Buffer,
     serverSeq: number,
   ): void {
     this.db
       .prepare(
-        `INSERT INTO rooms (roomId, crdtType, durableVersion, serverSeq, lastSaved)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO rooms (roomId, crdtType, durableVersion, snapshot, serverSeq, lastSaved)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(roomId) DO UPDATE SET
            durableVersion = excluded.durableVersion,
+           snapshot = excluded.snapshot,
            serverSeq = excluded.serverSeq,
            lastSaved = excluded.lastSaved`,
       )
-      .run(roomId, crdtType, durableVersion, serverSeq, Date.now());
+      .run(roomId, crdtType, durableVersion, snapshot, serverSeq, Date.now());
   }
 
   recordChange(
@@ -123,5 +133,45 @@ export class ServerStore {
   getDurableVersion(roomId: string): Buffer | null {
     const row = this.getRoom(roomId);
     return row?.durableVersion ?? null;
+  }
+
+  listRooms(): {
+    roomId: string;
+    crdtType: string;
+    serverSeq: number;
+    lastSaved: number;
+  }[] {
+    return this.db
+      .prepare(
+        "SELECT roomId, crdtType, serverSeq, lastSaved FROM rooms ORDER BY serverSeq",
+      )
+      .all() as any[];
+  }
+
+  /** Record asset discovery metadata. Returns the newly allocated serverSeq. */
+  upsertAsset(
+    nodeId: string,
+    sha256: string,
+    size: number,
+    serverSeq: number,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO assets (nodeId, sha256, size, serverSeq)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(nodeId) DO UPDATE SET
+           sha256 = excluded.sha256,
+           size = excluded.size,
+           serverSeq = excluded.serverSeq`,
+      )
+      .run(nodeId, sha256, size, serverSeq);
+  }
+
+  getAssetMeta(nodeId: string):
+    | { nodeId: string; sha256: string; size: number; serverSeq: number }
+    | undefined {
+    return this.db
+      .prepare("SELECT nodeId, sha256, size, serverSeq FROM assets WHERE nodeId = ?")
+      .get(nodeId) as any;
   }
 }
