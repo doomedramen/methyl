@@ -56,7 +56,7 @@ export function VaultApp() {
   );
 
   const onPersisted = useCallback(() => {
-    setSaving((s) => (s === "saving" ? "clean" : s));
+    setSaving("clean");
   }, []);
 
   if (error) {

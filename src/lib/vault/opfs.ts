@@ -43,7 +43,11 @@ export class OpfsVaultFS implements VaultFileSystem {
   async fileHandle(path: string, create = true) {
     const parts = splitPath(path);
     const name = parts.pop()!;
-    const dir = await this.dirHandle(parts, create);
+    const dir = await this.dirHandle(parts, create).catch((err) => {
+      if (!create && (err as DOMException).name === "NotFoundError") return null;
+      throw err;
+    });
+    if (!dir) return null;
     try {
       return await dir.getFileHandle(name, { create });
     } catch (err) {

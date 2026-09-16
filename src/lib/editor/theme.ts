@@ -49,18 +49,20 @@ export const amoledMinimal = EditorView.theme({
     border: "none",
     color: "var(--cm-gutter, #a1a1aa)",
   },
-  "&dark": {
-    "&": {
-      color: "#e4e4e7",
-    },
-    ".cm-activeLine": {
-      backgroundColor: "rgba(255,255,255,0.04)",
-    },
-    ".cm-foldPlaceholder": {
-      backgroundColor: "rgba(255,255,255,0.08)",
-    },
-  },
 }, { dark: false });
+
+/** Dark-mode overrides; toggled on the containing element via `.dark`. */
+const amoledDark = EditorView.theme({
+  "&": {
+    color: "#e4e4e7",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  ".cm-foldPlaceholder": {
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+}, { dark: true });
 
 /** Mono stack for code blocks. */
 export const amoledMono = EditorView.theme({
@@ -70,4 +72,4 @@ export const amoledMono = EditorView.theme({
   },
 });
 
-export type { Extension };
+export { amoledDark };

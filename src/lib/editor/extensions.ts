@@ -30,7 +30,7 @@ import {
   redo,
 } from "loro-codemirror";
 import { getContentTextFromDoc, type EditorUser } from "@/lib/editor/sync";
-import { amoledMinimal, amoledMono } from "@/lib/editor/theme";
+import { amoledMinimal, amoledMono, amoledDark } from "@/lib/editor/theme";
 
 /** Undo/redo through Loro's UndoManager (not CodeMirror's native history). */
 const loroUndoKeymap: KeyBinding[] = [
@@ -59,6 +59,7 @@ const { doc, ephemeral, user, undoManager } = opts;
     indentOnInput(),
     bracketMatching(),
     amoledMinimal,
+    amoledDark,
     amoledMono,
     syntaxHighlighting(defaultHighlightStyle),
     keymap.of([
