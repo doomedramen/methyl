@@ -7,7 +7,7 @@
 export async function acquireVaultWriterLock(
   vaultId: string,
   options?: { signal?: AbortSignal },
-): Promise<VaultLock | null> {
+): Promise<VaultLock> {
   if (typeof navigator === "undefined" || !("locks" in navigator)) {
     // Web Locks unsupported (should not happen on modern targets)
     return createLock(null);
@@ -22,7 +22,7 @@ export async function acquireVaultWriterLock(
 
 export async function acquireVaultReadLock(
   vaultId: string,
-): Promise<VaultLock | null> {
+): Promise<VaultLock> {
   if (typeof navigator === "undefined" || !("locks" in navigator)) {
     return createLock(null);
   }

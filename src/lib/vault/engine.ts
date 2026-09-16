@@ -29,25 +29,29 @@ export class VaultEngine {
   readonly tree: VaultTree;
   readonly treeStore: VaultTreeStore;
   readonly docStore: PersistedDocStore;
+  readonly vaultId: string;
   private documents = new Map<string, Document>();
 
   private constructor(
     tree: VaultTree,
     treeStore: VaultTreeStore,
     docStore: PersistedDocStore,
+    vaultId: string,
   ) {
     this.tree = tree;
     this.treeStore = treeStore;
     this.docStore = docStore;
+    this.vaultId = vaultId;
   }
 
   /** Create a fresh vault (P0.1 path). */
   static async create(
     treeStore: VaultTreeStore,
     docStore: PersistedDocStore,
+    vaultId = "local",
   ): Promise<VaultEngine> {
     const tree = VaultTree.create();
-    const engine = new VaultEngine(tree, treeStore, docStore);
+    const engine = new VaultEngine(tree, treeStore, docStore, vaultId);
     await engine.persistTree();
     return engine;
   }
@@ -63,6 +67,7 @@ export class VaultEngine {
   static async open(
     treeStore: VaultTreeStore,
     docStore: PersistedDocStore,
+    vaultId = "local",
   ): Promise<{ engine: VaultEngine; recovery: VaultRecoveryReport }> {
     // 1. Load vault-tree CRDT: snapshot + replay updates
     const treeSnap = await treeStore.loadSnapshot();
@@ -75,7 +80,7 @@ export class VaultEngine {
     }
     tree.doc.commit();
 
-    const engine = new VaultEngine(tree, treeStore, docStore);
+    const engine = new VaultEngine(tree, treeStore, docStore, vaultId);
 
     // 2. Active document IDs from tree (source of truth)
     const activeIds = tree.documentIds();
