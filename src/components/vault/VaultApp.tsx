@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { parseMarkdown } from "@/lib/core/markdown";
 import { stripIdComment } from "@/lib/core/doc-id";
 import { NoteEditor } from "@/components/editor/NoteEditor";
+import { PwaStatus } from "@/components/pwa/PwaStatus";
 import type { VaultEngine } from "@/lib/vault/engine";
 
 interface NoteRow {
@@ -95,10 +96,18 @@ export function VaultApp() {
             <li className="px-4 py-2 text-xs text-zinc-400">no notes yet</li>
           )}
         </ul>
-        <footer className="border-t border-zinc-200 px-4 py-2 text-xs text-zinc-400">
-          {saving === "dirty" && "edits pending…"}
-          {saving === "saving" && "waiting for lock…"}
-          {saving === "clean" && "saved"}
+        <footer className="flex items-center justify-between border-t border-zinc-200 px-4 py-2 text-xs text-zinc-400">
+          <span className="flex items-center gap-1.5">
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ${
+                saving === "clean" ? "bg-emerald-400" : "bg-amber-400"
+              }`}
+            />
+            {saving === "dirty" && "edits pending…"}
+            {saving === "saving" && "waiting for lock…"}
+            {saving === "clean" && "saved"}
+          </span>
+          <PwaStatus />
         </footer>
       </aside>
 
