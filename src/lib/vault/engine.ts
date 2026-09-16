@@ -30,6 +30,8 @@ export class VaultEngine {
   readonly treeStore: VaultTreeStore;
   readonly docStore: PersistedDocStore;
   readonly vaultId: string;
+  /** Optional writer-lock release, wired by the browser host (§12). */
+  releaseWriterLock?: () => void;
   private documents = new Map<string, Document>();
 
   private constructor(

@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -127,4 +126,24 @@
   html {
     @apply font-sans;
   }
+}
+
+/* Remote presence cursors (shipped via Loro ephemeral, rendered by the
+   editor's cursor layer once networked content arrives — §23). */
+.cm-adhd-you {
+  --cm-presence: oklch(0.65 0.2 265);
+}
+.cm-remote-cursor {
+  position: relative;
+}
+.cm-remote-cursor .cm-remote-cursor-flag {
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  padding: 0 4px;
+  border-radius: 4px 4px 4px 0;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: #fff;
 }
