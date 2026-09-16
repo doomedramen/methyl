@@ -1,0 +1,63 @@
+export const INVALID_WINDOWS_NAMES = new Set([
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+]);
+
+export function normalizeName(name: string): string {
+  return name.normalize("NFC");
+}
+
+export function sanitizeName(name: string): string | null {
+  if (name.length === 0) return null;
+  if (name.includes("/") || name.includes("\\")) return null;
+  if (/[\u0000-\u001f\u007f]/.test(name)) return null;
+  if (/[<>:"|?*]/.test(name)) return null;
+  if (/^[.\s]+$/.test(name)) return null;
+  if (INVALID_WINDOWS_NAMES.has(name.replace(/^\.+/, "").split(".")[0]!.toUpperCase()))
+    return null;
+  const stripped = normalizeName(name.replace(/[ .]+$/g, ""));
+  if (stripped.length === 0) return null;
+  if (/^\.+\.?$/.test(stripped)) return null;
+  return stripped;
+}
+
+export function uniqueName(
+  name: string,
+  taken: (n: string) => boolean,
+  existing?: string,
+): string {
+  if (!taken(name)) return name;
+  const extIdx = name.lastIndexOf(".");
+  const ext = extIdx > 0 ? name.slice(extIdx) : "";
+  const stem = extIdx > 0 ? name.slice(0, extIdx) : name;
+  let counter = 2;
+  while (true) {
+    const candidate = `${stem} (${counter})${ext}`;
+    if (!taken(candidate)) return candidate;
+    counter++;
+  }
+}
+
+export function normalizePath(path: string): string {
+  return path.split("/").filter((s) => s.length > 0).join("/");
+}
