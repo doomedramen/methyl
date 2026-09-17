@@ -10,7 +10,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci
+# Cache mount keeps the npm download cache between CI runs (buildx gha
+# cache), so a rebuild re-links rather than re-downloads the tree.
+RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci
 
 FROM deps AS build
 WORKDIR /app
@@ -31,10 +33,10 @@ WORKDIR /server
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json scripts/generate-server-manifest.mjs ./
-RUN node generate-server-manifest.mjs package.json \
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    node generate-server-manifest.mjs package.json \
     && rm generate-server-manifest.mjs package-lock.json \
-    && npm install --omit=dev --no-audit --no-fund \
-    && rm -rf /root/.npm
+    && npm install --omit=dev --no-audit --no-fund
 
 FROM node:24-bookworm-slim AS runtime
 LABEL org.opencontainers.image.title="Methyl" \
