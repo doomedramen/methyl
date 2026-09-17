@@ -195,29 +195,74 @@ Each Markdown document therefore receives a UUIDv7.
 
 I would **not** clutter normal frontmatter with an application-specific property.
 
-Instead ADHD places one invisible Markdown HTML comment near the start of the document:
+`.md` files stay 100% clean: no ADHD-specific marker of any kind, ever — not
+in frontmatter, not as an HTML comment, not in the editor's LoroText, not on
+disk. A vault file must be indistinguishable from one nobody's app has ever
+touched, so it stays usable in any other Markdown tool, unmodified by
+ADHD merely opening it.
 
-```md
----
-tags:
-  - home
-status: active
----
+Identity instead lives in two places, neither of them the file content:
 
-<!-- adhd:id=0199a2ea-... -->
-
-# Sort Garage
+```text
+inside the app     → the vault-tree CRDT (LoroTree node → documentId)
+outside the app     → a hidden sidecar index, .adhd/index.json
+(disk reconciliation)
 ```
 
-If there is no frontmatter:
+The vault tree (§6) is authoritative while ADHD is running: every tree node
+already carries a stable `documentId`, so renames and moves performed
+through the app never touch identity at all.
 
-```md
-<!-- adhd:id=0199a2ea-... -->
+The sidecar index exists for the case the tree can't cover: reconciling
+changes made *outside* ADHD (a disk watcher, a server rescan, crash
+recovery). It's a flat map, written to `.adhd/index.json` next to the
+existing `.adhd/crdt/` layout (§10):
 
-# Sort Garage
+```ts
+// .adhd/index.json
+type DocIndex = Record<
+  string, // relative path
+  {
+    id: string; // UUIDv7
+    contentHash: string; // sha256 of the clean file content
+    size: number;
+    mtime: number;
+  }
+>;
 ```
 
-HTML comments render invisibly in ordinary Markdown applications but survive copying, Git, VS Code and Obsidian.
+Reconciling a filesystem snapshot against the previous index follows these
+rules:
+
+```text
+path known (still in the index)                → same id; ordinary edit
+unknown path, hash matches a path that's        → move; id preserved
+  now MISSING from the snapshot
+unknown path, hash matches a path that's        → copy; fresh id
+  STILL PRESENT in the snapshot
+unknown path, no hash match, no legacy marker   → new document; fresh id
+indexed path missing, not claimed by a move     → deletion
+```
+
+Implemented by `reconcileVault()` in `src/lib/core/doc-index.ts`.
+
+**Migration.** Vaults created before the sidecar index exist still contain
+the old `<!-- adhd:id=... -->` comment. On first read of such a file, ADHD:
+
+```text
+1. recovers the id from the comment
+2. strips the comment from the content
+3. rewrites the file on disk, now clean
+4. records path → id in the sidecar index
+5. if the id is already loaded into a LoroText, the same strip happens
+   there too, as a normal one-time edit — the editor never shows the
+   comment again
+```
+
+If two legacy files claim the same id (a `cp` made before the sidecar index
+existed), the first one read keeps it; the second is treated as an
+unmatched new file and gets a fresh id, exactly like the ordinary
+external-copy case above.
 
 Semantic user metadata remains normal frontmatter:
 
@@ -314,8 +359,6 @@ For example:
 tags: [project]
 status: active
 ---
-
-<!-- adhd:id=0199... -->
 
 # Architecture
 
@@ -1119,7 +1162,7 @@ This is substantially safer than implementing our own LCS-based conflict system.
 
 # 25. External renames and moves
 
-Because Markdown contains its stable ADHD ID:
+Because the sidecar index (§5) tracks stable ids by content hash, not path:
 
 ```text
 Notes/Garage.md
@@ -1132,11 +1175,12 @@ Projects/Home/Garage Plan.md
 is discoverable as:
 
 ```text
-same document
+same document (hash matches a path now missing from the index)
 different path
 ```
 
-The server updates the matching LoroTree node.
+The server updates the matching LoroTree node — the `.md` file itself is
+never rewritten to carry identity.
 
 For an atomic editor rename that appears as:
 
@@ -1147,10 +1191,11 @@ add new path
 
 hold deletion events briefly.
 
-If an added Markdown document has the same ID:
+If an added Markdown document's content hash matches a path that just
+disappeared:
 
 ```text
-treat as move/rename
+treat as move/rename, keep the indexed id
 ```
 
 rather than:
@@ -1169,22 +1214,20 @@ If somebody does:
 cp Garage.md Garage-copy.md
 ```
 
-both files temporarily contain the same ADHD ID.
+both files have identical content, and neither carries any ADHD marker —
+identity lives in the sidecar index (§5), not in the file.
 
-The reconciliation engine detects:
+`reconcileVault()` detects this from content hashes alone:
 
 ```text
-same ID
-two physical files
+new path's hash matches a path still present in the index
+    ↓
+copy, not move
 ```
 
-One keeps the original ID.
-
-The copy receives a fresh UUIDv7 and is rewritten with:
-
-```html
-<!-- adhd:id=<new-id> -->
-```
+The original path keeps its indexed id unchanged. The copy is assigned a
+fresh UUIDv7 and recorded in the index under its own path — the `.md` file
+itself is never touched or rewritten to hold an id.
 
 No user intervention is required.
 

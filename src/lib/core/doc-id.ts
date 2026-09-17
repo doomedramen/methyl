@@ -17,8 +17,17 @@ export function newDocumentId(): string {
     .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
 }
 
-export const ADHD_ID_COMMENT_RE = /<!--\s*adhd:id=([0-9a-fA-F-]+)\s*-->/;
+/**
+ * LEGACY (migration-only). ADHD used to stamp `<!-- adhd:id=... -->` into
+ * every Markdown file. Document identity now lives in the sidecar doc index
+ * (`@/lib/core/doc-index`) and the vault tree — never inside file content.
+ * These helpers exist only to recognise and strip the old comment when
+ * reading a file that predates the sidecar index, so `.md` files stay
+ * 100% clean (in the editor and on disk) going forward.
+ */
+export const ADHD_ID_COMMENT_RE = /<!--\s*adhd:id=([0-9a-fA-F-]+)\s*-->\n*/;
 
+/** @deprecated Legacy-only; do not call for new content. See doc-index.ts. */
 export function insertIdComment(markdown: string, id: string): string {
   const comment = `<!-- adhd:id=${id} -->`;
   const fm = /^---\n[\s\S]*?\n---\n?/.exec(markdown);

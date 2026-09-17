@@ -17,7 +17,6 @@ describe("P0.1: offline phone edit + desktop edit → merge", () => {
       `---
 tags: [test]
 ---
-<!-- adhd:id=11111111-1111-1111-1111-111111111111 -->
 
 # Base note
 
@@ -76,7 +75,6 @@ describe("P0.2: phone edit + external VS Code edit → merge", () => {
     const baseMd = `---
 tags: [test]
 ---
-<!-- adhd:id=22222222-2222-2222-2222-222222222222 -->
 
 # Garage
 
@@ -110,7 +108,6 @@ Original content`;
     const externalMd = `---
 tags: [test]
 ---
-<!-- adhd:id=22222222-2222-2222-2222-222222222222 -->
 
 # Garage
 
@@ -153,7 +150,7 @@ describe("P0.3: external rename + phone text edit", () => {
     const notesId = tree.addDirectory(undefined, "Notes");
     const nodeId = tree.addMarkdownDocument(notesId, "Garage.md", docId);
 
-    const doc = Document.fromMarkdown(docId, `<!-- adhd:id=${docId} -->\n\n# Garage\n\nOriginal`);
+    const doc = Document.fromMarkdown(docId, `# Garage\n\nOriginal`);
 
     // Phone edits the text
     const phoneTree = tree.fork();
@@ -333,22 +330,31 @@ Original`,
 // ── P0.8: duplicate note caused by cp ──────────────────────────────
 
 describe("P0.8: duplicate note from cp", () => {
-  it("same ADHD ID in two files → copy gets fresh ID", () => {
-    const id = "99999999-9999-9999-9999-999999999999";
-    const originalMd = `<!-- adhd:id=${id} -->\n\n# Report\n\nOriginal`;
-    const copyMd = `<!-- adhd:id=${id} -->\n\n# Report\n\nOriginal copy`;
-
-    // Detect duplicate
-    const id1 = extractIdFromMarkdown(originalMd);
-    const id2 = extractIdFromMarkdown(copyMd);
-    expect(id1).toBe(id2);
-
-    // Copy must receive a fresh ID
-    const newId = crypto.randomUUID();
-    const fixedCopy = insertIdComment(copyMd.replace(/<!-- adhd:id=[^>]+ -->/, ""), newId);
-    expect(extractIdFromMarkdown(fixedCopy)).toBe(newId);
-    expect(extractIdFromMarkdown(fixedCopy)).not.toBe(id1);
-    expect(extractIdFromMarkdown(originalMd)).toBe(id1);
+  it("same content in two files (a physical `cp`) → copy gets a fresh ID via the sidecar index", async () => {
+    // Superseded by the sidecar doc index (SPEC §5, §26): identity is never
+    // stored in file content. See reconcileVault's "copy" case in
+    // src/lib/core/__tests__/doc-index.test.ts for the full behaviour.
+    const { reconcileVault } = await import("@/lib/core/doc-index");
+    const { sha256Text } = await import("@/lib/core/hash");
+    const content = "# Report\n\nOriginal";
+    const result = await reconcileVault(
+      {
+        "Report.md": {
+          id: "orig-id",
+          contentHash: await sha256Text(content),
+          size: 0,
+          mtime: 0,
+        },
+      },
+      [
+        { path: "Report.md", content },
+        { path: "Report-copy.md", content },
+      ],
+      () => "copy-id",
+    );
+    const copy = result.resolved.find((r) => r.path === "Report-copy.md")!;
+    expect(copy.id).toBe("copy-id");
+    expect(copy.id).not.toBe("orig-id");
   });
 });
 
@@ -479,21 +485,40 @@ tags: [test]
 // ── Document ID tests (§5) ──────────────────────────────────────────
 
 describe("Document identity (§5)", () => {
-  it("adhd:id comment survives normal Markdown usage", () => {
+  it("new documents never get an id comment — content stays 100% clean", () => {
     const id = "11111111-1111-1111-1111-111111111111";
-    const md = insertIdComment("---\ntags: [x]\n---\n\n# Title\n", id);
-    expect(extractIdFromMarkdown(md)).toBe(id);
-    expect(md).toContain("<!-- adhd:id=11111111-1111-1111-1111-111111111111 -->");
+    const doc = Document.fromMarkdown(id, "---\ntags: [x]\n---\n\n# Title\n");
+    expect(doc.getMarkdown()).not.toContain("adhd:id");
   });
 
-  it("document identity is independent of pathname", () => {
+  it("a legacy adhd:id comment in incoming content is stripped on load (migration)", () => {
+    const legacyId = "11111111-1111-1111-1111-111111111111";
+    const raw = insertIdComment("---\ntags: [x]\n---\n\n# Title\n", legacyId);
+    expect(Document.extractLegacyId(raw)).toBe(legacyId);
+    const doc = Document.fromMarkdown(legacyId, raw);
+    expect(doc.getMarkdown()).not.toContain("adhd:id");
+  });
+
+  it("document identity is independent of pathname — the Document keeps its id across a rename/move", () => {
+    // Identity is tracked by the vault tree / sidecar index (path is just a
+    // presentation detail), not derived from content, so parseMarkdown's
+    // `id` field is a last-resort fallback (the file's own path) and is
+    // expected to change when the path changes even though the Document's
+    // real id does not.
     const doc = Document.fromMarkdown(
       "aaaa-aaaa-aaaa-aaaa-aaaa-aaaa",
       "## Note\nContent",
     );
+    expect(doc.id).toBe("aaaa-aaaa-aaaa-aaaa-aaaa-aaaa");
+
     const md = doc.getMarkdown();
-    const parsed = parseMarkdown(md, "any/path/at/all.md");
-    expect(parsed.id).toBe("aaaa-aaaa-aaaa-aaaa-aaaa-aaaa");
+    const parsedBefore = parseMarkdown(md, "Notes/original-name.md");
+    const parsedAfter = parseMarkdown(md, "Projects/renamed.md");
+    expect(parsedBefore.id).toBe("Notes/original-name.md");
+    expect(parsedAfter.id).toBe("Projects/renamed.md");
+    // Despite parseMarkdown's fallback differing, the Document's real id —
+    // what the tree/index actually track — is unchanged.
+    expect(doc.id).toBe("aaaa-aaaa-aaaa-aaaa-aaaa-aaaa");
   });
 });
 

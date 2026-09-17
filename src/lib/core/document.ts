@@ -1,7 +1,8 @@
 import { LoroDoc, LoroText, type OpId } from "loro-crdt";
 import {
+  ADHD_ID_COMMENT_RE,
   extractIdFromMarkdown,
-  insertIdComment,
+  stripIdComment,
 } from "@/lib/core/doc-id";
 
 export const CONTENT_KEY = "content";
@@ -16,9 +17,16 @@ export class Document {
     this.doc.setPeerId(randomPeerId());
   }
 
+  /**
+   * Build a Document from Markdown content. Content is always stored clean —
+   * no `<!-- adhd:id=... -->` comment. If `markdown` still carries the
+   * legacy comment (pre-sidecar-index files), it is stripped here as a
+   * one-time migration; callers that care about the legacy id should read
+   * it via `Document.extractLegacyId` beforehand.
+   */
   static fromMarkdown(id: string, markdown: string): Document {
     const doc = new Document(id);
-    doc.setText(withIdIfMissing(markdown, id));
+    doc.setText(stripIdComment(markdown));
     return doc;
   }
 
@@ -28,7 +36,8 @@ export class Document {
     return new Document(id, doc);
   }
 
-  static extractId(markdown: string): string | null {
+  /** LEGACY (migration-only): read the old in-content id comment, if any. */
+  static extractLegacyId(markdown: string): string | null {
     return extractIdFromMarkdown(markdown);
   }
 
@@ -79,12 +88,29 @@ export class Document {
   forkAt(frontiers: OpId[]): LoroDoc {
     return this.doc.forkAt(frontiers);
   }
-}
 
-function withIdIfMissing(markdown: string, id: string): string {
-  return extractIdFromMarkdown(markdown)
-    ? markdown
-    : insertIdComment(markdown, id);
+  /**
+   * One-time migration for vaults that predate the sidecar doc index:
+   * older LoroText content may still carry the legacy
+   * `<!-- adhd:id=... -->` comment (e.g. the seeded "Welcome" note in an
+   * existing OPFS vault). Deletes it as a normal CRDT text edit — so the
+   * removal is a real op that syncs and persists like any other change,
+   * not a silent rewrite — leaving the LoroText (and therefore every
+   * future materialised `.md`) clean. Idempotent: a no-op (returns false)
+   * once the comment is gone. Callers should treat a `true` result as
+   * "this document needs re-materialising" (its hash no longer matches
+   * the on-disk `.md`, so the normal isStale()/repairDocument() path
+   * picks it up).
+   */
+  migrateLegacyIdComment(): boolean {
+    const text = this.getText();
+    const current = text.toString();
+    const match = ADHD_ID_COMMENT_RE.exec(current);
+    if (!match) return false;
+    text.delete(match.index!, match[0].length);
+    this.doc.commit();
+    return true;
+  }
 }
 
 function randomPeerId(): bigint {
