@@ -23,7 +23,7 @@ RUN npm run build && npm run build:server
 # build:server (native/wasm modules that can't be bundled), pinned to the
 # exact versions in package-lock.json, installed on their own so the
 # runtime image doesn't carry the rest of the app's dependency tree.
-# Prebuilt binaries cover linux/amd64 and linux/arm64 glibc, so no compiler
+# Prebuilt binaries cover linux/amd64 glibc, so no compiler
 # toolchain is needed here.
 FROM node:24-bookworm-slim AS server-deps
 WORKDIR /server
