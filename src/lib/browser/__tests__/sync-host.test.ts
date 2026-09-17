@@ -126,7 +126,7 @@ describe("SyncHost client driver", () => {
     const found = engine2.tree.documentIds();
     expect(found).toContain(doc.id);
     expect(engine2.getDocument(doc.id)?.getText("content").toString()).toBe(
-      "Shared content",
+      "---\ntitle: Shared\n---\n\nShared content\n",
     );
     host2.disconnect();
   });

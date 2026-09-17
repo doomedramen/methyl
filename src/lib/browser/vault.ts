@@ -48,6 +48,7 @@ export async function getVault(): Promise<VaultEngine> {
     }
     engine.releaseWriterLock = () => lock.release();
     singleton = engine;
+    watchVisibilityForExternalChanges(engine);
     return engine;
   })();
 
@@ -56,6 +57,33 @@ export async function getVault(): Promise<VaultEngine> {
   } finally {
     booting = null;
   }
+}
+
+/**
+ * OPFS has no external writers other than another tab of this same app, so
+ * there's no watcher to wire up (unlike the Node server — see
+ * sync-server.ts). The one useful moment to re-check is when this tab comes
+ * back into the foreground, in case a *different* tab wrote to the vault
+ * while this one was backgrounded (e.g. it took over the writer lock and
+ * has since released it back). Deliberately light: only the cheap ingest
+ * pass, not the full stale/orphan sweep, and only for the tab that
+ * currently holds the writer lock — guarded against overlap with itself.
+ */
+let ingestingOnVisibility = false;
+function watchVisibilityForExternalChanges(engine: VaultEngine): void {
+  if (typeof document === "undefined") return;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (!engine.releaseWriterLock) return; // read-only tab: nothing to ingest into
+    if (ingestingOnVisibility) return;
+    ingestingOnVisibility = true;
+    engine
+      .ingestExternalChanges()
+      .catch((err) => console.error("[vault] visibility ingest failed", err))
+      .finally(() => {
+        ingestingOnVisibility = false;
+      });
+  });
 }
 
 /**

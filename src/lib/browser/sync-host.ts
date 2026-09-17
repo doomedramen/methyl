@@ -75,8 +75,13 @@ export class SyncHost {
       getRoomDoc: async (roomId: string) => {
         if (!roomId.startsWith("doc:")) return null;
         const docId = roomId.slice(4);
-        const doc = engine.getDocument(docId);
-        return doc ? doc.doc : null;
+        // A document discovered purely via tree sync (its node arrived,
+        // but its own doc room hasn't synced yet) has no local Document
+        // instance. ensureDocument() creates the empty landing spot so
+        // the incoming room content has somewhere to import into, rather
+        // than getRoomDoc returning null and the sync silently dropping
+        // that document's content.
+        return engine.ensureDocument(docId).doc;
       },
       getBinaryData: async (nodeId: string) =>
         (await this.fs.readFile(assetPath(nodeId))) ?? null,

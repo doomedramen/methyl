@@ -27,17 +27,29 @@ export function normalizeName(name: string): string {
   return name.normalize("NFC");
 }
 
+/**
+ * Reserved: ADHD's own metadata directory (.adhd/crdt/, the sidecar doc
+ * index, sync journal, ...). A user-visible tree node with this exact name
+ * would materialise into (and, on rename/delete, remove from) the same
+ * on-disk path as real CRDT storage -- sanitizeName previously let ".adhd"
+ * through, since it doesn't match the "all dots/whitespace" rejection (it
+ * has letters after the leading dot). Rejected case-insensitively.
+ */
+const RESERVED_NAMES = new Set([".adhd"]);
+
 export function sanitizeName(name: string): string | null {
   if (name.length === 0) return null;
   if (name.includes("/") || name.includes("\\")) return null;
   if (/[\u0000-\u001f\u007f]/.test(name)) return null;
   if (/[<>:"|?*]/.test(name)) return null;
   if (/^[.\s]+$/.test(name)) return null;
+  if (RESERVED_NAMES.has(name.toLowerCase())) return null;
   if (INVALID_WINDOWS_NAMES.has(name.replace(/^\.+/, "").split(".")[0]!.toUpperCase()))
     return null;
   const stripped = normalizeName(name.replace(/[ .]+$/g, ""));
   if (stripped.length === 0) return null;
   if (/^\.+\.?$/.test(stripped)) return null;
+  if (RESERVED_NAMES.has(stripped.toLowerCase())) return null;
   return stripped;
 }
 

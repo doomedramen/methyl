@@ -23,6 +23,36 @@ const ROOT_KEY = "adhd-vault";
  */
 export class OpfsVaultFS implements VaultFileSystem {
   private root: FileSystemDirectoryHandle | null = null;
+  /**
+   * Per-path write serialization. OPFS's `createWritable()` truncates on
+   * open; two concurrent writers to the *same* path (e.g. an unawaited
+   * create-time persist racing a later edit's flush — the app currently
+   * has no real cross-call mutual exclusion, see web-locks.ts) can
+   * interleave open/write/close in either order, so whichever completes
+   * last wins regardless of which one is logically newer — a silent lost
+   * write. It also matches the reported Chrome `UnknownError` ("operation
+   * failed for an unknown transient reason"), which OPFS raises for
+   * exactly this kind of racing access-handle contention on one file.
+   * Queuing every write/delete for a path onto the same promise chain
+   * makes them run strictly one at a time, in call order.
+   */
+  private writeQueues = new Map<string, Promise<void>>();
+
+  private serialize<T>(path: string, fn: () => Promise<T>): Promise<T> {
+    const key = normalizePath(path);
+    const prior = this.writeQueues.get(key) ?? Promise.resolve();
+    const run = prior.then(fn, fn);
+    // Keep the queue alive on failure too, but don't let a rejection stick
+    // around forever holding up later writes to the same path.
+    this.writeQueues.set(
+      key,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
+  }
 
   async ensureRoot(): Promise<FileSystemDirectoryHandle> {
     if (this.root) return this.root;
@@ -79,18 +109,20 @@ export class OpfsVaultFS implements VaultFileSystem {
   }
 
   async writeFile(path: string, data: Uint8Array, opts?: { atomic?: boolean }): Promise<void> {
-    const handle = await this.fileHandle(path, true);
-    if (!handle) throw new Error("unreachable");
-    const writable = await handle.createWritable();
-    await writable.write(data as unknown as FileSystemWriteChunkType);
-    await writable.close();
-    if (opts?.atomic !== false) {
-      try {
-        await (handle as any).flush?.();
-      } catch {
-        // flush not available on this platform; close() already persisted
+    return this.serialize(path, async () => {
+      const handle = await this.fileHandle(path, true);
+      if (!handle) throw new Error("unreachable");
+      const writable = await handle.createWritable();
+      await writable.write(data as unknown as FileSystemWriteChunkType);
+      await writable.close();
+      if (opts?.atomic !== false) {
+        try {
+          await (handle as any).flush?.();
+        } catch {
+          // flush not available on this platform; close() already persisted
+        }
       }
-    }
+    });
   }
 
   async readFile(path: string): Promise<Uint8Array | null> {
@@ -110,16 +142,18 @@ export class OpfsVaultFS implements VaultFileSystem {
   }
 
   async delete(path: string): Promise<void> {
-    const parts = splitPath(path);
-    const name = parts.pop()!;
-    const dir = await this.dirHandle(parts, false).catch(() => null);
-    if (dir) {
-      try {
-        await dir.removeEntry(name, { recursive: true });
-      } catch {
-        // already gone
+    return this.serialize(path, async () => {
+      const parts = splitPath(path);
+      const name = parts.pop()!;
+      const dir = await this.dirHandle(parts, false).catch(() => null);
+      if (dir) {
+        try {
+          await dir.removeEntry(name, { recursive: true });
+        } catch {
+          // already gone
+        }
       }
-    }
+    });
   }
 
   async exists(path: string): Promise<boolean> {
@@ -133,19 +167,21 @@ export class OpfsVaultFS implements VaultFileSystem {
 
   /** Atomically replace an existing file via tmp + rename. */
   async writeTextAtomic(path: string, text: string): Promise<void> {
-    const parts = splitPath(path);
-    const name = parts.pop()!;
-    const dir = await this.dirHandle(parts, true);
-    try {
-      await dir.getFileHandle(name, { create: false });
-    } catch {
-      await dir.getFileHandle(name, { create: true });
-    }
-    const handle = await dir.getFileHandle(name, { create: true });
-    if (!handle) return;
-    const writable = await handle.createWritable();
-    await writable.write(new TextEncoder().encode(text));
-    await writable.close();
+    return this.serialize(path, async () => {
+      const parts = splitPath(path);
+      const name = parts.pop()!;
+      const dir = await this.dirHandle(parts, true);
+      try {
+        await dir.getFileHandle(name, { create: false });
+      } catch {
+        await dir.getFileHandle(name, { create: true });
+      }
+      const handle = await dir.getFileHandle(name, { create: true });
+      if (!handle) return;
+      const writable = await handle.createWritable();
+      await writable.write(new TextEncoder().encode(text));
+      await writable.close();
+    });
   }
 
   async flushAll(): Promise<void> {

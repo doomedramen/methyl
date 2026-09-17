@@ -244,7 +244,32 @@ unknown path, no hash match, no legacy marker   → new document; fresh id
 indexed path missing, not claimed by a move     → deletion
 ```
 
-Implemented by `reconcileVault()` in `src/lib/core/doc-index.ts`.
+Implemented by `reconcileVault()` in `src/lib/core/doc-index.ts`, wired into
+the engine by `VaultEngine.ingestExternalChanges()`
+(`src/lib/vault/engine.ts`): it scans materialised `.md` files, reconciles
+them against the index, and applies the result — a changed known file is
+three-way merged into the LoroText (`mergeExternalEdit`, §24), a move
+updates the tree (creating folders as needed) and keeps the id, a copy or
+new file creates a fresh document, and a deletion removes the tree node.
+
+Boot order matters: `VaultEngine.reconcileMaterialization()` always calls
+`ingestExternalChanges()` *first*, before its own "re-materialise stale /
+delete orphaned" pass — otherwise that pass would treat disk as pure
+*output* and either silently overwrite an external edit or delete a
+genuinely new external file as an "orphan". The doc index's `contentHash`
+is exactly the marker that tells the two apart: every app write
+(materialize/repair/move) updates it immediately, so on the next scan
+disk-matches-index means "our own write, nothing to ingest" and
+disk-differs-from-index means "something external happened while ingest
+wasn't watching."
+
+On the Node server, `watchVaultForExternalChanges()`
+(`src/lib/server/vault-watcher.ts`) debounces a chokidar watch over the
+vault directory (ignoring `.adhd/` and `*.tmp`) and calls
+`ingestExternalChanges()` on change, reporting affected `doc:<id>` /
+`vault:<id>` rooms so the result can be broadcast to sync clients. In the
+browser, OPFS has no external writers besides other tabs, so ingestion only
+runs at boot and when the tab regains visibility.
 
 **Migration.** Vaults created before the sidecar index exist still contain
 the old `<!-- adhd:id=... -->` comment. On first read of such a file, ADHD:

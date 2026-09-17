@@ -5,7 +5,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
+import type { FSWatcher } from "chokidar";
 import { ServerStore } from "@/lib/server/store";
+import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
+import { VaultEngine, buildPathFromNode } from "@/lib/vault/engine";
+import { watchVaultForExternalChanges } from "@/lib/server/vault-watcher";
 
 export interface SyncServerOptions {
   port: number;
@@ -14,6 +18,13 @@ export interface SyncServerOptions {
   vaultPath: string;
   authToken: string;
   saveIntervalMs?: number;
+  /**
+   * Watch `vaultPath` for external `.md` changes and ingest them (SPEC §5,
+   * §25, §26) — default true. Set false in tests that don't want a
+   * filesystem watcher running (or that manage their own tmp-dir timing).
+   */
+  watch?: boolean;
+  vaultId?: string;
 }
 
 /**
@@ -139,9 +150,84 @@ export function createHttpApi(options: HttpApiOptions) {
   };
 }
 
+/**
+ * Feed `data` (a full room snapshot, as SimpleServer's onSaveDocument
+ * hands us) into the durable-version/discovery bookkeeping ServerStore
+ * already maintains for the WS relay — shared by both the normal
+ * client-save path and the watcher's ingest-derived changes, so a
+ * discovering/reconnecting client sees either kind of change the same way.
+ */
+function recordRoomSave(
+  store: ServerStore,
+  roomId: string,
+  data: Uint8Array,
+  type: "doc" | "tree",
+): void {
+  const seq = store.getNextSeq();
+  const room = store.getRoom(roomId);
+  const newServerSeq = (room?.serverSeq ?? 0) + 1;
+  const vvBytes = durableVersionOf(data);
+  // loro-websocket's parseRoomKey produces NaN for string crdt types
+  // ("%LOR"), and this doesn't otherwise need it: this server persists
+  // Loro rooms only, so bind the CrdtType.Loro literal directly.
+  store.upsertRoom(roomId, CrdtType.Loro, Buffer.from(data), Buffer.from(vvBytes), newServerSeq);
+  store.recordChange(seq, roomId, type === "tree" ? "tree" : "doc");
+}
+
 export function createSyncServer(options: SyncServerOptions) {
   const store = new ServerStore(`${options.vaultPath}/.adhd/server/sync.sqlite`);
   const assetDir = `${options.vaultPath}/.adhd/server/assets`;
+  const vaultId = options.vaultId ?? "local";
+  const treeRoomId = `vault:${vaultId}`;
+
+  /**
+   * Node-side vault mirror (SPEC §5, §10, §11, §25/§26): a VaultEngine
+   * over `.adhd/crdt/**` at `options.vaultPath`, kept as a *derived mirror*
+   * of the relay state ServerStore/SQLite already holds — SQLite
+   * (`.adhd/server/sync.sqlite`) stays the sync protocol's source of truth
+   * (durable versions, discovery, `/api/changes`), unchanged from before
+   * this integration, so the tested client-sync path has zero regression
+   * risk. The engine's fs-store is the ONLY writer to `.adhd/crdt/**` —
+   * nothing else in this server touches that directory, so there is no
+   * two-writer conflict.
+   *
+   * Two directions feed it:
+   *   1. client -> server: onSaveDocument (below) imports the same bytes
+   *      it just wrote to SQLite into the matching engine Document/tree,
+   *      then materialises the .md and touches the sidecar index — so the
+   *      Node vault directory always has a real, current .md mirror of
+   *      whatever clients have synced, and the watcher (2) never mistakes
+   *      that write for an external one.
+   *   2. disk -> server: watchVaultForExternalChanges ingests an
+   *      externally-edited/moved/new/deleted .md (safety rails from
+   *      VaultEngine.ingestExternalChanges apply — never touches
+   *      .adhd/crdt, never mass-deletes) and the resulting CRDT bytes are
+   *      fed back into ServerStore via recordRoomSave, i.e. exactly the
+   *      same durable-version/discovery bookkeeping a client's own save
+   *      would produce. `SimpleServer` (loro-websocket) exposes no public
+   *      API to push a live update into an already-open room — its
+   *      broadcast is internal to its own client-update handling — so an
+   *      externally-made change reaches already-connected clients the same
+   *      way a second vault already picks up a first vault's notes in this
+   *      codebase's tests: via discovery polling
+   *      (GET /api/changes?after=...), not an instant push. A live push
+   *      would need a change inside loro-websocket itself.
+   */
+  let engine: VaultEngine | null = null;
+  let watcher: FSWatcher | null = null;
+  let bootReconciling = false;
+
+  async function ensureEngine(): Promise<VaultEngine> {
+    if (engine) return engine;
+    const treeStore = new NodeVaultTreeStore(options.vaultPath);
+    const docStore = new NodeFSStore(options.vaultPath);
+    const treeSnap = await treeStore.loadSnapshot();
+    const hasVault = treeSnap !== null || (await treeStore.loadUpdates()).length > 0;
+    engine = hasVault
+      ? (await VaultEngine.open(treeStore, docStore, vaultId)).engine
+      : await VaultEngine.create(treeStore, docStore, vaultId);
+    return engine;
+  }
 
   const config: SimpleServerConfig = {
     port: options.port,
@@ -169,19 +255,31 @@ export function createSyncServer(options: SyncServerOptions) {
       _crdtType: CrdtType,
       data: Uint8Array,
     ) => {
-      const seq = store.getNextSeq();
-      const room = store.getRoom(roomId);
-      const newServerSeq = (room?.serverSeq ?? 0) + 1;
-      const vvBytes = durableVersionOf(data);
-      // loro-websocket's parseRoomKey produces NaN for string crdt types
-      // ("%LOR"), and onSaveDocument doesn't otherwise need it: this server
-      // persists Loro rooms only, so bind the CrdtType.Loro literal directly.
-      store.upsertRoom(roomId, CrdtType.Loro, Buffer.from(data), Buffer.from(vvBytes), newServerSeq);
-      store.recordChange(
-        seq,
-        roomId,
-        roomId === "vault-root" ? "tree" : "doc",
-      );
+      const isTree = roomId === treeRoomId || roomId.startsWith("vault:");
+      recordRoomSave(store, roomId, data, isTree ? "tree" : "doc");
+
+      // Mirror into the Node vault: import the same bytes a client just
+      // saved, then materialise/persist. Never during the initial boot
+      // reconcile — that pass is establishing the mirror's starting state,
+      // not reacting to a save.
+      if (bootReconciling) return;
+      const eng = await ensureEngine();
+      if (isTree) {
+        eng.tree.doc.import(data);
+        eng.tree.doc.commit();
+        await eng.persistTreeIncremental();
+        return;
+      }
+      if (roomId.startsWith("doc:")) {
+        const docId = roomId.slice(4);
+        await eng.importDocumentUpdate(docId, data);
+        await eng.persistDocumentIncremental(docId);
+        const node = eng.tree.findByDocumentId(docId);
+        if (node) {
+          const path = buildPathFromNode(eng.tree, node);
+          if (path) await eng.materializeDocument(docId, path);
+        }
+      }
     },
   };
 
@@ -192,7 +290,51 @@ export function createSyncServer(options: SyncServerOptions) {
   return {
     server,
     store,
+    /** The Node-side VaultEngine mirror, once start() has created it. */
+    getEngine: () => engine,
     start: async () => {
+      const eng = await ensureEngine();
+
+      // Ignore fs events during this initial pass (requirement: don't let
+      // the watcher react to the boot reconcile's own writes).
+      bootReconciling = true;
+      try {
+        await eng.reconcileMaterialization();
+      } finally {
+        bootReconciling = false;
+      }
+
+      if (options.watch !== false) {
+        watcher = watchVaultForExternalChanges({
+          vaultPath: options.vaultPath,
+          engine: eng,
+          onIngested: (report) => {
+            const total =
+              report.edited.length +
+              report.moved.length +
+              report.copied.length +
+              report.created.length +
+              report.deleted.length;
+            if (total > 0) {
+              console.log(
+                `[sync-server] ingested external change(s): ` +
+                  `${report.edited.length} edited, ${report.moved.length} moved, ` +
+                  `${report.copied.length} copied, ${report.created.length} created, ` +
+                  `${report.deleted.length} deleted`,
+              );
+            }
+          },
+          onRoomUpdate: (roomId, update) => {
+            // "Broadcast" here means: make it visible to discovery/reconnect
+            // (see the class doc above) — there is no live-push API.
+            recordRoomSave(store, roomId, update, roomId.startsWith("vault:") ? "tree" : "doc");
+          },
+          onError: (err) => {
+            console.error("[sync-server] vault watcher error:", err);
+          },
+        });
+      }
+
       await server.start();
       http = createServer(
         createHttpApi({ store, authToken: options.authToken, assetDir }),
@@ -201,6 +343,10 @@ export function createSyncServer(options: SyncServerOptions) {
       return httpPort;
     },
     stop: async () => {
+      if (watcher) {
+        await watcher.close();
+        watcher = null;
+      }
       await server.stop();
       if (http) {
         await new Promise<void>((resolve, reject) => {

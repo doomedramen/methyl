@@ -93,27 +93,51 @@ describe("materialization: disk mirrors the tree", () => {
       expect(await fs.readTextFile("note.md")).toBe("hello");
     });
 
-    it("re-materialises a doc whose file content is stale", async () => {
+    it("a lingering legacy adhd:id comment is stripped and re-materialised, even with no real content change", async () => {
       const { engine, fs } = await newEngine();
       const doc = engine.createDocument(undefined, "note.md", "hello");
       await engine.persistDocumentIncremental(doc.id);
-      // Simulate a leftover legacy file whose content no longer matches.
-      await fs.writeFile("note.md", new TextEncoder().encode("<!-- adhd:id=old --> hello"));
+      // Simulate a pre-sidecar-index leftover: same content, but the file
+      // still carries the legacy id comment (e.g. never rewritten clean).
+      await fs.writeFile(
+        "note.md",
+        new TextEncoder().encode(
+          `<!-- adhd:id=${doc.id} -->\n\nhello`,
+        ),
+      );
 
       const result = await engine.reconcileMaterialization();
 
-      expect(result.materialized).toContain("note.md");
+      expect(result.ingested.edited).toContain(doc.id);
       expect(await fs.readTextFile("note.md")).toBe("hello");
     });
 
-    it("deletes a materialised file with no corresponding tree node", async () => {
+    it("re-materialises a doc whose file content is externally edited (ingest, not overwrite)", async () => {
+      const { engine, fs } = await newEngine();
+      const doc = engine.createDocument(undefined, "note.md", "hello");
+      await engine.persistDocumentIncremental(doc.id);
+      // An external editor changed the file after the app last wrote it —
+      // this must be absorbed into the CRDT, never clobbered.
+      await fs.writeFile("note.md", new TextEncoder().encode("hello world"));
+
+      const result = await engine.reconcileMaterialization();
+
+      expect(result.ingested.edited).toContain(doc.id);
+      expect(await fs.readTextFile("note.md")).toBe("hello world");
+      expect(engine.getDocument(doc.id)!.getMarkdown()).toBe("hello world");
+    });
+
+    it("adopts a genuinely new external file as a document instead of deleting it", async () => {
       const { engine, fs } = await newEngine();
       await fs.writeFile("orphan.md", new TextEncoder().encode("nobody owns me"));
 
       const result = await engine.reconcileMaterialization();
 
-      expect(result.removed).toContain("orphan.md");
-      expect(await fs.exists("orphan.md")).toBe(false);
+      expect(result.ingested.created.length).toBe(1);
+      expect(await fs.exists("orphan.md")).toBe(true);
+      expect(await fs.readTextFile("orphan.md")).toBe("nobody owns me");
+      const node = engine.tree.findByName("orphan.md")[0];
+      expect(node?.documentId).toBe(result.ingested.created[0]);
     });
 
     it("never touches .adhd metadata", async () => {
