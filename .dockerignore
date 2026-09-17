@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+dist
+.git
+.github
+*.md
+!README.md
+public/sw.js
+public/sw.js.map
+.env
+.env.*
+!.env.example
+vault
+*.sqlite
+.DS_Store
+coverage

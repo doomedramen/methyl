@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "concurrently -p none 'serwist build --watch' 'next dev'",
     "build": "next build && serwist build",
+    "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:better-sqlite3 --external:loro-crdt --external:loro-websocket --external:loro-protocol --external:chokidar --alias:@=./src",
     "start": "next start",
+    "start:server": "node dist/server.cjs",
     "serve:static": "npx serve out",
     "lint": "eslint",
     "test": "vitest run",

@@ -43,3 +43,6 @@ next-env.d.ts
 # serwist build output
 public/sw.js
 public/sw.js.map
+
+# server bundle
+/dist/

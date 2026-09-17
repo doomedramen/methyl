@@ -1,0 +1,12 @@
+services:
+  methyl:
+    image: ghcr.io/doomedramen/methyl:latest
+    # Uncomment to build from source instead of the published image:
+    # build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./vault:/vault
+    environment:
+      METHYL_AUTH_TOKEN: ${METHYL_AUTH_TOKEN:?set METHYL_AUTH_TOKEN}
+    restart: unless-stopped
