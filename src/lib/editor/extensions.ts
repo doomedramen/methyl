@@ -6,8 +6,6 @@ import {
   drawSelection,
   rectangularSelection,
   crosshairCursor,
-  lineNumbers,
-  highlightActiveLineGutter,
   highlightActiveLine,
   type KeyBinding,
 } from "@codemirror/view";
@@ -49,8 +47,6 @@ const { doc, ephemeral, user, undoManager } = opts;
   const getText: (d: LoroDoc) => LoroText = getContentTextFromDoc;
 
   return [
-    lineNumbers(),
-    highlightActiveLineGutter(),
     highlightSpecialChars(),
     drawSelection(),
     rectangularSelection(),

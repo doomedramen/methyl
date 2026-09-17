@@ -20,26 +20,20 @@ export const amoledMinimal = EditorView.theme({
   },
   ".cm-content": {
     caretColor: "var(--primary)",
-    padding: "16px max(16px, calc((100% - 760px) / 2)) 40vh",
-    maxWidth: "760px",
+    // Centered reading column; auto margins work inside the flex scroller.
+    boxSizing: "border-box",
+    width: "100%",
+    maxWidth: "792px",
+    margin: "0 auto",
+    padding: "16px 16px 40vh",
     lineHeight: "1.7",
     fontFamily: "var(--font-sans, inherit)",
   },
   ".cm-line": {
     padding: "0 0 4px 0",
   },
-  ".cm-gutters": {
-    backgroundColor: "transparent",
-    border: "none",
-    color: "var(--muted-foreground)",
-    paddingLeft: "8px",
-  },
   ".cm-activeLine": {
     backgroundColor: "var(--accent)",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "transparent",
-    color: "var(--foreground)",
   },
   ".cm-selectionBackground, ::selection": {
     backgroundColor: "color-mix(in oklab, var(--accent) 70%, transparent)",
