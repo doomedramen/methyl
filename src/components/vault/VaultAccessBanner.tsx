@@ -36,18 +36,10 @@ export function VaultAccessBanner({ engine }: { engine: unknown }) {
     <div className="flex shrink-0 items-center justify-between gap-3 border-b bg-muted/50 px-3 py-2 text-sm">
       <div className="flex items-center gap-2 text-muted-foreground">
         <TriangleAlert className="size-4 shrink-0" />
-        <span>
-          {status.promotable
-            ? "This vault is free — reload to edit from this tab."
-            : "This vault is open for editing in another tab. This tab is read-only."}
-        </span>
+        <span>This vault is open for editing in another tab. This tab is read-only.</span>
       </div>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={status.promotable ? status.reload : status.takeOver}
-      >
-        {status.promotable ? "Reload" : "Use here"}
+      <Button size="sm" variant="outline" onClick={status.takeOver}>
+        Use here
       </Button>
     </div>
   );

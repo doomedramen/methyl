@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import {
+  ClipboardCopy,
   CloudCheck,
   CloudCog,
   CloudOff,
@@ -10,6 +11,7 @@ import {
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
+import { toast } from "sonner";
 import { formatBytes, usePwa, type PwaState } from "@/lib/browser/pwa";
 import { useSync } from "@/lib/browser/sync-context";
 import { SyncStatusRow, syncTriggerLabel } from "@/components/sync/SyncStatusRow";
@@ -30,6 +32,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import type { VaultEngine } from "@/lib/vault/engine";
+import { readDiagnostics } from "@/lib/vault/diagnostics";
 
 const OFFLINE_COPY: Record<
   PwaState["offline"],
@@ -65,7 +69,7 @@ function OfflineIcon({ state }: { state: PwaState["offline"] }) {
 }
 
 /** Compact footer status: offline support, storage protection, space used. */
-export function PwaStatus() {
+export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
   const pwa = usePwa();
   const sync = useSync();
 
@@ -73,6 +77,27 @@ export function PwaStatus() {
     if (!pwa.installPrompt) return;
     await pwa.installPrompt.prompt();
   }, [pwa.installPrompt]);
+
+  const copyDiagnostics = useCallback(async () => {
+    try {
+      const entries = engine ? await readDiagnostics(engine.docStore) : [];
+      const mdCount = engine ? (await engine.docStore.listMaterializedPaths()).length : 0;
+      const summary = {
+        vaultId: engine?.vaultId ?? null,
+        appVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? null,
+        docCount: engine?.tree.documentIds().length ?? null,
+        materializedMarkdownCount: mdCount,
+        storageQuota: pwa.quota,
+        generatedAt: new Date().toISOString(),
+      };
+      const payload = JSON.stringify({ summary, diagnostics: entries }, null, 2);
+      await navigator.clipboard.writeText(payload);
+      toast.success("Diagnostics copied to clipboard.");
+    } catch (err) {
+      console.warn("[PwaStatus] failed to copy diagnostics", err);
+      toast.error("Couldn't copy diagnostics. Try again.");
+    }
+  }, [engine, pwa.quota]);
 
   const used = pwa.quota?.usage;
   const total = pwa.quota?.quota;
@@ -150,6 +175,17 @@ export function PwaStatus() {
               </Item>
             </>
           )}
+
+          <Separator className="my-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={copyDiagnostics}
+            className="w-full"
+          >
+            <ClipboardCopy data-icon="inline-start" />
+            Copy diagnostics
+          </Button>
 
           {pwa.installPrompt && (
             <>

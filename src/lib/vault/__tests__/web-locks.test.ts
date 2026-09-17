@@ -130,6 +130,49 @@ describe("acquireVaultWriterLock", () => {
     promoted.release();
   });
 
+  it("promotion hand-off chain: promoted tab keeps holding, a third queued tab stays waiting, and releasing from the promoted tab hands off again (§2 automatic promotion)", async () => {
+    // Models the vault.ts becomeWriter() flow: a promoted tab must NOT
+    // release-then-reload (the bug) — it keeps the same granted lock in
+    // place. This is what lets a third tab safely stay queued instead of
+    // ever observing zero held locks.
+    const first = await acquireVaultWriterLock("v1");
+    expect(first.active).toBe(true);
+
+    const secondPromotion = waitForVaultWriterPromotion("v1");
+    const thirdPromotion = waitForVaultWriterPromotion("v1");
+
+    let thirdResolved = false;
+    void thirdPromotion.then(() => {
+      thirdResolved = true;
+    });
+
+    first.release();
+    const second = await secondPromotion;
+    expect(second.active).toBe(true);
+
+    // The third tab must still be queued — it must not observe the lock as
+    // free just because the first released it. "Never release-then-banner"
+    // means the second tab holds continuously across this whole window.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(thirdResolved).toBe(false);
+
+    // A brand-new ifAvailable request must also fail while the second tab
+    // holds the promoted lock — confirms it genuinely still holds it
+    // in-place, rather than having released it after promotion.
+    const raceIfAvailable = await acquireVaultWriterLock("v1");
+    expect(raceIfAvailable.active).toBe(false);
+
+    // Now the promoted (second) tab releases — hand-off continues to the
+    // third queued tab.
+    second.release();
+    const third = await thirdPromotion;
+    expect(third.active).toBe(true);
+    expect(thirdResolved).toBe(true);
+
+    third.release();
+  });
+
   it("steal preempts the current holder immediately", async () => {
     const writer = await acquireVaultWriterLock("v1");
     expect(writer.active).toBe(true);

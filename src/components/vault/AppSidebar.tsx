@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeID } from "loro-crdt";
+import type { VaultEngine } from "@/lib/vault/engine";
 import {
   ChevronRight,
   Folder,
@@ -98,6 +99,8 @@ export interface MoveTarget {
 interface AppSidebarProps {
   rows: SidebarRow[];
   activeId: string | null;
+  /** Passed through to the footer status popover for the diagnostics copy action. */
+  engine: VaultEngine | null;
   onCreate: (parentTreeId?: TreeID) => void;
   onCreateFolder: (parentTreeId: TreeID | undefined, name: string) => void;
   onSelect: (id: string) => void;
@@ -134,6 +137,7 @@ function saveCollapsed(set: Set<string>) {
 }
 
 interface FlatRow {
+  type: "row";
   row: SidebarRow;
   depth: number;
   parentTreeId: TreeID | undefined;
@@ -141,19 +145,47 @@ interface FlatRow {
   siblingsLength: number;
 }
 
+/** Placeholder shown under an expanded folder that has no children, so the
+ *  next top-level rows don't visually read as its children. */
+interface EmptyFlatRow {
+  type: "empty";
+  key: string;
+  depth: number;
+}
+
+type FlatEntry = FlatRow | EmptyFlatRow;
+
 function flatten(
   rows: SidebarRow[],
   depth: number,
   parentTreeId: TreeID | undefined,
   collapsed: Set<string>,
-  out: FlatRow[],
+  out: FlatEntry[],
 ) {
   rows.forEach((row, i) => {
-    out.push({ row, depth, parentTreeId, siblingIndex: i, siblingsLength: rows.length });
+    out.push({ type: "row", row, depth, parentTreeId, siblingIndex: i, siblingsLength: rows.length });
     if (row.kind === "directory" && !collapsed.has(row.treeId)) {
-      flatten(row.children, depth + 1, row.treeId, collapsed, out);
+      if (row.children.length === 0) {
+        out.push({ type: "empty", key: `${row.treeId}-empty`, depth: depth + 1 });
+      } else {
+        flatten(row.children, depth + 1, row.treeId, collapsed, out);
+      }
     }
   });
+}
+
+/** Pure hit-testing for drop position within a hovered row.
+ *  `relative` is the dragged item's center as a fraction of the hovered
+ *  row's height (0 = top edge, 1 = bottom edge). Directory rows get a wide
+ *  middle "inside" band (50%) so dropping into a folder is easy; note rows
+ *  only ever split before/after. */
+export function computeDropMode(relative: number, isDirectory: boolean): DropMode {
+  if (isDirectory) {
+    if (relative < 0.25) return "before";
+    if (relative > 0.75) return "after";
+    return "inside";
+  }
+  return relative < 0.5 ? "before" : "after";
 }
 
 function findRow(rows: SidebarRow[], treeId: TreeID): SidebarRow | undefined {
@@ -179,6 +211,7 @@ function countNotes(row: FolderRow): number {
 export function AppSidebar({
   rows,
   activeId,
+  engine,
   onCreate,
   onCreateFolder,
   onSelect,
@@ -224,14 +257,14 @@ export function AppSidebar({
   }, []);
 
   const flat = useMemo(() => {
-    const out: FlatRow[] = [];
+    const out: FlatEntry[] = [];
     flatten(rows, 0, undefined, collapsed, out);
     return out;
   }, [rows, collapsed]);
 
   const flatById = useMemo(() => {
     const map = new Map<string, FlatRow>();
-    for (const f of flat) map.set(f.row.treeId, f);
+    for (const f of flat) if (f.type === "row") map.set(f.row.treeId, f);
     return map;
   }, [flat]);
 
@@ -295,13 +328,7 @@ export function AppSidebar({
     if (overRect && activeTranslated) {
       const activeCenterY = activeTranslated.top + activeTranslated.height / 2;
       const relative = (activeCenterY - overRect.top) / overRect.height;
-      if (overFlat.row.kind === "directory") {
-        if (relative < 0.25) mode = "before";
-        else if (relative > 0.75) mode = "after";
-        else mode = "inside";
-      } else {
-        mode = relative < 0.5 ? "before" : "after";
-      }
+      mode = computeDropMode(relative, overFlat.row.kind === "directory");
     }
 
     setOverId(overTreeId);
@@ -428,28 +455,32 @@ export function AppSidebar({
                 onDragCancel={handleDragCancel}
               >
                 <SidebarMenu className="gap-0.5">
-                  {flat.map((f) => (
-                    <Row
-                      key={f.row.treeId}
-                      flat={f}
-                      activeId={activeId}
-                      isCollapsed={f.row.kind === "directory" && collapsed.has(f.row.treeId)}
-                      onToggleCollapsed={toggleCollapsed}
-                      onPick={pick}
-                      overId={overId}
-                      dropMode={dropMode}
-                      isDragging={activeDragId === f.row.treeId}
-                      onCreateNote={onCreate}
-                      onCreateFolder={(parent) => {
-                        setNewFolderParent(parent);
-                        onNewFolderOpenChange(true);
-                      }}
-                      onRenameNoteRequest={setRenameTarget}
-                      onDeleteNoteRequest={setDeleteTarget}
-                      onRenameFolderRequest={setRenameFolderTarget}
-                      onDeleteFolderRequest={setDeleteFolderTarget}
-                    />
-                  ))}
+                  {flat.map((f) =>
+                    f.type === "empty" ? (
+                      <EmptyFolderRow key={f.key} depth={f.depth} />
+                    ) : (
+                      <Row
+                        key={f.row.treeId}
+                        flat={f}
+                        activeId={activeId}
+                        isCollapsed={f.row.kind === "directory" && collapsed.has(f.row.treeId)}
+                        onToggleCollapsed={toggleCollapsed}
+                        onPick={pick}
+                        overId={overId}
+                        dropMode={dropMode}
+                        isDragging={activeDragId === f.row.treeId}
+                        onCreateNote={onCreate}
+                        onCreateFolder={(parent) => {
+                          setNewFolderParent(parent);
+                          onNewFolderOpenChange(true);
+                        }}
+                        onRenameNoteRequest={setRenameTarget}
+                        onDeleteNoteRequest={setDeleteTarget}
+                        onRenameFolderRequest={setRenameFolderTarget}
+                        onDeleteFolderRequest={setDeleteFolderTarget}
+                      />
+                    ),
+                  )}
                 </SidebarMenu>
                 <DragOverlay>
                   {draggedRow ? (
@@ -472,7 +503,7 @@ export function AppSidebar({
       </SidebarContent>
 
       <SidebarFooter className="flex-row items-center justify-between gap-2">
-        <PwaStatus />
+        <PwaStatus engine={engine} />
       </SidebarFooter>
 
       {renameTarget && (
@@ -586,6 +617,7 @@ function Row({
                   showInside && "bg-sidebar-accent ring-1 ring-sidebar-ring",
                 )}
               >
+                {depth > 0 && <IndentGuide depth={depth} />}
                 <SidebarMenuButton
                   className={ROW_BUTTON}
                   aria-expanded={!isCollapsed}
@@ -671,6 +703,7 @@ function Row({
               style={indent}
               className={cn("relative rounded-md", isDragging && "opacity-40")}
             >
+              {depth > 0 && <IndentGuide depth={depth} />}
               <SidebarMenuButton
                 isActive={note.id === activeId}
                 onClick={() => onPick(note.id)}
@@ -734,5 +767,31 @@ function DropLine({ position }: { position: "before" | "after" }) {
         position === "before" ? "-top-px" : "-bottom-px",
       )}
     />
+  );
+}
+
+/** Subtle vertical guide aligned to the parent's indent, so nesting reads
+ *  clearly at a glance. Purely decorative — sits behind row content. */
+function IndentGuide({ depth }: { depth: number }) {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute inset-y-0 border-l border-sidebar-border"
+      style={{ left: `${depth * 1.1 - 0.55}rem` }}
+    />
+  );
+}
+
+function EmptyFolderRow({ depth }: { depth: number }) {
+  return (
+    <SidebarMenuItem className="relative">
+      <div style={{ paddingLeft: `${depth * 1.1}rem` }} className="relative">
+        <IndentGuide depth={depth} />
+        <div className={cn(ROW_BUTTON, "flex items-center gap-2 px-2 text-sm text-muted-foreground")}>
+          <span aria-hidden className="size-4 shrink-0" />
+          <span className="italic">Empty</span>
+        </div>
+      </div>
+    </SidebarMenuItem>
   );
 }

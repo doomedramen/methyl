@@ -51,12 +51,13 @@ export function createStaticHandler(outDir: string) {
     }
 
     if (!existsSync(filePath) || !statSync(filePath).isFile()) {
-      // SPA fallback: paths with no file extension are app routes.
-      if (extname(pathname) === "") {
-        filePath = join(outDir, "index.html");
-      } else {
-        return false;
-      }
+      // SPA fallback: anything that isn't a real file is an app route —
+      // including note routes like /local/Projects/note.md, which carry a
+      // file extension but are client-side routes, not files in `out/`.
+      // Build assets are excluded so a missing chunk 404s honestly instead
+      // of returning HTML.
+      if (pathname.startsWith("/_next/")) return false;
+      filePath = join(outDir, "index.html");
     }
 
     if (!existsSync(filePath)) return false;

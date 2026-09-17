@@ -77,6 +77,26 @@ export function SyncProvider({
     setConfig(loadSyncConfig());
   }, []);
 
+  // A read-only tab is promoted to writer in place (§12) — the `engine`
+  // reference doesn't change, only its `releaseWriterLock` field — so
+  // re-render on every access-status change rather than reading
+  // `engine.releaseWriterLock` only once per engine identity. Without this,
+  // SyncHost would only ever start after a remount (i.e. a reload), which
+  // is exactly the reload-to-recover-writer behavior promotion replaces.
+  const [, forceAccessTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let cleanup: (() => void) | undefined;
+    import("@/lib/browser/vault").then(({ onVaultAccessStatusChange }) => {
+      if (cancelled) return;
+      cleanup = onVaultAccessStatusChange(() => forceAccessTick((t) => t + 1));
+    });
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, []);
+
   const canSync = !!engine && !!engine.releaseWriterLock;
 
   // Start/stop the host whenever the engine becomes syncable or config changes.

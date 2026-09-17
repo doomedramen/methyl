@@ -16,6 +16,7 @@ import {
   DEFAULT_COMPACTION_RULES,
   type CompactionRules,
 } from "@/lib/vault/compact";
+import { recordDiagnostic } from "@/lib/vault/diagnostics";
 
 /** Result of one `ingestExternalChanges()` pass, grouped by what happened. */
 export interface IngestReport {
@@ -100,12 +101,18 @@ export class VaultEngine {
     return path === ".adhd" || path.startsWith(".adhd/");
   }
 
+  /** Best-effort diagnostics append — never throws, never blocks the caller. */
+  private async diag(op: string, options?: { counts?: Record<string, number>; detail?: string }): Promise<void> {
+    await recordDiagnostic(this.docStore, op, options);
+  }
+
   private async materializedWrite(path: string, bytes: Uint8Array): Promise<void> {
     if (this.isPathUnderReservedDir(path)) {
       console.error(
         `[VaultEngine] refusing to write materialised path "${path}" — ` +
           `it falls under the reserved .adhd/ metadata directory.`,
       );
+      await this.diag("refuse-reserved-path-write", { detail: path });
       return;
     }
     await this.docStore.writeMaterializedAtomic(path, bytes);
@@ -117,6 +124,7 @@ export class VaultEngine {
         `[VaultEngine] refusing to delete materialised path "${path}" — ` +
           `it falls under the reserved .adhd/ metadata directory.`,
       );
+      await this.diag("refuse-reserved-path-remove", { detail: path });
       return;
     }
     await this.docStore.removeMaterialized(path);
@@ -206,6 +214,13 @@ export class VaultEngine {
       orphanedDocs: persistedIds.filter((id) => !activeSet.has(id)),
       migratedLegacyIds,
     };
+
+    if (migratedLegacyIds.length > 0) {
+      await engine.diag("legacy-id-migration", {
+        counts: { migrated: migratedLegacyIds.length },
+        detail: migratedLegacyIds.join(","),
+      });
+    }
 
     return { engine, recovery };
   }
@@ -501,6 +516,9 @@ export class VaultEngine {
             `files but a re-scan found ${recheck.length} — treating the first ` +
             `scan as a transient read glitch and refusing to ingest this pass.`,
         );
+        await this.diag("refuse-empty-scan", {
+          counts: { trackedBefore, recheckFiles: recheck.length },
+        });
         return empty;
       }
       diskPaths = recheck; // both scans agree: []
@@ -547,6 +565,9 @@ export class VaultEngine {
           `deletions this run. Delete them individually via the app if this ` +
           `is intentional.`,
       );
+      await this.diag("refuse-mass-deletion", {
+        counts: { attempted: result.deletedPaths.length, known: knownDocCount },
+      });
     }
 
     // Deletions: an indexed path disappeared and wasn't claimed by a move.
@@ -560,6 +581,7 @@ export class VaultEngine {
           this.documents.delete(entry.id);
           this.materializedPaths.delete(entry.id);
           report.deleted.push(entry.id);
+          await this.diag("ingest-delete", { detail: `${entry.id} ${path}` });
         }
       }
     }
@@ -745,6 +767,12 @@ export class VaultEngine {
         await this.materializedRemove(path);
         removed.push(path);
       }
+    }
+    if (removed.length > 0) {
+      await this.diag("orphan-sweep", {
+        counts: { removed: removed.length },
+        detail: removed.slice(0, 10).join(","),
+      });
     }
     return { ingested, materialized, removed };
   }
@@ -942,6 +970,7 @@ export class VaultEngine {
       await this.materializedRemove(oldPath);
       await this.dropIndexEntry(oldPath);
     }
+    await this.diag("delete-document", { detail: `${documentId} ${oldPath ?? ""}`.trim() });
   }
 
   /** Record a dirty room for tracking sync status. */
@@ -1033,6 +1062,10 @@ export class VaultEngine {
       await this.materializedRemove(path);
       await this.dropIndexEntry(path);
     }
+    await this.diag("delete-folder", {
+      counts: { docs: docIds.length },
+      detail: `${treeId} ${oldPaths.slice(0, 10).join(",")}`,
+    });
   }
 }
 

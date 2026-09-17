@@ -36,6 +36,7 @@ import { CommandMenu } from "./CommandMenu";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
+import { docIdForPath, notePathFromLocation, pathForDocId } from "@/lib/vault/note-path";
 import { VaultAccessBanner } from "./VaultAccessBanner";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -111,6 +112,14 @@ export function VaultApp() {
     setRows(buildRootRows(eng.tree));
   }, []);
 
+  // The open note lives in the URL as `/<vaultId>/<vault path>` (e.g.
+  // /local/Projects/note.md) so a refresh reopens it. The URL mirrors
+  // `activeId`; it is never the source of truth, and it is rewritten in
+  // place (no history entries). Unknown paths fall back to the app shell:
+  // src/app/[...slug]/page.tsx in dev, index.html from the server's static
+  // handler in production.
+  const urlRestored = useRef(false);
+
   const notes = useMemo(() => flattenNotes(rows), [rows]);
 
   useEffect(() => {
@@ -122,6 +131,13 @@ export function VaultApp() {
         if (cancelled) return;
         setEngine(eng);
         refreshNotes(eng);
+
+        const wanted = notePathFromLocation(window.location.pathname, eng.vaultId);
+        if (wanted) {
+          const found = docIdForPath(eng.tree, wanted);
+          if (found) setActiveId(found);
+        }
+        urlRestored.current = true;
       })
       .catch((e) => {
         console.error(e);
@@ -131,6 +147,38 @@ export function VaultApp() {
       cancelled = true;
     };
   }, [refreshNotes]);
+
+  // Re-render when this tab is promoted to writer in place (§12) — the
+  // engine object reference doesn't change (see becomeWriter in
+  // browser/vault.ts), only its `releaseWriterLock` field, so `readOnly`
+  // below and requireWriter() need this tick to pick that up without a
+  // reload.
+  const [, forceAccessTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let cleanup: (() => void) | undefined;
+    import("@/lib/browser/vault").then(({ onVaultAccessStatusChange }) => {
+      if (cancelled) return;
+      cleanup = onVaultAccessStatusChange(() => forceAccessTick((t) => t + 1));
+    });
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, []);
+
+  // Mirror the open note into the URL once the initial restore has run, so
+  // a stale or missing `?note=` is cleared instead of reopened forever.
+  useEffect(() => {
+    if (!engine || !urlRestored.current) return;
+    const path = activeId ? pathForDocId(engine.tree, activeId) : null;
+    const next = path
+      ? `/${encodeURIComponent(engine.vaultId)}/${path.split("/").map(encodeURIComponent).join("/")}`
+      : "/";
+    if (next !== window.location.pathname) {
+      window.history.replaceState(null, "", next + window.location.search + window.location.hash);
+    }
+  }, [engine, activeId, rows]);
 
   const saveErrorShown = useRef(false);
   const onSaveError = useCallback(() => {
@@ -296,6 +344,7 @@ export function VaultApp() {
       <AppSidebar
         rows={rows}
         activeId={activeId}
+        engine={engine}
         onCreate={onCreateNote}
         onCreateFolder={onCreateFolder}
         onSelect={setActiveId}

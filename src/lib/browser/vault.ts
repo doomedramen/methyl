@@ -5,6 +5,7 @@ import {
   acquireVaultWriterLock,
   onVaultWriterStolen,
   waitForVaultWriterPromotion,
+  type VaultLock,
 } from "@/lib/vault/web-locks";
 import { loadSyncConfig } from "@/lib/browser/sync-config";
 import { writeSeedMarker } from "@/lib/browser/seed-marker";
@@ -13,24 +14,20 @@ import { writeSeedMarker } from "@/lib/browser/seed-marker";
  * Whether this tab is the vault's writer, or read-only because another tab
  * already holds the writer lock (§12).
  *
- * A read-only tab can:
- *   - `takeOver()`: explicitly steal the writer lock now ("Use here").
- *   - once `promotable` is true (the previous writer tab released — closed
- *     or navigated away — and this tab's background queued request for
- *     the lock was granted), `reload()` to become the writer.
- *
- * Both actions reload the page rather than hot-swapping this tab's engine
- * in place: the simplest correct way to move a whole read-only session
- * (in-memory engine, React tree, any open editor) into writer mode is to
- * re-run getVault() from scratch, which then acquires the lock normally.
+ * A read-only tab can `takeOver()`: explicitly steal the writer lock now
+ * ("Use here"). It is also promoted automatically, in place, the moment the
+ * current writer tab releases (closes/navigates away) — its queued
+ * `waitForVaultWriterPromotion` request is granted, and it keeps that same
+ * granted lock and becomes the writer without reloading (see
+ * `becomeWriter` below). Reloading here would destroy this tab's lock
+ * client and let a third queued tab win the race instead, so neither path
+ * reloads while holding the lock.
  */
 export type VaultAccessStatus =
   | { kind: "writer" }
   | {
       kind: "read-only";
-      promotable: boolean;
       takeOver: () => void;
-      reload: () => void;
     };
 
 let accessStatus: VaultAccessStatus = { kind: "writer" };
@@ -87,30 +84,67 @@ export async function getVault(): Promise<VaultEngine> {
       const { engine } = await VaultEngine.open(treeStore, docStore, "local");
       singleton = engine;
 
-      const takeOver = () => {
-        void acquireVaultWriterLock("local", { steal: true }).then((stolen) => {
-          if (stolen.active) {
-            stolen.release();
-            window.location.reload();
-          }
-        });
-      };
-      const reload = () => window.location.reload();
-      setAccessStatus({ kind: "read-only", promotable: false, takeOver, reload });
-
       // Queue in the background for the writer lock to become free
       // naturally (the current writer tab closes/navigates away) — no
-      // polling: the browser grants this the moment it's free.
+      // polling: the browser grants this the moment it's free. Aborted on
+      // tab close, and also on an explicit takeOver() from this same tab
+      // (see becomeWriter) so this tab doesn't end up queued behind a lock
+      // it already holds via steal.
       const promotionAbort = new AbortController();
+      let becameWriterOnce = false;
+
+      // Promote this tab in place — it keeps whichever granted VaultLock
+      // got it here (natural promotion or an explicit steal) and becomes
+      // the writer without reloading. Reloading would tear down this tab's
+      // lock client and hand the lock to whichever tab is next in the
+      // Web Locks FIFO queue instead of this one (see module doc).
+      const becomeWriter = async (writerLock: VaultLock) => {
+        if (becameWriterOnce) {
+          // Already promoted via the other path (steal vs. natural
+          // promotion racing each other) — this grant is redundant.
+          writerLock.release();
+          return;
+        }
+        becameWriterOnce = true;
+        promotionAbort.abort();
+
+        engine.releaseWriterLock = () => writerLock.release();
+        if (typeof window !== "undefined") {
+          window.addEventListener("pagehide", () => writerLock.release(), { once: true });
+        }
+        // From here on this tab is the writer, so it needs the same
+        // steal-victim handling the original writer path has.
+        onVaultWriterStolen("local", () => {
+          if (typeof window !== "undefined") window.location.reload();
+        });
+        watchVisibilityForExternalChanges(engine);
+
+        // Writer-only boot work the read-only open above skipped:
+        // reconcile the on-disk .md tree against the CRDT tree+content now
+        // that this tab owns writes (see the same call in the first-boot
+        // writer path below for what it catches). Creating a fresh vault /
+        // seeding the welcome note doesn't apply here — a vault already
+        // exists, since a previous tab was writing to it.
+        try {
+          await engine.reconcileMaterialization();
+        } catch (err) {
+          console.error("[vault] reconcile on promotion failed", err);
+        }
+
+        setAccessStatus({ kind: "writer" });
+      };
+
+      const takeOver = () => {
+        void acquireVaultWriterLock("local", { steal: true }).then((stolen) => {
+          if (stolen.active) void becomeWriter(stolen);
+        });
+      };
+      setAccessStatus({ kind: "read-only", takeOver });
+
       waitForVaultWriterPromotion("local", promotionAbort.signal)
         .then((promoted) => {
           if (!promoted.active) return;
-          // Don't keep holding it mid-session (see the class doc above) —
-          // release it immediately and just flag that a reload would now
-          // succeed. Another waiting tab could still grab it first; if so,
-          // reload() below just goes read-only again and re-queues.
-          promoted.release();
-          setAccessStatus({ kind: "read-only", promotable: true, takeOver, reload });
+          void becomeWriter(promoted);
         })
         .catch(() => {});
       if (typeof window !== "undefined") {
@@ -220,12 +254,7 @@ async function createFreshVault(
   docStore: OpfsDocStore,
 ): Promise<VaultEngine> {
   const engine = await VaultEngine.create(treeStore, docStore, "local");
-  const welcome = `---
-title: Welcome
-tags: [getting-started]
----
-
-# Welcome
+  const welcome = `# Welcome
 
 This is your Methyl vault. Everything lives in your browser's file system
 (OPFS) and syncs over the Loro CRDT when a server is reachable.
