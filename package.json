@@ -2,6 +2,7 @@
   "name": "adhd",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "concurrently -p none 'serwist build --watch' 'next dev'",
     "build": "next build && serwist build",

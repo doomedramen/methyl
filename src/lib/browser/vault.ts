@@ -74,7 +74,7 @@ tags: [getting-started]
 
 # Welcome
 
-This is your ADHD vault. Everything lives in your browser's file system
+This is your Methyl vault. Everything lives in your browser's file system
 (OPFS) and syncs over the Loro CRDT when a server is reachable.
 
 - Write notes in Markdown

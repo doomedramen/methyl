@@ -36,11 +36,16 @@ import { CommandMenu } from "./CommandMenu";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 
-const SAVE_LABEL: Record<"clean" | "dirty" | "saving", string> = {
-  clean: "Saved",
+type SaveState = "idle" | "dirty" | "saving" | "saved";
+
+const SAVE_LABEL: Record<Exclude<SaveState, "idle">, string> = {
   dirty: "Editing…",
   saving: "Saving…",
+  saved: "Saved",
 };
+
+/** How long the "Saved" confirmation lingers before hiding. */
+const SAVED_VISIBLE_MS = 2000;
 
 /**
  * Build the nested folder/note tree for the sidebar, in stored tree order.
@@ -94,7 +99,7 @@ export function VaultApp() {
   const [engine, setEngine] = useState<VaultEngine | null>(null);
   const [rows, setRows] = useState<SidebarRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [saving, setSaving] = useState<"clean" | "dirty" | "saving">("clean");
+  const [saving, setSaving] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -124,9 +129,20 @@ export function VaultApp() {
     };
   }, [refreshNotes]);
 
+  // Only confirm a save that followed an edit; persists on open stay silent.
   const onPersisted = useCallback(() => {
-    setSaving("clean");
+    setSaving((prev) => (prev === "idle" ? prev : "saved"));
   }, []);
+
+  useEffect(() => {
+    if (saving !== "saved") return;
+    const t = setTimeout(() => setSaving("idle"), SAVED_VISIBLE_MS);
+    return () => clearTimeout(t);
+  }, [saving]);
+
+  useEffect(() => {
+    setSaving("idle");
+  }, [activeId]);
 
   const onCreateNote = useCallback(
     (parentTreeId?: TreeID) => {
@@ -292,14 +308,21 @@ export function VaultApp() {
             </BreadcrumbList>
           </Breadcrumb>
           <div className="ml-auto flex items-center gap-2">
-            <Badge variant={saving === "clean" ? "secondary" : "outline"} aria-live="polite">
-              {saving === "saving" ? (
-                <Spinner data-icon="inline-start" />
-              ) : saving === "clean" ? (
-                <Check data-icon="inline-start" />
-              ) : null}
-              {SAVE_LABEL[saving]}
-            </Badge>
+            <span aria-live="polite" className="contents">
+              {activeId && saving !== "idle" && (
+                <Badge
+                  variant={saving === "saved" ? "secondary" : "outline"}
+                  className="animate-in fade-in-0 motion-reduce:animate-none"
+                >
+                  {saving === "saving" ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : saving === "saved" ? (
+                    <Check data-icon="inline-start" />
+                  ) : null}
+                  {SAVE_LABEL[saving]}
+                </Badge>
+              )}
+            </span>
             <ModeToggle />
             <Tooltip>
               <TooltipTrigger

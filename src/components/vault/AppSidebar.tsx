@@ -378,7 +378,7 @@ export function AppSidebar({
     <Sidebar variant="inset">
       <SidebarHeader className="flex-row items-center justify-between gap-2 pt-6 md:pt-3">
         <div className="min-w-0">
-          <h1 className="text-sm font-semibold tracking-wide">ADHD</h1>
+          <h1 className="text-sm font-semibold tracking-wide">Methyl</h1>
           <p className="truncate text-xs text-muted-foreground">
             offline-first vault
           </p>
@@ -437,7 +437,7 @@ export function AppSidebar({
                 onDragEnd={handleDragEnd}
                 onDragCancel={handleDragCancel}
               >
-                <SidebarMenu>
+                <SidebarMenu className="gap-0.5">
                   {flat.map((f) => (
                     <Row
                       key={f.row.treeId}
@@ -581,7 +581,7 @@ function Row({
   if (row.kind === "directory") {
     return (
       <SidebarMenuItem className="group/menu-item relative">
-        {showBefore && <DropLine />}
+        {showBefore && <DropLine position="before" />}
         <ContextMenu>
           <ContextMenuTrigger
             render={
@@ -591,39 +591,29 @@ function Row({
                 {...listeners}
                 style={indent}
                 className={cn(
-                  "flex items-center rounded-md",
+                  "relative rounded-md",
                   isDragging && "opacity-40",
                   showInside && "bg-sidebar-accent ring-1 ring-sidebar-ring",
                 )}
               >
-                <button
-                  type="button"
+                <SidebarMenuButton
+                  className={ROW_BUTTON}
+                  aria-expanded={!isCollapsed}
                   onClick={() => onToggleCollapsed(row.treeId)}
-                  aria-label={isCollapsed ? `Expand ${row.name}` : `Collapse ${row.name}`}
-                  className="flex size-8 shrink-0 items-center justify-center text-muted-foreground"
                 >
                   <ChevronRight
-                    className={cn("size-4 transition-transform", !isCollapsed && "rotate-90")}
-                  />
-                </button>
-                <SidebarMenuButton
-                  size="lg"
-                  className="truncate"
-                  onClick={() => onToggleCollapsed(row.treeId)}
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    {isCollapsed ? (
-                      <Folder className="size-4 shrink-0" />
-                    ) : (
-                      <FolderOpen className="size-4 shrink-0" />
+                    className={cn(
+                      "text-muted-foreground transition-transform motion-reduce:transition-none",
+                      !isCollapsed && "rotate-90",
                     )}
-                    <span className="truncate">{row.name}</span>
-                  </span>
+                  />
+                  {isCollapsed ? <Folder /> : <FolderOpen />}
+                  <span>{row.name}</span>
                 </SidebarMenuButton>
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <SidebarMenuAction showOnHover aria-label={`Actions for ${row.name}`}>
+                      <SidebarMenuAction showOnHover className="top-2 md:top-1.5" aria-label={`Actions for ${row.name}`}>
                         <MoreHorizontal />
                       </SidebarMenuAction>
                     }
@@ -672,7 +662,7 @@ function Row({
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
-        {showAfter && <DropLine />}
+        {showAfter && <DropLine position="after" />}
       </SidebarMenuItem>
     );
   }
@@ -680,7 +670,7 @@ function Row({
   const note = row;
   return (
     <SidebarMenuItem className="group/menu-item relative">
-      {showBefore && <DropLine />}
+      {showBefore && <DropLine position="before" />}
       <ContextMenu>
         <ContextMenuTrigger
           render={
@@ -689,23 +679,22 @@ function Row({
               {...attributes}
               {...listeners}
               style={indent}
-              className={cn("flex items-center rounded-md", isDragging && "opacity-40")}
+              className={cn("relative rounded-md", isDragging && "opacity-40")}
             >
-              <span className="flex size-8 shrink-0 items-center justify-center text-muted-foreground">
-                <FileText className="size-4" />
-              </span>
               <SidebarMenuButton
                 isActive={note.id === activeId}
-                size="lg"
                 onClick={() => onPick(note.id)}
-                className="truncate"
+                className={ROW_BUTTON}
               >
-                <span className="truncate">{note.title}</span>
+                {/* Spacer aligns note icons with folder icons (chevron column). */}
+                <span aria-hidden className="size-4 shrink-0" />
+                <FileText className="text-muted-foreground" />
+                <span>{note.title}</span>
               </SidebarMenuButton>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <SidebarMenuAction showOnHover aria-label={`Actions for ${note.title}`}>
+                    <SidebarMenuAction showOnHover className="top-2 md:top-1.5" aria-label={`Actions for ${note.title}`}>
                       <MoreHorizontal />
                     </SidebarMenuAction>
                   }
@@ -738,13 +727,22 @@ function Row({
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      {showAfter && <DropLine />}
+      {showAfter && <DropLine position="after" />}
     </SidebarMenuItem>
   );
 }
 
-function DropLine() {
+/** Row height: comfortable touch target on mobile, compact on desktop. */
+const ROW_BUTTON = "h-9 md:h-8";
+
+function DropLine({ position }: { position: "before" | "after" }) {
   return (
-    <div className="pointer-events-none mx-2 h-0.5 rounded-full bg-sidebar-ring" />
+    <div
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-sidebar-ring",
+        position === "before" ? "-top-px" : "-bottom-px",
+      )}
+    />
   );
 }

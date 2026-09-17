@@ -13,7 +13,7 @@ export {};
 declare const self: ServiceWorkerGlobalScope;
 
 /**
- * ADHD service worker. Caches ONLY the app shell + runtime assets
+ * Methyl service worker. Caches ONLY the app shell + runtime assets
  * (HTML/JS/CSS/WASM/icons). Vault data lives in OPFS and must never
  * be stored in the Cache API (SPEC §17).
  */

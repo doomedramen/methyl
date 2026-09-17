@@ -16,11 +16,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ADHD — offline-first Markdown vault",
+  title: "Methyl — offline-first Markdown vault",
   description: "Self-hostable, offline-first Markdown vault",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg", apple: "/icon.svg" },
-  appleWebApp: { capable: true, title: "ADHD", statusBarStyle: "black-translucent" },
+  appleWebApp: { capable: true, title: "Methyl", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {

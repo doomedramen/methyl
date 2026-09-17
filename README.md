@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Methyl
 
-## Getting Started
+A self-hostable, offline-first Markdown vault. Obsidian-style notes in your browser, on your phone and on your own server — with plain folders and `.md` files as the only data format that matters.
 
-First, run the development server:
+> **Status:** early development. The browser app works offline against a local vault. The sync server and Docker deployment described in [SPEC.md](SPEC.md) are in progress and not yet runnable as a standalone service.
+
+## Principles
+
+- **Your files stay yours.** Notes are ordinary Markdown in ordinary folders. No IDs, markers or app metadata inside `.md` files — open them in VS Code, Git or any other editor.
+- **Offline first.** The whole vault lives on the device (OPFS in the browser) and the app shell is cached by a service worker. No network required to read or write.
+- **Merge, don't lose.** Each note is a [Loro](https://loro.dev) CRDT, so edits made on several disconnected devices reconcile automatically.
+- **No infrastructure.** Target deployment is one container plus one mounted vault folder — no Postgres, Redis or object storage.
+
+Markdown is the portable truth, Loro is the sync/history format, everything else is disposable derived state.
+
+## Features
+
+- CodeMirror 6 Markdown editor with live CRDT binding
+- Folder tree sidebar with drag-and-drop moves and manual ordering
+- Command palette (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>) for notes and actions
+- Rename / delete for notes and folders; titles come from file names
+- Light, dark and system themes
+- Installable PWA with storage-persistence and quota status
+- Note identity kept outside the files (vault tree + `.adhd/index.json`), so renames and moves keep history
+
+## Getting started
+
+Requires Node.js 24 LTS.
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>. A fresh vault is created in the browser's private file system with a welcome note.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Next dev server plus service-worker build in watch mode |
+| `npm run build` | Static export (`out/`) and service-worker build |
+| `npm run serve:static` | Serve the static export locally |
+| `npm test` | Run the Vitest suite once |
+| `npm run test:watch` | Vitest in watch mode |
+| `npm run lint` | ESLint |
 
-## Learn More
+## Vault layout
 
-To learn more about Next.js, take a look at the following resources:
+```text
+vault/
+├── Projects/
+│   └── welcome.md        # plain Markdown, usable anywhere
+├── Attachments/
+└── .adhd/                # app metadata — sync history and identity, not needed to read notes
+    ├── crdt/             # Loro snapshots and updates per document
+    └── index.json        # path → document id + content hash
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Internal names (`.adhd/`, `adhd-vault`) predate the Methyl name and are kept for compatibility with existing vaults.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Tech stack
 
-## Deploy on Vercel
+Next.js 16 (static export) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (Base UI) · CodeMirror 6 · Loro CRDT · OPFS · Web Locks · Serwist · dnd-kit · Vitest
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Project structure
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```text
+src/
+├── app/                 # Next app router, layout, service worker entry
+├── components/
+│   ├── ui/              # shadcn/ui components
+│   ├── vault/           # app shell, sidebar tree, command menu, note actions
+│   ├── editor/          # CodeMirror host
+│   └── pwa/             # install / storage status
+└── lib/
+    ├── core/            # documents, Markdown parsing, identity index, paths
+    ├── vault/           # vault engine, tree CRDT, OPFS / memory stores
+    ├── browser/         # browser vault bootstrap, PWA hooks, sync host
+    ├── sync/            # sync coordinator and journal
+    ├── server/          # Node file store and sync server
+    └── editor/          # CodeMirror extensions and theme
+```
+
+## Documentation
+
+[SPEC.md](SPEC.md) is the architecture specification: data model, identity, persistence, crash-safe writes, sync topology and service-worker design.
+
+## License
+
+[MIT](LICENSE)
