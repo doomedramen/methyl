@@ -6,7 +6,6 @@ import {
   drawSelection,
   rectangularSelection,
   crosshairCursor,
-  highlightActiveLine,
   type KeyBinding,
 } from "@codemirror/view";
 import {
@@ -52,7 +51,6 @@ const { doc, ephemeral, user, undoManager } = opts;
     drawSelection(),
     rectangularSelection(),
     crosshairCursor(),
-    highlightActiveLine(),
     indentOnInput(),
     bracketMatching(),
     amoledMinimal,

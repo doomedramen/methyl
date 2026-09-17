@@ -32,9 +32,6 @@ export const amoledMinimal = EditorView.theme({
   ".cm-line": {
     padding: "0 0 4px 0",
   },
-  ".cm-activeLine": {
-    backgroundColor: "var(--accent)",
-  },
   ".cm-selectionBackground, ::selection": {
     backgroundColor: "color-mix(in oklab, var(--accent) 70%, transparent)",
   },
@@ -55,9 +52,6 @@ export const amoledMinimal = EditorView.theme({
 const amoledDark = EditorView.theme({
   "&": {
     color: "var(--foreground)",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "var(--accent)",
   },
   ".cm-foldPlaceholder": {
     backgroundColor: "var(--muted)",
