@@ -1,11 +1,25 @@
 "use client";
 
 import { useCallback } from "react";
-import { CloudCheck, CloudCog, Download, HardDrive, ShieldCheck } from "lucide-react";
-import { formatBytes, usePwa } from "@/lib/browser/pwa";
+import {
+  CloudCheck,
+  CloudCog,
+  CloudOff,
+  Download,
+  HardDrive,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
+import { formatBytes, usePwa, type PwaState } from "@/lib/browser/pwa";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Item, ItemContent, ItemMedia, ItemTitle } from "@/components/ui/item";
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
 import {
   Popover,
@@ -14,7 +28,35 @@ import {
 } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 
-/** Compact footer status: install affordance, storage persistence, quota. */
+const OFFLINE_COPY: Record<
+  PwaState["offline"],
+  { trigger: string; badge: string; description: string }
+> = {
+  pending: {
+    trigger: "Checking offline…",
+    badge: "Checking",
+    description: "Setting up so the app opens without a connection.",
+  },
+  ready: {
+    trigger: "Works offline",
+    badge: "Ready",
+    description: "The app opens and saves notes without a connection.",
+  },
+  unavailable: {
+    trigger: "Online only",
+    badge: "Unavailable",
+    description:
+      "This browser blocked offline support. Notes still save on this device, but the app needs a connection to open.",
+  },
+};
+
+function OfflineIcon({ state }: { state: PwaState["offline"] }) {
+  if (state === "ready") return <CloudCheck className="text-primary" />;
+  if (state === "unavailable") return <CloudOff className="text-muted-foreground" />;
+  return <CloudCog className="animate-pulse text-muted-foreground motion-reduce:animate-none" />;
+}
+
+/** Compact footer status: offline support, storage protection, space used. */
 export function PwaStatus() {
   const pwa = usePwa();
 
@@ -26,54 +68,53 @@ export function PwaStatus() {
   const used = pwa.quota?.usage;
   const total = pwa.quota?.quota;
   const usagePct = used !== undefined && total ? Math.min(100, (used / total) * 100) : undefined;
+  const offline = OFFLINE_COPY[pwa.offline];
 
   return (
     <Popover>
       <PopoverTrigger
         render={
           <Button variant="ghost" size="sm" className="justify-start gap-2 text-muted-foreground">
-            {pwa.swRegistered ? (
-              <CloudCheck className="text-primary" />
-            ) : (
-              <CloudCog className="animate-pulse" />
-            )}
-            {pwa.swRegistered ? "Offline ready" : "Starting…"}
+            <OfflineIcon state={pwa.offline} />
+            {offline.trigger}
           </Button>
         }
       />
-      <PopoverContent align="start" className="w-72">
+      <PopoverContent align="start" className="w-80">
         <div className="flex flex-col gap-1">
           <Item size="sm">
             <ItemMedia>
-              {pwa.swRegistered ? (
-                <CloudCheck className="text-primary" />
-              ) : (
-                <CloudCog className="animate-pulse text-muted-foreground" />
-              )}
+              <OfflineIcon state={pwa.offline} />
             </ItemMedia>
             <ItemContent>
-              <ItemTitle>Service worker</ItemTitle>
+              <ItemTitle>Offline access</ItemTitle>
+              <ItemDescription className="line-clamp-none">{offline.description}</ItemDescription>
             </ItemContent>
-            <Badge variant={pwa.swRegistered ? "secondary" : "outline"}>
-              {pwa.swRegistered ? "active" : "booting"}
+            <Badge variant={pwa.offline === "ready" ? "secondary" : "outline"}>
+              {offline.badge}
             </Badge>
           </Item>
 
           <Item size="sm">
             <ItemMedia>
-              <ShieldCheck
-                className={pwa.persistent ? "text-primary" : "text-muted-foreground"}
-              />
+              {pwa.persistent ? (
+                <ShieldCheck className="text-primary" />
+              ) : (
+                <ShieldAlert className="text-muted-foreground" />
+              )}
             </ItemMedia>
             <ItemContent>
-              <ItemTitle>Storage persistence</ItemTitle>
+              <ItemTitle>Notes protected</ItemTitle>
+              <ItemDescription className="line-clamp-none">
+                {pwa.persistent === true
+                  ? "The browser won't clear your notes to free up space."
+                  : pwa.persistent === false
+                    ? "The browser may clear notes if the device runs low on space. Installing the app usually protects them."
+                    : "Checking whether the browser keeps your notes."}
+              </ItemDescription>
             </ItemContent>
             <Badge variant={pwa.persistent ? "secondary" : "outline"}>
-              {pwa.persistent === null || pwa.persistent === undefined
-                ? "unknown"
-                : pwa.persistent
-                  ? "persistent"
-                  : "best-effort"}
+              {pwa.persistent === true ? "Yes" : pwa.persistent === false ? "No" : "Checking"}
             </Badge>
           </Item>
 
@@ -86,9 +127,9 @@ export function PwaStatus() {
                 </ItemMedia>
                 <ItemContent>
                   <div className="flex w-full items-center justify-between text-sm">
-                    <span>Storage quota</span>
+                    <span>Space used</span>
                     <span className="text-muted-foreground tabular-nums">
-                      {formatBytes(used)} / {formatBytes(total)}
+                      {formatBytes(used)} of {formatBytes(total)}
                     </span>
                   </div>
                   <Progress value={usagePct ?? null} className="w-full" />

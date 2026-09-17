@@ -6,7 +6,8 @@ export interface InviteEvent extends Event {
 }
 
 export interface PwaState {
-  swRegistered: boolean;
+  /** Offline app shell: registering, active, or blocked/unsupported. */
+  offline: "pending" | "ready" | "unavailable";
   installPrompt: InviteEvent | null;
   persistent: boolean | null;
   quota: { usage: number; quota: number } | null;
@@ -52,22 +53,24 @@ export function isStandalone(): boolean {
 }
 
 /**
- * Registers the Serwist-built SW at /sw.js (present only in the static
- * export; dev server doesn't serve it, so registration is skipped there).
+ * Registers the Serwist-built SW at /sw.js (built into the static export and the
+ * dev server via `serwist build --watch`). Fails in browsers or embedded
+ * webviews that block service workers; the UI reports that as unavailable.
  */
 export async function registerServiceWorker(): Promise<boolean> {
   if (!("serviceWorker" in navigator)) return false;
   try {
     const reg = await navigator.serviceWorker.register("/sw.js");
     return Boolean(reg.active || reg.waiting || reg.installing);
-  } catch {
+  } catch (err) {
+    console.warn("[pwa] service worker registration failed", err);
     return false;
   }
 }
 
 export function usePwa() {
   const [state, setState] = useState<PwaState>({
-    swRegistered: false,
+    offline: "pending",
     installPrompt: null,
     persistent: null,
     quota: null,
@@ -93,7 +96,7 @@ export function usePwa() {
   useEffect(() => {
     let alive = true;
     registerServiceWorker().then((ok) => {
-      if (alive) setState((s) => ({ ...s, swRegistered: ok }));
+      if (alive) setState((s) => ({ ...s, offline: ok ? "ready" : "unavailable" }));
     });
     tryPersistStorage().then((p) => {
       if (alive) setState((s) => ({ ...s, persistent: p }));
