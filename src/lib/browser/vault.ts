@@ -68,11 +68,40 @@ let booting: Promise<VaultEngine> | null = null;
  * The lock is acquired for the whole session so the offline kernel owns the
  * store; other tabs stay read-only (§12).
  */
+/**
+ * Browsers only expose OPFS (where the whole vault lives) in a secure
+ * context: https, or http on localhost. Served over plain http from a LAN
+ * address — the common self-hosting mistake — `navigator.storage` is
+ * simply absent, and the first vault call dies with an opaque
+ * "undefined is not an object" TypeError. Fail early with something the
+ * user can act on instead; VaultApp renders this message verbatim.
+ */
+function assertStorageAvailable(): void {
+  const storage: StorageManager | undefined =
+    typeof navigator === "undefined" ? undefined : navigator.storage;
+  if (typeof storage?.getDirectory === "function") return;
+
+  const origin = typeof window === "undefined" ? "this address" : window.location.origin;
+  const secure = typeof window !== "undefined" && window.isSecureContext;
+  if (!secure) {
+    throw new Error(
+      `Methyl stores your notes in the browser, which needs a secure connection. ` +
+        `${origin} is plain http, so the browser blocks storage entirely. ` +
+        `Open the app over https (a reverse proxy or Tailscale will do it), or use http://localhost on this machine.`,
+    );
+  }
+  throw new Error(
+    `This browser doesn't support the storage Methyl needs (OPFS). ` +
+      `Private or incognito windows often block it — try a normal window, or a current Chrome, Edge, Safari or Firefox.`,
+  );
+}
+
 export async function getVault(): Promise<VaultEngine> {
   if (singleton) return singleton;
   if (booting) return booting;
 
   booting = (async () => {
+    assertStorageAvailable();
     const fs = new OpfsVaultFS();
     const treeStore = new OpfsVaultTreeStore(fs);
     const docStore = new OpfsDocStore(fs);
