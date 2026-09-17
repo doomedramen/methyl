@@ -99,6 +99,28 @@ export function NoteEditor({
           }),
         });
 
+        // Work around a loro-codemirror@0.3.3 bug (node_modules/loro-codemirror/
+        // dist/sync.js, LoroSyncPluginValue): its constructor unconditionally
+        // sets `isInitDispatch = true` inside a `Promise.resolve().then(...)`
+        // microtask — regardless of whether the initial content actually
+        // differed and needed dispatching — and `update()` silently swallows
+        // (never applies to the LoroText) the very next view update while that
+        // flag is set, clearing it afterwards. Since our EditorState is
+        // already seeded from the LoroText (so the plugin's own init dispatch
+        // is always a no-op), the flag stays armed and instead swallows the
+        // user's actual first edit: a single bulk insert (e.g. paste, or
+        // `execCommand('insertText', ...)`) shows up in the CodeMirror view
+        // (CM's own local state applies it regardless) but never reaches the
+        // LoroText, so it's typed, looks saved, and is silently lost on
+        // reload. Consuming the flag ourselves, right after mount, on a
+        // harmless no-op dispatch — scheduled after the plugin's own
+        // microtask so it "wins" the swallow instead of a real edit —
+        // fixes this without patching the vendored package.
+        Promise.resolve().then(() => {
+          if (disposed || !view) return;
+          view.dispatch({ selection: view.state.selection });
+        });
+
         const flush = () => void session.flush();
         const onHidden = () => {
           if (document.visibilityState === "hidden") flush();
