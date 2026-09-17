@@ -96,7 +96,13 @@ describe("SyncCoordinator §34", () => {
     );
 
     const report = await coordinator.sync();
-    expect(report.docsSynced).toBe(2);
+    // Both local docs must sync. Not an exact count: the shared test server
+    // runs its own vault mirror, so discovery can legitimately turn up an
+    // extra room in the same pass (this assertion was flaky in CI).
+    expect(report.docsSynced).toBeGreaterThanOrEqual(2);
+    expect(report.touchedRoomIds).toEqual(
+      expect.arrayContaining([expect.stringContaining(DOC_A), expect.stringContaining(DOC_B)]),
+    );
 
     // Wait for server save interval + durable write
     await new Promise((r) => setTimeout(r, 300));

@@ -73,24 +73,6 @@ export interface MethylHealth {
   ok: boolean;
 }
 
-/**
- * Detect whether the app itself is being served by a Methyl server (so the
- * Sync dialog can default the server URL field to the current origin). Not
- * unit tested — thin fetch wrapper, browser-only.
- */
-export async function detectCurrentOriginServer(): Promise<string | null> {
-  if (typeof window === "undefined" || typeof fetch === "undefined") return null;
-  try {
-    const res = await fetch("/healthz");
-    if (!res.ok) return null;
-    const body = (await res.json()) as MethylHealth;
-    if (body && body.ok === true) return window.location.origin;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 /** Test the connection: /healthz plus an authenticated call (/api/rooms). */
 export async function testSyncConnection(
   config: SyncConfig,

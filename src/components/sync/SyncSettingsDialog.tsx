@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { useSync } from "@/lib/browser/sync-context";
-import { detectCurrentOriginServer, type SyncConfig } from "@/lib/browser/sync-config";
+import type { SyncConfig } from "@/lib/browser/sync-config";
 import {
   Dialog,
   DialogContent,
@@ -38,11 +38,11 @@ export function SyncSettingsDialog() {
       setAuthToken(config.authToken);
       return;
     }
-    setServerUrl("");
+    // The app is almost always served by the server it syncs with, so
+    // start from the current origin and let the user edit it. "Test
+    // connection" is what proves it, not a probe before showing the field.
+    setServerUrl(typeof window === "undefined" ? "" : window.location.origin);
     setAuthToken("");
-    void detectCurrentOriginServer().then((origin) => {
-      if (origin) setServerUrl((cur) => cur || origin);
-    });
   }, [dialogOpen, config]);
 
   const runTest = useCallback(async () => {
