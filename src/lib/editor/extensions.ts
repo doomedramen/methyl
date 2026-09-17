@@ -17,8 +17,9 @@ import {
   defaultHighlightStyle,
 } from "@codemirror/language";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { markdown, markdownLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
+import { livePreview } from "@/lib/editor/live-preview";
 import { type LoroDoc, type LoroText, type EphemeralStore, type UndoManager } from "loro-crdt";
 import {
   LoroEphemeralPlugin,
@@ -59,6 +60,9 @@ const { doc, ephemeral, user, undoManager } = opts;
     amoledMono,
     syntaxHighlighting(defaultHighlightStyle),
     keymap.of([
+      // Markdown-aware Enter/Backspace (continue lists, dedent markup) takes
+      // precedence over the generic defaults below.
+      ...markdownKeymap,
       // Movement/editing from CM, but not its native undo stack
       ...defaultKeymap.filter(
         (b) => b.key !== "Mod-z" && b.key !== "Mod-y" && b.key !== "Ctrl-z",
@@ -72,6 +76,7 @@ const { doc, ephemeral, user, undoManager } = opts;
       codeLanguages: languages,
       addKeymap: false,
     }),
+    livePreview(),
     // Collaborative binding first so state is authoritative in Loro
     LoroSyncPlugin(doc, getText),
     LoroUndoPlugin(doc, undoManager, getText),
