@@ -5,11 +5,10 @@
   "license": "MIT",
   "scripts": {
     "dev": "concurrently -p none 'serwist build --watch' 'next dev'",
-    "build": "next build && serwist build",
+    "build": "next build && serwist build && node scripts/copy-standalone-assets.mjs",
     "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:better-sqlite3 --external:loro-crdt --external:loro-websocket --external:loro-protocol --external:chokidar --alias:@=./src",
     "start": "next start",
     "start:server": "node dist/server.cjs",
-    "serve:static": "npx serve out",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest"

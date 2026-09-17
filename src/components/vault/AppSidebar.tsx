@@ -34,6 +34,8 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { BrandMark } from "@/components/brand-mark";
 import { Kbd } from "@/components/ui/kbd";
 import {
   DropdownMenu,
@@ -398,45 +400,64 @@ export function AppSidebar({
 
   return (
     <Sidebar variant="inset">
-      <SidebarHeader className="flex-row items-center justify-between gap-2 pt-6 md:pt-3">
-        <h1 className="min-w-0 truncate text-sm font-semibold tracking-wide">Methyl</h1>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="outline"
-            size="icon-lg"
-            onClick={() => {
-              setNewFolderParent(undefined);
-              onNewFolderOpenChange(true);
-            }}
-            aria-label="New folder"
-            className="size-10 md:size-9"
-          >
-            <FolderPlus />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon-lg"
-            onClick={() => onCreate()}
-            aria-label="New note"
-            className="size-10 md:size-9"
-          >
-            <Plus />
-          </Button>
+      <SidebarHeader className="flex-row items-center justify-between gap-2 px-4 pt-6 md:pt-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <BrandMark className="size-6 shrink-0 rounded-md" />
+          <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
+        </div>
+        <div className="flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setNewFolderParent(undefined);
+                    onNewFolderOpenChange(true);
+                  }}
+                  aria-label="New folder"
+                  className="size-9 text-muted-foreground md:size-8"
+                >
+                  <FolderPlus />
+                </Button>
+              }
+            />
+            <TooltipContent>New folder</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onCreate()}
+                  aria-label="New note"
+                  className="size-9 text-muted-foreground md:size-8"
+                >
+                  <Plus />
+                </Button>
+              }
+            />
+            <TooltipContent>New note</TooltipContent>
+          </Tooltip>
         </div>
       </SidebarHeader>
 
       <SidebarContent>
         <SidebarGroup>
           <Button
-            variant="outline"
-            className="mx-2 mb-2 justify-start gap-2 text-muted-foreground"
+            variant="ghost"
+            className="mb-1 h-9 w-full justify-start gap-2 bg-sidebar-accent/40 px-2 font-normal text-muted-foreground hover:bg-sidebar-accent md:h-8"
             onClick={onOpenCommandMenu}
           >
-            <Search />
+            <Search className="text-muted-foreground" />
             Search notes
             <Kbd className="ml-auto">⌘K</Kbd>
           </Button>
-          <SidebarGroupLabel className="px-2">Notes</SidebarGroupLabel>
+          <SidebarGroupLabel className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+            Notes
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             {isEmpty ? (
               <Empty className="border-0 p-4">
@@ -635,7 +656,7 @@ function Row({
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <SidebarMenuAction showOnHover className="top-2 md:top-1.5" aria-label={`Actions for ${row.name}`}>
+                      <SidebarMenuAction showOnHover className="top-1/2! -translate-y-1/2" aria-label={`Actions for ${row.name}`}>
                         <MoreHorizontal />
                       </SidebarMenuAction>
                     }
@@ -709,15 +730,13 @@ function Row({
                 onClick={() => onPick(note.id)}
                 className={ROW_BUTTON}
               >
-                {/* Spacer aligns note icons with folder icons (chevron column). */}
-                <span aria-hidden className="size-4 shrink-0" />
                 <FileText className="text-muted-foreground" />
                 <span>{note.title}</span>
               </SidebarMenuButton>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <SidebarMenuAction showOnHover className="top-2 md:top-1.5" aria-label={`Actions for ${note.title}`}>
+                    <SidebarMenuAction showOnHover className="top-1/2! -translate-y-1/2" aria-label={`Actions for ${note.title}`}>
                       <MoreHorizontal />
                     </SidebarMenuAction>
                   }

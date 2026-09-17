@@ -1,15 +1,19 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
+import { spawn, type ChildProcess } from "child_process";
+import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "http";
 import { connect as netConnect } from "net";
 import { join } from "path";
 import { createSyncServer, createHttpApi } from "@/lib/server/sync-server";
-import { createStaticHandler } from "@/server/static";
 
 const PORT = Number(process.env.METHYL_PORT ?? 8080);
 const HOST = process.env.METHYL_HOST ?? "0.0.0.0";
 const VAULT_PATH = process.env.METHYL_VAULT_PATH ?? "/vault";
 const WATCH = process.env.METHYL_WATCH !== "false";
 const AUTH_TOKEN = process.env.METHYL_AUTH_TOKEN;
-const OUT_DIR = process.env.METHYL_STATIC_DIR ?? join(__dirname, "..", "out");
+// `.next/standalone` produced by `next build` with `output: "standalone"`
+// (see next.config.ts) — a self-contained Next server plus its traced
+// runtime deps. Defaults to the layout the Dockerfile copies into the
+// image; overridable for running against a differently-located build.
+const NEXT_STANDALONE_DIR = process.env.METHYL_NEXT_STANDALONE_DIR ?? join(__dirname, "..", ".next", "standalone");
 // CORS for /api + /healthz: only needed when the browser app is served from
 // a different origin than this server (e.g. the static app hosted
 // separately from the sync server). Same-origin requests need no CORS
@@ -44,13 +48,102 @@ if (!AUTH_TOKEN) {
  * to the outside world while reusing SimpleServer unmodified, it's bound to
  * an internal, loopback-only port, and raw WS upgrade requests received on
  * the public port are proxied byte-for-byte over a local TCP connection.
- * Regular HTTP (static files, /healthz, /api/*) is handled directly in this
- * same process, without any proxying.
+ *
+ * The Next.js app (`.next/standalone/server.js`) is handled the same way:
+ * Next's `output: "standalone"` produces its own self-contained server that
+ * binds its own port — there's no in-process "handler" API compatible with
+ * standalone tracing (a custom `next(...)`-based server and `output:
+ * "standalone"` are mutually exclusive; standalone doesn't trace custom
+ * server files). So it's run as a child process on a loopback-only port,
+ * and this process reverse-proxies ordinary HTTP requests to it. This
+ * keeps the small, traced standalone runtime while still presenting a
+ * single public port for the app, /api/*, /healthz and the WS upgrade.
  */
 const INTERNAL_WS_PORT = Number(process.env.METHYL_INTERNAL_WS_PORT ?? PORT + 10000);
 const INTERNAL_HTTP_PORT = Number(process.env.METHYL_INTERNAL_HTTP_PORT ?? PORT + 10001);
+const INTERNAL_NEXT_PORT = Number(process.env.METHYL_INTERNAL_NEXT_PORT ?? PORT + 10002);
+
+function startNextServer(): ChildProcess {
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: NEXT_STANDALONE_DIR,
+    env: {
+      ...process.env,
+      PORT: String(INTERNAL_NEXT_PORT),
+      HOSTNAME: "127.0.0.1",
+    },
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  child.on("exit", (code, signal) => {
+    console.error(`[methyl] Next server exited (code=${code} signal=${signal}), shutting down`);
+    process.exit(1);
+  });
+  return child;
+}
+
+/** Poll the internal Next server until it accepts connections. */
+async function waitForNextServer(timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const socket = netConnect(INTERNAL_NEXT_PORT, "127.0.0.1");
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+    });
+    if (ok) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error("timed out waiting for the Next.js server to start");
+}
+
+// `/_next/*` should only ever serve build assets (JS/CSS/fonts/etc, or a
+// genuine 404) — never the HTML app shell. If `.next/static` isn't where
+// the internal Next server expects it (see scripts/copy-standalone-assets.mjs
+// and the Dockerfile), Next's own router falls through unmatched `/_next/*`
+// requests to the catch-all app route and happily answers 200 with the
+// shell's HTML, which is worse than a 404: every chunk "loads" but the app
+// renders unstyled and never boots. Treat that as a 404 instead of relaying
+// it, so a missing-assets misconfiguration fails loudly.
+function isNextAssetPath(pathname: string): boolean {
+  return pathname.startsWith("/_next/");
+}
+
+/** Reverse-proxy a request to the internal Next.js server. */
+function proxyToNext(req: IncomingMessage, res: ServerResponse): void {
+  const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+  const upstream = httpRequest(
+    {
+      host: "127.0.0.1",
+      port: INTERNAL_NEXT_PORT,
+      method: req.method,
+      path: req.url,
+      headers: req.headers,
+    },
+    (upstreamRes) => {
+      const contentType = upstreamRes.headers["content-type"] ?? "";
+      if (isNextAssetPath(pathname) && contentType.includes("text/html")) {
+        upstreamRes.resume(); // drain so the socket can be reused
+        res.writeHead(404, { "content-type": "text/plain" }).end("not found");
+        return;
+      }
+      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+      upstreamRes.pipe(res);
+    },
+  );
+  upstream.on("error", (err) => {
+    console.error("[methyl] proxy to Next server failed:", err);
+    if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" }).end("bad gateway");
+    else res.destroy();
+  });
+  req.pipe(upstream);
+}
 
 async function main() {
+  const nextChild = startNextServer();
+  await waitForNextServer();
+
   const syncServer = createSyncServer({
     port: INTERNAL_WS_PORT,
     httpPort: INTERNAL_HTTP_PORT,
@@ -64,7 +157,6 @@ async function main() {
 
   const assetDir = `${VAULT_PATH}/.adhd/server/assets`;
   const apiHandler = createHttpApi({ store: syncServer.store, authToken: AUTH_TOKEN!, assetDir });
-  const staticHandler = createStaticHandler(OUT_DIR);
 
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -88,9 +180,7 @@ async function main() {
       return;
     }
 
-    if (staticHandler(req, res)) return;
-
-    res.writeHead(404, { "content-type": "text/plain" }).end("not found");
+    proxyToNext(req, res);
   });
 
   // Proxy WebSocket upgrades to the internal loro-websocket SimpleServer.
@@ -118,6 +208,8 @@ async function main() {
     console.log(`[methyl] received ${signal}, shutting down`);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await syncServer.stop();
+    nextChild.removeAllListeners("exit");
+    nextChild.kill("SIGTERM");
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));

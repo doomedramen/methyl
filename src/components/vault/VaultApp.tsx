@@ -36,7 +36,7 @@ import { CommandMenu } from "./CommandMenu";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
-import { docIdForPath, notePathFromLocation, pathForDocId } from "@/lib/vault/note-path";
+import type { docIdForPath, notePathFromLocation, pathForDocId } from "@/lib/vault/note-path";
 import { VaultAccessBanner } from "./VaultAccessBanner";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -119,22 +119,32 @@ export function VaultApp() {
   // src/app/[...slug]/page.tsx in dev, index.html from the server's static
   // handler in production.
   const urlRestored = useRef(false);
+  // Populated once the dynamic import below resolves; the URL-mirroring
+  // effect only runs once `urlRestored` is set, so it's always available by
+  // then.
+  const notePathRef = useRef<typeof import("@/lib/vault/note-path") | null>(null);
 
   const notes = useMemo(() => flattenNotes(rows), [rows]);
 
   useEffect(() => {
     let cancelled = false;
-    // Dynamic import keeps loro-crdt WASM out of the prerender module graph.
-    Promise.all([import("@/lib/browser/vault"), import("@/lib/vault/engine")])
-      .then(async ([{ getVault }]) => {
+    // Dynamic import keeps loro-crdt WASM out of the prerender module graph
+    // (note-path.ts pulls it in transitively via vault/engine.ts).
+    Promise.all([
+      import("@/lib/browser/vault"),
+      import("@/lib/vault/engine"),
+      import("@/lib/vault/note-path"),
+    ])
+      .then(async ([{ getVault }, , notePath]) => {
         const eng = await getVault();
         if (cancelled) return;
+        notePathRef.current = notePath;
         setEngine(eng);
         refreshNotes(eng);
 
-        const wanted = notePathFromLocation(window.location.pathname, eng.vaultId);
+        const wanted = notePath.notePathFromLocation(window.location.pathname, eng.vaultId);
         if (wanted) {
-          const found = docIdForPath(eng.tree, wanted);
+          const found = notePath.docIdForPath(eng.tree, wanted);
           if (found) setActiveId(found);
         }
         urlRestored.current = true;
@@ -170,8 +180,8 @@ export function VaultApp() {
   // Mirror the open note into the URL once the initial restore has run, so
   // a stale or missing `?note=` is cleared instead of reopened forever.
   useEffect(() => {
-    if (!engine || !urlRestored.current) return;
-    const path = activeId ? pathForDocId(engine.tree, activeId) : null;
+    if (!engine || !urlRestored.current || !notePathRef.current) return;
+    const path = activeId ? notePathRef.current.pathForDocId(engine.tree, activeId) : null;
     const next = path
       ? `/${encodeURIComponent(engine.vaultId)}/${path.split("/").map(encodeURIComponent).join("/")}`
       : "/";

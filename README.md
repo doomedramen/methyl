@@ -39,8 +39,7 @@ Open <http://localhost:3000>. A fresh vault is created in the browser's private 
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Next dev server plus service-worker build in watch mode |
-| `npm run build` | Static export (`out/`) and service-worker build |
-| `npm run serve:static` | Serve the static export locally |
+| `npm run build` | Next standalone server build (`.next/standalone`) and service-worker build |
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run lint` | ESLint |
@@ -131,7 +130,7 @@ Internal names (`.adhd/`, `adhd-vault`) predate the Methyl name and are kept for
 
 ## Tech stack
 
-Next.js 16 (static export) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (Base UI) · CodeMirror 6 · Loro CRDT · OPFS · Web Locks · Serwist · dnd-kit · Vitest
+Next.js 16 (standalone server) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (Base UI) · CodeMirror 6 · Loro CRDT · OPFS · Web Locks · Serwist · dnd-kit · Vitest
 
 ## Project structure
 

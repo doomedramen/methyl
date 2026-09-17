@@ -19,7 +19,15 @@ export const metadata: Metadata = {
   title: "Methyl",
   description: "Self-hostable, offline-first Markdown vault",
   manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon.svg", apple: "/icon.svg" },
+  icons: {
+    // Browsers pick the variant that suits their current theme; the dark
+    // one has a light plate so it stays visible on a dark tab strip.
+    icon: [
+      { url: "/icon.svg", media: "(prefers-color-scheme: light)" },
+      { url: "/icon-dark.svg", media: "(prefers-color-scheme: dark)" },
+    ],
+    apple: "/icon.svg",
+  },
   appleWebApp: { capable: true, title: "Methyl", statusBarStyle: "black-translucent" },
 };
 

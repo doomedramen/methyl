@@ -29,7 +29,7 @@ The core philosophy is:
 | Layer                   | Choice                                                 |
 | ----------------------- | ------------------------------------------------------ |
 | Application             | Next.js 16, React, TypeScript                          |
-| Deployment              | Next static export                                     |
+| Deployment              | Next standalone server (single-port container)         |
 | UI                      | Tailwind CSS 4, shadcn/ui, next-themes                 |
 | Markdown editor         | CodeMirror 6                                           |
 | Editor/CRDT integration | `loro-codemirror`                                      |
@@ -746,33 +746,31 @@ Never label a locally saved note simply "Synced."
 
 # 16. PWA shell
 
-Next.js is used as a build/framework layer, not as an online runtime dependency.
-
-Configure:
+Next.js is used as a build/framework layer, and — since dynamic route params
+(`/<vaultId>/<vault path>`) must resolve in a real path URL, which a static
+export refuses for unlisted params — as the in-process server too, run
+alongside the sync server behind one public port. Configure:
 
 ```js
-output: "export"
+output: "standalone"
 ```
 
-Next.js officially supports static exports that can be hosted by an arbitrary HTTP server.
+`output: "standalone"` traces only the deps the server actually needs into
+`.next/standalone`, keeping the runtime image close to the old static
+export's size despite running a real server.
 
-The application's main workspace is a client shell.
-
-Avoid depending on dynamically generated Next routes such as:
+The application's main workspace is a client shell. The open note lives in
+the URL as a real path:
 
 ```text
-/note/[id]
+/<vaultId>/<vault path>   e.g. /local/Projects/welcome.md
 ```
 
-Instead use a static shell and client navigation:
-
-```text
-/?note=<document-id>
-```
-
-or equivalent client-side state.
-
-That guarantees every possible note can be opened offline without a statically generated route existing.
+`src/app/[...slug]/page.tsx` is a normal dynamic route — no
+`generateStaticParams` — that renders the same client shell for every path;
+the shell resolves the note from the URL in the browser (no per-note server
+data). That guarantees every possible note can be opened, including a hard
+load of a deep URL, without a statically generated route existing for it.
 
 ---
 
@@ -803,14 +801,17 @@ Build:
 ```text
 next build
       ↓
-out/
+.next/standalone, .next/static
 
 service-worker build
       ↓
-precache out/
+precache .next/static + public/, plus "/" (the prerendered app shell) by URL
 ```
 
-Navigation always falls back to the locally cached app shell.
+Navigation always falls back to the locally cached `/` document — every
+route (including deep note URLs served by the dynamic `[...slug]` route)
+renders the same client shell, so one cached document covers all of them
+offline.
 
 All required runtime assets must be self-hosted.
 

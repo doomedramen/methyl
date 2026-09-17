@@ -23,6 +23,18 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   cacheId: "adhd-app",
+  // There's no more prerendered `out/index.html` to fall back to — `/` is
+  // now a server-rendered (but static) Next page, precached by URL like any
+  // other entry (see serwist.config.js's `precachePrerendered`). Every
+  // route, including deep note URLs (`/<vault>/<path>`, served by the
+  // dynamic `[...slug]` route), renders the same client-side shell that
+  // resolves the open note from the URL in the browser (VaultApp.tsx), so
+  // falling back to the cached `/` document works for any offline
+  // navigation.
+  precacheOptions: {
+    navigateFallback: "/",
+    navigateFallbackDenylist: [/^\/api\//, /^\/healthz$/],
+  },
   runtimeCaching: [
     {
       matcher: /\.(?:wasm)(?:\?.*)?$/,
