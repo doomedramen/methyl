@@ -42,6 +42,11 @@ const OFFLINE_COPY: Record<
     badge: "Ready",
     description: "The app opens and saves notes without a connection.",
   },
+  disabled: {
+    trigger: "Offline off (dev)",
+    badge: "Off",
+    description: "Offline support is off in development so code changes show on reload.",
+  },
   unavailable: {
     trigger: "Online only",
     badge: "Unavailable",

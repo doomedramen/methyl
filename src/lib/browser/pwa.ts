@@ -7,7 +7,7 @@ export interface InviteEvent extends Event {
 
 export interface PwaState {
   /** Offline app shell: registering, active, or blocked/unsupported. */
-  offline: "pending" | "ready" | "unavailable";
+  offline: "pending" | "ready" | "unavailable" | "disabled";
   installPrompt: InviteEvent | null;
   persistent: boolean | null;
   quota: { usage: number; quota: number } | null;
@@ -53,18 +53,37 @@ export function isStandalone(): boolean {
 }
 
 /**
- * Registers the Serwist-built SW at /sw.js (built into the static export and the
- * dev server via `serwist build --watch`). Fails in browsers or embedded
- * webviews that block service workers; the UI reports that as unavailable.
+ * Registers the Serwist-built SW at /sw.js in production builds. In
+ * development it unregisters any existing worker and clears its caches so
+ * code changes show on reload instead of stale cached chunks. Registration
+ * fails in browsers or webviews that block service workers.
  */
-export async function registerServiceWorker(): Promise<boolean> {
-  if (!("serviceWorker" in navigator)) return false;
+export async function registerServiceWorker(): Promise<PwaState["offline"]> {
+  if (!("serviceWorker" in navigator)) return "unavailable";
+  if (process.env.NODE_ENV !== "production") {
+    await unregisterDevServiceWorker();
+    return "disabled";
+  }
   try {
     const reg = await navigator.serviceWorker.register("/sw.js");
-    return Boolean(reg.active || reg.waiting || reg.installing);
+    return reg.active || reg.waiting || reg.installing ? "ready" : "unavailable";
   } catch (err) {
     console.warn("[pwa] service worker registration failed", err);
-    return false;
+    return "unavailable";
+  }
+}
+
+async function unregisterDevServiceWorker(): Promise<void> {
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+    // Only Serwist's own caches; vault data lives in OPFS, not Cache Storage.
+    const keys = await caches.keys();
+    await Promise.all(
+      keys.filter((k) => k.startsWith("serwist-") || k === "adhd-wasm").map((k) => caches.delete(k)),
+    );
+  } catch (err) {
+    console.warn("[pwa] dev service worker cleanup failed", err);
   }
 }
 
@@ -95,8 +114,8 @@ export function usePwa() {
 
   useEffect(() => {
     let alive = true;
-    registerServiceWorker().then((ok) => {
-      if (alive) setState((s) => ({ ...s, offline: ok ? "ready" : "unavailable" }));
+    registerServiceWorker().then((offline) => {
+      if (alive) setState((s) => ({ ...s, offline }));
     });
     tryPersistStorage().then((p) => {
       if (alive) setState((s) => ({ ...s, persistent: p }));
