@@ -4,24 +4,26 @@ import { type Extension } from "@codemirror/state";
 /**
  * Minimal reader-style theme with dark support via the `dark` flag.
  * Deliberately restrained — no borders, soft gutters, quiet syntax colors
- * that scale with the note content rather than the UI.
+ * that scale with the note content rather than the UI. Colors are sourced
+ * from shadcn design tokens (globals.css) so the editor tracks the active
+ * theme (light/dark, and any future palette) automatically.
  */
 export const amoledMinimal = EditorView.theme({
   "&": {
     height: "100%",
     backgroundColor: "transparent",
-    color: "var(--cm-fg, var(--color-cm-fg, #222))",
+    color: "var(--foreground)",
     fontSize: "clamp(15px, 1rem, 17px)",
   },
   "&.cm-focused": {
     outline: "none",
   },
   ".cm-content": {
-    caretColor: "var(--cm-caret, #3b82f6)",
+    caretColor: "var(--primary)",
     padding: "16px max(16px, calc((100% - 760px) / 2)) 40vh",
     maxWidth: "760px",
     lineHeight: "1.7",
-    fontFamily: "var(--cm-font, inherit)",
+    fontFamily: "var(--font-sans, inherit)",
   },
   ".cm-line": {
     padding: "0 0 4px 0",
@@ -29,46 +31,49 @@ export const amoledMinimal = EditorView.theme({
   ".cm-gutters": {
     backgroundColor: "transparent",
     border: "none",
-    color: "var(--cm-gutter, #a1a1aa)",
+    color: "var(--muted-foreground)",
     paddingLeft: "8px",
   },
   ".cm-activeLine": {
-    backgroundColor: "var(--cm-active-line, rgba(0,0,0,0.025))",
+    backgroundColor: "var(--accent)",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "transparent",
+    color: "var(--foreground)",
   },
   ".cm-selectionBackground, ::selection": {
-    backgroundColor: "var(--cm-selection, rgba(59,130,246,0.18))",
+    backgroundColor: "color-mix(in oklab, var(--accent) 70%, transparent)",
   },
   ".cm-cursor, .cm-dropCursor": {
-    borderLeftColor: "var(--cm-caret, #3b82f6)",
+    borderLeftColor: "var(--primary)",
   },
   ".cm-searchMatch": {
-    backgroundColor: "var(--cm-search-match, rgba(250,204,21,0.35))",
+    backgroundColor: "color-mix(in oklab, var(--chart-4) 45%, transparent)",
   },
   ".cm-foldPlaceholder": {
-    backgroundColor: "var(--cm-fold, rgba(0,0,0,0.05))",
+    backgroundColor: "var(--muted)",
     border: "none",
-    color: "var(--cm-gutter, #a1a1aa)",
+    color: "var(--muted-foreground)",
   },
 }, { dark: false });
 
 /** Dark-mode overrides; toggled on the containing element via `.dark`. */
 const amoledDark = EditorView.theme({
   "&": {
-    color: "#e4e4e7",
+    color: "var(--foreground)",
   },
   ".cm-activeLine": {
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: "var(--accent)",
   },
   ".cm-foldPlaceholder": {
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "var(--muted)",
   },
 }, { dark: true });
 
 /** Mono stack for code blocks. */
 export const amoledMono = EditorView.theme({
   ".cm-completionLabel": {
-    fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
+    fontFamily: "var(--font-mono, ui-monospace, monospace)",
   },
 });
 
