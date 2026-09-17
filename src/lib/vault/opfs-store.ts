@@ -1,6 +1,7 @@
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
-import { OpfsVaultFS, splitPath } from "@/lib/vault/opfs";
+import { splitPath } from "@/lib/vault/opfs";
+import type { VaultFileSystem } from "@/lib/vault/fs";
 import {
   atomicCompact,
   cleanupInterrupted,
@@ -17,9 +18,9 @@ import {
  * portable and §10 recovery logic applies identically.
  */
 class OpfsPersistBackend {
-  private fs: OpfsVaultFS;
+  private fs: VaultFileSystem;
 
-  constructor(fs: OpfsVaultFS) {
+  constructor(fs: VaultFileSystem) {
     this.fs = fs;
   }
 
@@ -141,7 +142,7 @@ export class OpfsDocStore implements PersistedDocStore {
   private backend: OpfsPersistBackend;
   private root: string;
 
-  constructor(fs: OpfsVaultFS, root = ".adhd/crdt/docs") {
+  constructor(fs: VaultFileSystem, root = ".adhd/crdt/docs") {
     this.backend = new OpfsPersistBackend(fs);
     this.root = root;
   }
@@ -189,7 +190,7 @@ export class OpfsDocStore implements PersistedDocStore {
 export class OpfsVaultTreeStore implements VaultTreeStore {
   private backend: OpfsPersistBackend;
 
-  constructor(fs: OpfsVaultFS) {
+  constructor(fs: VaultFileSystem) {
     this.backend = new OpfsPersistBackend(fs);
   }
 

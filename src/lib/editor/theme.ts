@@ -11,16 +11,16 @@ export const amoledMinimal = EditorView.theme({
     height: "100%",
     backgroundColor: "transparent",
     color: "var(--cm-fg, var(--color-cm-fg, #222))",
-    fontSize: "15px",
+    fontSize: "clamp(15px, 1rem, 17px)",
   },
   "&.cm-focused": {
     outline: "none",
   },
   ".cm-content": {
     caretColor: "var(--cm-caret, #3b82f6)",
-    padding: "24px 32px 40vh",
+    padding: "16px max(16px, calc((100% - 760px) / 2)) 40vh",
     maxWidth: "760px",
-    lineHeight: "1.65",
+    lineHeight: "1.7",
     fontFamily: "var(--cm-font, inherit)",
   },
   ".cm-line": {

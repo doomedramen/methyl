@@ -70,7 +70,11 @@ export class SyncCoordinator {
     journal: DirtyJournal,
     hooks: SyncHooks,
   ) {
-    this.opts = { maxConcurrentDocs: 8, maxConcurrentBinaries: 2, ...options };
+    this.opts = {
+      ...options,
+      maxConcurrentDocs: options.maxConcurrentDocs ?? 8,
+      maxConcurrentBinaries: options.maxConcurrentBinaries ?? 2,
+    };
     this.journal = journal;
     this.hooks = hooks;
   }
@@ -96,37 +100,49 @@ export class SyncCoordinator {
     const hdr = { authorization: `Bearer ${authToken}` };
 
     // 2-4: connect WS
+    console.log("coord: connecting");
     const client = new LoroWebsocketClient({ url: wsUrl, disablePing: true } as LoroWebsocketClientOptions);
     await client.connect();
     this.client = client;
+    console.log("coord: connected");
 
     // 5-6: join vault tree room, wait for server version
     const treeDoc = this.hooks.getTreeDoc();
     const treeAdaptor = new LoroAdaptor(treeDoc);
+    console.log("coord: joining tree room vault:" + vaultId);
     const treeRoom = await client.join({
       roomId: `vault:${vaultId}`,
       crdtAdaptor: treeAdaptor,
       auth: new TextEncoder().encode(authToken),
     });
+    console.log("coord: tree room joined, waiting server version");
     await treeRoom.waitForReachingServerVersion();
+    console.log("coord: tree synced");
 
     // 7: discovery poll
     const lastSeq = this.journal.getLastServerSeq();
+    console.log("coord: discovery after", lastSeq);
     const changesRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
     const { changes: serverChanges } = await changesRes.json() as {
       reset?: boolean;
       changes: Array<{ objectId: string; seq: number }>;
     };
+    console.log("coord: changes", serverChanges.length);
 
     // 8: build work set
     const knownSynced = new Set(this.hooks.getSyncedRoomIds());
+    console.log("coord: getSyncedRoomIds", knownSynced.size);
+    const missingBinaries = await this.hooks.getMissingBinaryIds();
+    console.log("coord: missing binaries", missingBinaries.length);
+    console.log("coord: tree ids...", this.hooks.getTreeDocumentRoomIds().length);
     const { documents, binaries } = buildWorkSet({
       localDirty: this.journal.dirty().map((e) => e.roomId),
       serverChanged: serverChanges.map((c) => c.objectId),
       treeDocumentIds: this.hooks.getTreeDocumentRoomIds(),
       knownSynced,
-      missingBinaries: await this.hooks.getMissingBinaryIds(),
+      missingBinaries,
     });
+    console.log("coord: work set", documents.length, binaries.length);
 
     // 9: sync doc rooms
     const docsSynced = await this.syncDocs(documents, client, authToken);
@@ -169,9 +185,12 @@ export class SyncCoordinator {
     let count = 0;
 
     await Promise.all(roomIds.map(async (id) => {
+      console.log("coord: doc task start", id);
       await acquire();
+      console.log("coord: doc acquired", id);
       try {
         const doc = await this.hooks.getRoomDoc(id);
+        console.log("coord: syncing doc room", id, "doc?", !!doc);
         if (!doc) return;
         const adaptor = new LoroAdaptor(doc);
         const room = await client.join({
@@ -179,7 +198,9 @@ export class SyncCoordinator {
           crdtAdaptor: adaptor,
           auth: new TextEncoder().encode(authToken),
         });
+        console.log("coord: doc room joined", id);
         await room.waitForReachingServerVersion();
+        console.log("coord: doc room version reached", id);
 
         // Record current local version as dirty target
         const vv = Object.fromEntries(doc.version().toJSON()) as VV;
