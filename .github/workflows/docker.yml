@@ -48,28 +48,20 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=edge,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      # arm64 builds under QEMU and dominates the run, so only release
-      # tags pay for it; pushes to main publish amd64 only.
-      - name: Pick platforms
-        id: platforms
-        run: |
-          if [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = "true" ]; then
-            echo "value=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=linux/amd64" >> "$GITHUB_OUTPUT"
-          fi
-
+      # `latest` tracks main, so main must publish every platform a user
+      # might deploy on (arm64 covers Raspberry Pi / Apple silicon hosts).
+      # Pull requests build amd64 only — they publish nothing.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: ${{ steps.platforms.outputs.value }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
