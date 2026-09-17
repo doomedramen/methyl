@@ -1,0 +1,311 @@
+"use client";
+
+import { useState } from "react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+
+interface RenameDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  currentTitle: string;
+  onRename: (title: string) => void;
+}
+
+export function RenameNoteDialog({
+  open,
+  onOpenChange,
+  currentTitle,
+  onRename,
+}: RenameDialogProps) {
+  const [value, setValue] = useState(currentTitle);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setValue(currentTitle);
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const trimmed = value.trim();
+            if (!trimmed) return;
+            onRename(trimmed);
+            onOpenChange(false);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Rename note</DialogTitle>
+            <DialogDescription>
+              Updates the note&apos;s title and file name.
+            </DialogDescription>
+          </DialogHeader>
+          <Field className="mt-4">
+            <FieldLabel htmlFor="rename-note-title">Title</FieldLabel>
+            <FieldContent>
+              <Input
+                id="rename-note-title"
+                autoFocus
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+              />
+            </FieldContent>
+          </Field>
+          <DialogFooter className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!value.trim()}>
+              <Pencil data-icon="inline-start" />
+              Rename
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface DeleteAlertProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  noteTitle: string;
+  onConfirm: () => void;
+}
+
+export function DeleteNoteAlert({
+  open,
+  onOpenChange,
+  noteTitle,
+  onConfirm,
+}: DeleteAlertProps) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete &ldquo;{noteTitle}&rdquo;?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the note from the vault. This can&apos;t be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              onConfirm();
+              onOpenChange(false);
+            }}
+          >
+            <Trash2 data-icon="inline-start" />
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+interface RenameFolderDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  currentName: string;
+  onRename: (name: string) => void;
+}
+
+export function RenameFolderDialog({
+  open,
+  onOpenChange,
+  currentName,
+  onRename,
+}: RenameFolderDialogProps) {
+  const [value, setValue] = useState(currentName);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setValue(currentName);
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const trimmed = value.trim();
+            if (!trimmed) return;
+            onRename(trimmed);
+            onOpenChange(false);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Rename folder</DialogTitle>
+            <DialogDescription>Updates the folder&apos;s name.</DialogDescription>
+          </DialogHeader>
+          <Field className="mt-4">
+            <FieldLabel htmlFor="rename-folder-name">Name</FieldLabel>
+            <FieldContent>
+              <Input
+                id="rename-folder-name"
+                autoFocus
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+              />
+            </FieldContent>
+          </Field>
+          <DialogFooter className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!value.trim()}>
+              <Pencil data-icon="inline-start" />
+              Rename
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface NewFolderDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreate: (name: string) => void;
+}
+
+export function NewFolderDialog({
+  open,
+  onOpenChange,
+  onCreate,
+}: NewFolderDialogProps) {
+  const [value, setValue] = useState("");
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setValue("");
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const trimmed = value.trim();
+            if (!trimmed) return;
+            onCreate(trimmed);
+            onOpenChange(false);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>New folder</DialogTitle>
+            <DialogDescription>Create a folder to organise notes.</DialogDescription>
+          </DialogHeader>
+          <Field className="mt-4">
+            <FieldLabel htmlFor="new-folder-name">Name</FieldLabel>
+            <FieldContent>
+              <Input
+                id="new-folder-name"
+                autoFocus
+                placeholder="Folder name"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+              />
+            </FieldContent>
+          </Field>
+          <DialogFooter className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!value.trim()}>
+              <Plus data-icon="inline-start" />
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface DeleteFolderAlertProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  folderName: string;
+  noteCount: number;
+  onConfirm: () => void;
+}
+
+export function DeleteFolderAlert({
+  open,
+  onOpenChange,
+  folderName,
+  noteCount,
+  onConfirm,
+}: DeleteFolderAlertProps) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete &ldquo;{folderName}&rdquo;?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {noteCount > 0
+              ? `This deletes the folder and ${noteCount} note${noteCount === 1 ? "" : "s"} inside it. This can't be undone.`
+              : "This removes the empty folder from the vault. This can't be undone."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              onConfirm();
+              onOpenChange(false);
+            }}
+          >
+            <Trash2 data-icon="inline-start" />
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}

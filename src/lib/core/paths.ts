@@ -41,6 +41,12 @@ export function sanitizeName(name: string): string | null {
   return stripped;
 }
 
+/**
+ * Auto-suffix a name to dodge a collision: "Untitled.md" -> "Untitled 2.md"
+ * -> "Untitled 3.md". Used uniformly for create/rename/move so a sibling
+ * name clash never blocks the user with a dialog — the tree always accepts
+ * the op and lands on the next free name.
+ */
 export function uniqueName(
   name: string,
   taken: (n: string) => boolean,
@@ -52,7 +58,7 @@ export function uniqueName(
   const stem = extIdx > 0 ? name.slice(0, extIdx) : name;
   let counter = 2;
   while (true) {
-    const candidate = `${stem} (${counter})${ext}`;
+    const candidate = `${stem} ${counter}${ext}`;
     if (!taken(candidate)) return candidate;
     counter++;
   }

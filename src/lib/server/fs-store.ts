@@ -145,6 +145,47 @@ class NodePersistBackend {
     await fs.writeFile(full + ".tmp", bytes);
     await fs.rename(full + ".tmp", full);
   }
+
+  async listMaterializedPaths(): Promise<string[]> {
+    const out: string[] = [];
+    const walk = async (dir: string, rel: string) => {
+      let entries: import("fs").Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw err;
+      }
+      for (const entry of entries) {
+        if (rel === "" && entry.name === ".adhd") continue;
+        const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          await walk(join(dir, entry.name), relPath);
+        } else {
+          out.push(relPath);
+        }
+      }
+    };
+    await walk(this.root, "");
+    return out;
+  }
+
+  async removeMaterialized(path: string): Promise<void> {
+    const full = join(this.root, path);
+    await fs.rm(full, { force: true });
+    // Best-effort: prune now-empty parent directories, never past the vault root.
+    let dir = dirname(full);
+    while (dir.length > this.root.length && dir.startsWith(this.root)) {
+      try {
+        const entries = await fs.readdir(dir);
+        if (entries.length > 0) break;
+        await fs.rmdir(dir);
+        dir = dirname(dir);
+      } catch {
+        break;
+      }
+    }
+  }
 }
 
 const ops: AtomicOps = {
@@ -223,6 +264,14 @@ export class NodeFSStore implements PersistedDocStore {
 
   writeMaterializedAtomic(path: string, bytes: Uint8Array): Promise<void> {
     return this.backend.writeMaterializedAtomic(path, bytes);
+  }
+
+  listMaterializedPaths(): Promise<string[]> {
+    return this.backend.listMaterializedPaths();
+  }
+
+  removeMaterialized(path: string): Promise<void> {
+    return this.backend.removeMaterialized(path);
   }
 }
 

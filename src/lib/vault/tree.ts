@@ -54,7 +54,27 @@ export class VaultTree {
     return this.doc.oplogFrontiers();
   }
 
-  /** Add a directory node. */
+  /**
+   * Names collide case-insensitively (so "Note.md" and "note.md" can't
+   * coexist in one folder — most filesystems users sync to are
+   * case-insensitive too). Returns the lowercased sibling name set,
+   * excluding `excludeTreeId` (used when renaming/moving a node past
+   * itself).
+   */
+  private siblingNameSet(
+    parent: TreeID | undefined,
+    excludeTreeId?: TreeID,
+  ): Set<string> {
+    const parentNode = parent ? this.tree.getNodeByID(parent) : undefined;
+    const siblings = parentNode ? parentNode.children() ?? [] : this.tree.roots();
+    return new Set(
+      siblings
+        .filter((s) => !s.isDeleted() && s.id !== excludeTreeId)
+        .map((s) => ((s.data.get("name") as string) || "").toLowerCase()),
+    );
+  }
+
+  /** Add a directory node. Auto-suffixes on a case-insensitive name clash. */
   addDirectory(
     parent: TreeID | undefined,
     name: string,
@@ -62,14 +82,19 @@ export class VaultTree {
   ): TreeID {
     const safe = sanitizeName(name);
     if (!safe) throw new Error(`Invalid directory name: ${name}`);
+    const taken = this.siblingNameSet(parent);
+    const final = uniqueName(safe, (n) => taken.has(n.toLowerCase()));
     const node = this.tree.createNode(parent, index);
-    node.data.set("name", safe);
+    node.data.set("name", final);
     node.data.set("kind", "directory");
     this.doc.commit();
     return node.id;
   }
 
-  /** Add a Markdown document node. Returns the new treeId. */
+  /**
+   * Add a Markdown document node. Returns the new treeId. Auto-suffixes on
+   * a case-insensitive name clash (e.g. "Untitled.md" -> "Untitled 2.md").
+   */
   addMarkdownDocument(
     parent: TreeID | undefined,
     name: string,
@@ -79,15 +104,17 @@ export class VaultTree {
     const safe = sanitizeName(name);
     if (!safe) throw new Error(`Invalid name: ${name}`);
     if (!safe.endsWith(".md")) throw new Error(`Markdown files must end with .md`);
+    const taken = this.siblingNameSet(parent);
+    const final = uniqueName(safe, (n) => taken.has(n.toLowerCase()));
     const node = this.tree.createNode(parent, index);
-    node.data.set("name", safe);
+    node.data.set("name", final);
     node.data.set("kind", "markdown");
     node.data.set("documentId", documentId);
     this.doc.commit();
     return node.id;
   }
 
-  /** Add a binary file node. */
+  /** Add a binary file node. Auto-suffixes on a case-insensitive name clash. */
   addBinaryFile(
     parent: TreeID | undefined,
     name: string,
@@ -96,36 +123,54 @@ export class VaultTree {
   ): TreeID {
     const safe = sanitizeName(name);
     if (!safe) throw new Error(`Invalid name: ${name}`);
+    const taken = this.siblingNameSet(parent);
+    const final = uniqueName(safe, (n) => taken.has(n.toLowerCase()));
     const node = this.tree.createNode(parent, index);
-    node.data.set("name", safe);
+    node.data.set("name", final);
     node.data.set("kind", "binary");
     node.data.set("sha256", sha256);
     this.doc.commit();
     return node.id;
   }
 
-  /** Rename a node. Resolves filename conflicts. */
+  /**
+   * Rename a node. Resolves a case-insensitive filename conflict with a
+   * sibling by auto-suffixing (" 2", " 3", ...) rather than rejecting the
+   * rename outright.
+   */
   rename(treeId: TreeID, newName: string): void {
     const safe = sanitizeName(newName);
     if (!safe) throw new Error(`Invalid name: ${newName}`);
     const node = this.tree.getNodeByID(treeId);
     if (!node || node.isDeleted()) throw new Error(`Node not found: ${treeId}`);
     const parent = node.parent();
-    const siblings = parent ? parent.children() ?? [] : this.tree.roots();
     const currentName = (node.data.get("name") as string) || "";
-    if (safe === currentName) return;
-    const taken = new Set(
-      siblings
-        .filter((s) => s.id !== treeId)
-        .map((s) => s.data.get("name") as string),
-    );
-    const final = uniqueName(safe, (n) => taken.has(n), currentName);
+    if (safe.toLowerCase() === currentName.toLowerCase()) {
+      if (safe !== currentName) node.data.set("name", safe);
+      this.doc.commit();
+      return;
+    }
+    const taken = this.siblingNameSet(parent?.id, treeId);
+    const final = uniqueName(safe, (n) => taken.has(n.toLowerCase()), currentName);
     node.data.set("name", final);
     this.doc.commit();
   }
 
-  /** Move a node to a new parent. */
+  /**
+   * Move a node to a new parent (optionally at `index`). If the node's
+   * current name collides (case-insensitively) with a sibling already at
+   * the destination, it is auto-suffixed the same way create/rename are —
+   * a drag-and-drop move should never silently fail or overwrite.
+   */
   move(target: TreeID, newParent: TreeID | undefined, index?: number): void {
+    const node = this.tree.getNodeByID(target);
+    if (!node || node.isDeleted()) throw new Error(`Node not found: ${target}`);
+    const currentName = (node.data.get("name") as string) || "";
+    const taken = this.siblingNameSet(newParent, target);
+    if (taken.has(currentName.toLowerCase())) {
+      const final = uniqueName(currentName, (n) => taken.has(n.toLowerCase()), currentName);
+      node.data.set("name", final);
+    }
     this.tree.move(target, newParent, index);
     this.doc.commit();
   }

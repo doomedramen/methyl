@@ -18,6 +18,9 @@ export interface VaultFileSystem {
 
   /** Non-recursive directory listing. */
   readdir(path: string): Promise<{ dirs: string[]; files: string[] }>;
+
+  /** Recursively walk every file in the vault, skipping top-level `.adhd`. */
+  walk(): AsyncGenerator<{ path: string }>;
 }
 
 export function normalizeFilePath(path: string): string {

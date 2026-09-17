@@ -33,12 +33,19 @@ export async function getVault(): Promise<VaultEngine> {
     const treeSnap = await treeStore.loadSnapshot();
     const hasVault = treeSnap !== null || (await treeStore.loadUpdates()).length > 0;
 
-    let opened: VaultEngine | { engine: VaultEngine; recovery: unknown };
-    opened = hasVault
-      ? await VaultEngine.open(treeStore, docStore, "local")
-      : await createFreshVault(treeStore, docStore);
-
-    const engine = "engine" in opened ? opened.engine : opened;
+    let engine: VaultEngine;
+    if (hasVault) {
+      const opened = await VaultEngine.open(treeStore, docStore, "local");
+      engine = opened.engine;
+      // Reconcile the on-disk .md tree against the CRDT tree+content: this
+      // catches the legacy-id-comment migration (content changed, so the
+      // file is now stale), any file that was missing/stale from a crash
+      // mid-write, and any orphaned file left behind by a rename/move that
+      // didn't finish persisting.
+      await engine.reconcileMaterialization();
+    } else {
+      engine = await createFreshVault(treeStore, docStore);
+    }
     engine.releaseWriterLock = () => lock.release();
     singleton = engine;
     return engine;
@@ -77,7 +84,7 @@ This is your ADHD vault. Everything lives in your browser's file system
 
   const doc = engine.createDocument(undefined, "welcome.md", welcome);
   await engine.persistTree();
-  await engine.materializeDocument(doc.id, "Welcome.md");
+  await engine.materializeDocuments([doc.id]);
   await engine.persistDocumentIncremental(doc.id);
   return engine;
 }

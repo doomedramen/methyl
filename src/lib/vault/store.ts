@@ -42,6 +42,20 @@ export interface PersistedDocStore {
 
   /** Atomically write materialised Markdown via tmp → rename. */
   writeMaterializedAtomic(path: string, bytes: Uint8Array): Promise<void>;
+
+  /**
+   * List every materialised path in the vault (vault-relative, `/`-joined,
+   * excludes `.adhd`). Used for boot-time reconciliation — finding on-disk
+   * `.md` files that no longer correspond to any tree node.
+   */
+  listMaterializedPaths(): Promise<string[]>;
+
+  /**
+   * Remove one materialised file (e.g. the old path after a rename/move, or
+   * a file whose tree node is gone). Best-effort cleanup of now-empty
+   * parent directories; never touches `.adhd`.
+   */
+  removeMaterialized(path: string): Promise<void>;
 }
 
 /**

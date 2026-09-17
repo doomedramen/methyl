@@ -1,0 +1,82 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
+import { VaultEngine } from "@/lib/vault/engine";
+import { CONTENT_KEY } from "@/lib/core/document";
+
+let tmpDir: string;
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), "adhd-engine-actions-"));
+});
+
+afterEach(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
+async function newEngine(): Promise<VaultEngine> {
+  const treeStore = new NodeVaultTreeStore(tmpDir);
+  const docStore = new NodeFSStore(tmpDir);
+  return VaultEngine.create(treeStore, docStore);
+}
+
+describe("VaultEngine.renameDocument", () => {
+  it("renames the tree file name and leaves content untouched", async () => {
+    const engine = await newEngine();
+    const doc = engine.createDocument(undefined, "note-1.md", "# Old title\n\nbody");
+
+    await engine.renameDocument(doc.id, "New title");
+
+    const markdown = engine.getDocument(doc.id)!.getText(CONTENT_KEY).toString();
+    // Content is never rewritten by a rename — the display title comes
+    // from the tree node's file name, not from an in-body heading.
+    expect(markdown).toBe("# Old title\n\nbody");
+
+    const node = engine.tree.findByDocumentId(doc.id);
+    expect(node?.name).toBe("New title.md");
+  });
+
+  it("does not add or touch any heading when the document has none", async () => {
+    const engine = await newEngine();
+    const doc = engine.createDocument(undefined, "note-2.md", "no heading here");
+
+    await engine.renameDocument(doc.id, "Given a title");
+
+    const markdown = engine.getDocument(doc.id)!.getText(CONTENT_KEY).toString();
+    expect(markdown).toBe("no heading here");
+    const node = engine.tree.findByDocumentId(doc.id);
+    expect(node?.name).toBe("Given a title.md");
+  });
+
+  it("auto-suffixes on a case-insensitive name clash with a sibling", async () => {
+    const engine = await newEngine();
+    engine.createDocument(undefined, "taken.md", "# one");
+    const doc2 = engine.createDocument(undefined, "note-x.md", "# two");
+
+    await engine.renameDocument(doc2.id, "TAKEN");
+
+    const node = engine.tree.findByDocumentId(doc2.id);
+    expect(node?.name).toBe("TAKEN 2.md");
+  });
+});
+
+describe("VaultEngine.deleteDocument", () => {
+  it("removes the note from the tree and in-memory documents", async () => {
+    const engine = await newEngine();
+    const doc = engine.createDocument(undefined, "note-3.md", "# gone soon");
+    expect(engine.tree.findByDocumentId(doc.id)).toBeDefined();
+
+    await engine.deleteDocument(doc.id);
+
+    expect(engine.tree.findByDocumentId(doc.id)).toBeUndefined();
+    expect(engine.getDocument(doc.id)).toBeUndefined();
+    expect(engine.tree.documentIds()).not.toContain(doc.id);
+  });
+
+  it("throws for a document not tracked in the tree", async () => {
+    const engine = await newEngine();
+    await expect(engine.deleteDocument("not-a-real-id")).rejects.toThrow();
+  });
+});

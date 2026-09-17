@@ -101,6 +101,18 @@ class OpfsPersistBackend {
     return this.fs.readFile(path);
   }
 
+  async listMaterializedPaths(): Promise<string[]> {
+    const out: string[] = [];
+    for await (const { path } of this.fs.walk()) out.push(path);
+    return out;
+  }
+
+  async removeMaterialized(path: string): Promise<void> {
+    await this.fs.delete(path);
+    // Directories are implicit in OPFS's own tree; no explicit pruning is
+    // needed (an empty FileSystemDirectoryHandle just sits there unused).
+  }
+
   async writeMaterializedAtomic(path: string, bytes: Uint8Array): Promise<void> {
     const tmp = `${path}.tmp`;
     await this.fs.writeFile(tmp, bytes);
@@ -184,6 +196,14 @@ export class OpfsDocStore implements PersistedDocStore {
 
   writeMaterializedAtomic(path: string, bytes: Uint8Array): Promise<void> {
     return this.backend.writeMaterializedAtomic(path, bytes);
+  }
+
+  listMaterializedPaths(): Promise<string[]> {
+    return this.backend.listMaterializedPaths();
+  }
+
+  removeMaterialized(path: string): Promise<void> {
+    return this.backend.removeMaterialized(path);
   }
 }
 

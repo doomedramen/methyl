@@ -65,4 +65,11 @@ export class MemoryVaultFS implements VaultFileSystem {
   allPaths(): string[] {
     return [...this.files.keys()].sort();
   }
+
+  async *walk(): AsyncGenerator<{ path: string }> {
+    for (const key of [...this.files.keys()].sort()) {
+      if (key === ".adhd" || key.startsWith(".adhd/")) continue;
+      yield { path: key };
+    }
+  }
 }
