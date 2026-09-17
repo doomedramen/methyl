@@ -79,6 +79,12 @@ Open <http://localhost:8080>. Notes live in `./vault` as plain Markdown files, r
 and editable with any normal tool — `.adhd/` inside it holds sync metadata (CRDT history,
 discovery index), not required to read your notes.
 
+**Serve it over https.** Browsers only give a page persistent storage (OPFS, where
+Methyl keeps your vault) in a secure context: `https://`, or `http://localhost` on the
+machine itself. Reached over plain http from a LAN address (`http://192.168.1.10:8080`)
+the app can't store anything and says so on launch. Put it behind a reverse proxy with a
+certificate (Caddy, Traefik, nginx) or expose it through Tailscale.
+
 **Updating:**
 
 ```bash
