@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Methyl — offline-first Markdown vault",
+  title: "Methyl",
   description: "Self-hostable, offline-first Markdown vault",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg", apple: "/icon.svg" },

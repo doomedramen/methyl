@@ -5,7 +5,6 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -59,9 +58,6 @@ export function RenameNoteDialog({
         >
           <DialogHeader>
             <DialogTitle>Rename note</DialogTitle>
-            <DialogDescription>
-              Updates the note&apos;s title and file name.
-            </DialogDescription>
           </DialogHeader>
           <Field className="mt-4">
             <FieldLabel htmlFor="rename-note-title">Title</FieldLabel>
@@ -112,7 +108,7 @@ export function DeleteNoteAlert({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete &ldquo;{noteTitle}&rdquo;?</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes the note from the vault. This can&apos;t be undone.
+            You can&apos;t undo this.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -168,7 +164,6 @@ export function RenameFolderDialog({
         >
           <DialogHeader>
             <DialogTitle>Rename folder</DialogTitle>
-            <DialogDescription>Updates the folder&apos;s name.</DialogDescription>
           </DialogHeader>
           <Field className="mt-4">
             <FieldLabel htmlFor="rename-folder-name">Name</FieldLabel>
@@ -233,7 +228,6 @@ export function NewFolderDialog({
         >
           <DialogHeader>
             <DialogTitle>New folder</DialogTitle>
-            <DialogDescription>Create a folder to organise notes.</DialogDescription>
           </DialogHeader>
           <Field className="mt-4">
             <FieldLabel htmlFor="new-folder-name">Name</FieldLabel>
@@ -288,8 +282,8 @@ export function DeleteFolderAlert({
           <AlertDialogTitle>Delete &ldquo;{folderName}&rdquo;?</AlertDialogTitle>
           <AlertDialogDescription>
             {noteCount > 0
-              ? `This deletes the folder and ${noteCount} note${noteCount === 1 ? "" : "s"} inside it. This can't be undone.`
-              : "This removes the empty folder from the vault. This can't be undone."}
+              ? `Also deletes the ${noteCount} note${noteCount === 1 ? "" : "s"} inside. You can't undo this.`
+              : "You can't undo this."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

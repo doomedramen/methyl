@@ -35,11 +35,6 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Kbd } from "@/components/ui/kbd";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -377,12 +372,7 @@ export function AppSidebar({
   return (
     <Sidebar variant="inset">
       <SidebarHeader className="flex-row items-center justify-between gap-2 pt-6 md:pt-3">
-        <div className="min-w-0">
-          <h1 className="text-sm font-semibold tracking-wide">Methyl</h1>
-          <p className="truncate text-xs text-muted-foreground">
-            offline-first vault
-          </p>
-        </div>
+        <h1 className="min-w-0 truncate text-sm font-semibold tracking-wide">Methyl</h1>
         <div className="flex items-center gap-1">
           <Button
             variant="outline"

@@ -396,9 +396,6 @@ function VaultEmpty({ onCreate }: { onCreate: () => void }) {
         <Inbox />
       </EmptyMedia>
       <EmptyTitle>Nothing open</EmptyTitle>
-      <EmptyDescription>
-        Pick a note from the list, or capture the thought that just surfaced.
-      </EmptyDescription>
       <Button size="lg" onClick={onCreate}>
         <Plus data-icon="inline-start" />
         New note
