@@ -12,6 +12,8 @@ export interface EditorSessionOptions {
   maxDirtyMs?: number;
   /** Called after a successful incremental persist. */
   onPersisted?: () => void;
+  /** Called when a persist attempt throws. */
+  onPersistError?: (error: unknown) => void;
 }
 
 export interface EditorSession {
@@ -43,6 +45,7 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
     persistDebounceMs = 400,
     maxDirtyMs = 2_000,
     onPersisted,
+    onPersistError,
   } = opts;
 
   const handle = engine.getDocument(documentId);
@@ -83,6 +86,9 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
       lastPersisted = Date.now();
       dirty = false;
       onPersisted?.();
+    } catch (err) {
+      console.error("[editor] persist failed", err);
+      onPersistError?.(err);
     } finally {
       processing = false;
       // Edits that landed while persisting must flush again

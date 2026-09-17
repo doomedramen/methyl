@@ -24,11 +24,14 @@ export function NoteEditor({
   documentId,
   onDirtyChange,
   onPersisted,
+  onSaveError,
 }: {
   engine: VaultEngine;
   documentId: string;
   onDirtyChange?: (dirty: boolean) => void;
   onPersisted?: () => void;
+  /** Edits did not reach the stored note (persist threw or text diverged). */
+  onSaveError?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -68,14 +71,23 @@ export function NoteEditor({
 
         const undoManager = createUndoManager(handle.doc);
         const ephemeral = createCursorEphemeral();
+        let view: EditorView | null = null;
+        let verifyTimer: ReturnType<typeof setTimeout> | null = null;
+
+        // "Saved" is only true if the editor text matches the stored LoroText.
+        const inSync = () =>
+          !view || view.state.doc.toString() === getContentTextFromDoc(handle.doc).toString();
+
         const session = createEditorSession({
           engine,
           documentId,
           maxDirtyMs: 3_000,
-          onPersisted,
+          onPersisted: () => {
+            if (inSync()) onPersisted?.();
+            else onSaveError?.();
+          },
+          onPersistError: () => onSaveError?.(),
         });
-
-        let view: EditorView | null = null;
         let sessionPromise: Promise<void> = Promise.resolve();
         view = new EditorView({
           parent: host,
@@ -93,6 +105,11 @@ export function NoteEditor({
                 if (update.docChanged) {
                   session.schedulePersist();
                   onDirtyChange?.(true);
+                  // Catch edits that never reach the LoroText, so no persist fires.
+                  if (verifyTimer) clearTimeout(verifyTimer);
+                  verifyTimer = setTimeout(() => {
+                    if (!disposed && !inSync()) onSaveError?.();
+                  }, 5_000);
                 }
               }),
             ],
@@ -129,6 +146,7 @@ export function NoteEditor({
         window.addEventListener("beforeunload", flush);
 
         cleanupRef.current = () => {
+          if (verifyTimer) clearTimeout(verifyTimer);
           document.removeEventListener("visibilitychange", onHidden);
           window.removeEventListener("beforeunload", flush);
           const v = view;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeID } from "loro-crdt";
 import { Check, Inbox, Plus, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
@@ -36,12 +36,13 @@ import { CommandMenu } from "./CommandMenu";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 
-type SaveState = "idle" | "dirty" | "saving" | "saved";
+type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
 const SAVE_LABEL: Record<Exclude<SaveState, "idle">, string> = {
   dirty: "Editing…",
   saving: "Saving…",
   saved: "Saved",
+  error: "Not saved",
 };
 
 /** How long the "Saved" confirmation lingers before hiding. */
@@ -129,6 +130,15 @@ export function VaultApp() {
     };
   }, [refreshNotes]);
 
+  const saveErrorShown = useRef(false);
+  const onSaveError = useCallback(() => {
+    if (!saveErrorShown.current) {
+      saveErrorShown.current = true;
+      toast.error("Changes to this note weren't saved. Copy your text before reloading.");
+    }
+    setSaving("error");
+  }, []);
+
   // Only confirm a save that followed an edit; persists on open stay silent.
   const onPersisted = useCallback(() => {
     setSaving((prev) => (prev === "idle" ? prev : "saved"));
@@ -142,6 +152,7 @@ export function VaultApp() {
 
   useEffect(() => {
     setSaving("idle");
+    saveErrorShown.current = false;
   }, [activeId]);
 
   const onCreateNote = useCallback(
@@ -311,13 +322,17 @@ export function VaultApp() {
             <span aria-live="polite" className="contents">
               {activeId && saving !== "idle" && (
                 <Badge
-                  variant={saving === "saved" ? "secondary" : "outline"}
+                  variant={
+                    saving === "saved" ? "secondary" : saving === "error" ? "destructive" : "outline"
+                  }
                   className="animate-in fade-in-0 motion-reduce:animate-none"
                 >
                   {saving === "saving" ? (
                     <Spinner data-icon="inline-start" />
                   ) : saving === "saved" ? (
                     <Check data-icon="inline-start" />
+                  ) : saving === "error" ? (
+                    <TriangleAlert data-icon="inline-start" />
                   ) : null}
                   {SAVE_LABEL[saving]}
                 </Badge>
@@ -354,10 +369,12 @@ export function VaultApp() {
               documentId={activeId}
               onDirtyChange={(dirty) =>
                 setSaving((prev) =>
-                  dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
+                  // Keep the error visible until a verified save clears it.
+                  prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
                 )
               }
               onPersisted={onPersisted}
+              onSaveError={onSaveError}
             />
           ) : (
             <VaultEmpty onCreate={onCreateNote} />
