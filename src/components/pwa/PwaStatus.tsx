@@ -11,6 +11,9 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { formatBytes, usePwa, type PwaState } from "@/lib/browser/pwa";
+import { useSync } from "@/lib/browser/sync-context";
+import { SyncStatusRow, syncTriggerLabel } from "@/components/sync/SyncStatusRow";
+import { SyncSettingsDialog } from "@/components/sync/SyncSettingsDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -64,6 +67,7 @@ function OfflineIcon({ state }: { state: PwaState["offline"] }) {
 /** Compact footer status: offline support, storage protection, space used. */
 export function PwaStatus() {
   const pwa = usePwa();
+  const sync = useSync();
 
   const install = useCallback(async () => {
     if (!pwa.installPrompt) return;
@@ -74,14 +78,16 @@ export function PwaStatus() {
   const total = pwa.quota?.quota;
   const usagePct = used !== undefined && total ? Math.min(100, (used / total) * 100) : undefined;
   const offline = OFFLINE_COPY[pwa.offline];
+  const syncLabel = syncTriggerLabel(sync.status);
 
   return (
+    <>
     <Popover>
       <PopoverTrigger
         render={
           <Button variant="ghost" size="sm" className="justify-start gap-2 text-muted-foreground">
             <OfflineIcon state={pwa.offline} />
-            {offline.trigger}
+            {syncLabel ?? offline.trigger}
           </Button>
         }
       />
@@ -99,6 +105,8 @@ export function PwaStatus() {
               {offline.badge}
             </Badge>
           </Item>
+
+          <SyncStatusRow />
 
           <Item size="sm">
             <ItemMedia>
@@ -155,5 +163,7 @@ export function PwaStatus() {
         </div>
       </PopoverContent>
     </Popover>
+    <SyncSettingsDialog />
+    </>
   );
 }

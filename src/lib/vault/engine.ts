@@ -687,11 +687,34 @@ export class VaultEngine {
    *     node (stale path left behind by a rename/move that happened before
    *     this session, e.g. across a crash) — never touches `.adhd`
    */
+  /**
+   * Resolve any post-merge same-name sibling collisions (VaultTree.
+   * resolveNameCollisions()) and re-materialise every markdown document
+   * that got renamed, so its on-disk file moves to the new deterministic
+   * path (and the old, now-wrong path is removed) rather than leaving a
+   * stale file behind under the pre-collision name. Call this after
+   * anything that can merge in a foreign tree state — a sync round, or an
+   * imported tree update — and before relying on buildPathFromNode() for
+   * any of the affected documents.
+   */
+  async resolveTreeNameCollisions(): Promise<string[]> {
+    const renamedTreeIds = this.tree.resolveNameCollisions();
+    if (renamedTreeIds.length === 0) return [];
+    for (const treeId of renamedTreeIds) {
+      const node = this.tree.getNode(treeId);
+      if (!node || node.kind !== "markdown" || !node.documentId) continue;
+      if (!this.documents.has(node.documentId)) continue; // content not loaded here yet — a later sync round will materialize it at its (now-correct) path
+      await this.materializeToTreePath(node.documentId);
+    }
+    return renamedTreeIds.map((id) => String(id));
+  }
+
   async reconcileMaterialization(): Promise<{
     ingested: IngestReport;
     materialized: string[];
     removed: string[];
   }> {
+    await this.resolveTreeNameCollisions();
     const ingested = await this.ingestExternalChanges();
 
     const materialized: string[] = [];
@@ -1047,6 +1070,25 @@ function collectDocumentIds(tree: VaultTree, rootTreeId: TreeID): string[] {
   return ids;
 }
 
+/**
+ * Post-merge sibling name collisions (two peers, offline, each
+ * independently creating a same-named node before ever syncing — nothing
+ * in the tree CRDT rejects that) are resolved as a *real* CRDT tree edit —
+ * see VaultTree.resolveNameCollisions() — not computed virtually here at
+ * materialize time. An earlier version of this function computed a
+ * collision-free name on the fly, per call, from the current sibling set;
+ * that's unsound: it was recomputed independently every time any sibling
+ * in the group got (re-)materialized, at whatever moment that happened to
+ * run, so two calls for the same group could each pick a different
+ * "winner" depending on what else existed in the tree yet — silently
+ * overwriting an already-written file when the winner changed between
+ * calls. A one-time, real rename that propagates through normal tree sync
+ * doesn't have that failure mode: once resolved, every replica's tree
+ * (and therefore every future buildPathFromNode call) agrees for good.
+ * Callers that just merged/imported tree updates must call
+ * VaultEngine.resolveTreeNameCollisions() before relying on paths from
+ * this function.
+ */
 export function buildPathFromNode(
   tree: VaultTree,
   node: VaultTreeNode,
@@ -1054,9 +1096,9 @@ export function buildPathFromNode(
   const parts: string[] = [];
   let current = tree.tree.getNodeByID(node.treeId);
   while (current) {
-    const name = (current.data.get("name") as string) || "";
-    parts.unshift(name);
+    const rawName = (current.data.get("name") as string) || "";
     const parent = current.parent();
+    parts.unshift(rawName);
     current = parent ?? undefined;
   }
   return parts.join("/");

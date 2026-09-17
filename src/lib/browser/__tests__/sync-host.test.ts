@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { createSyncServer } from "@/lib/server/sync-server";
@@ -37,6 +37,13 @@ afterAll(async () => {
 
 function makeVault(): Promise<VaultEngine> {
   const fs = new MemoryVaultFS();
+  const treeStore = new OpfsVaultTreeStore(fs);
+  const docStore = new OpfsDocStore(fs);
+  return VaultEngine.create(treeStore, docStore, VAULT);
+}
+
+/** Like makeVault(), but backed by a caller-supplied fs (so the engine's own store and a SyncHost's journal share one root, as vault.ts wires them in the app). */
+function makeVaultOn(fs: MemoryVaultFS): Promise<VaultEngine> {
   const treeStore = new OpfsVaultTreeStore(fs);
   const docStore = new OpfsDocStore(fs);
   return VaultEngine.create(treeStore, docStore, VAULT);
@@ -104,7 +111,7 @@ describe("SyncHost client driver", () => {
   it("a second vault receives the first vault's notes", async () => {
     // First vault authored a note and synced it
     const fs = new MemoryVaultFS();
-    const engine = await makeVault();
+    const engine = await makeVaultOn(fs);
     const doc = engine.createDocument(
       undefined,
       "shared.md",
@@ -116,9 +123,11 @@ describe("SyncHost client driver", () => {
     await new Promise((r) => setTimeout(r, 300));
     host.disconnect();
 
-    // Second vault on the same server pulls the note via tree discovery
+    // Second vault on the same server pulls the note via tree discovery.
+    // Same fs backs both the engine's store and the host's journal —
+    // matching how vault.ts wires one shared OpfsVaultFS in the app.
     const fs2 = new MemoryVaultFS();
-    const engine2 = await makeVault();
+    const engine2 = await makeVaultOn(fs2);
     const host2 = await SyncHost.create(makeHostOptions(engine2, fs2));
     await host2.sync();
     await new Promise((r) => setTimeout(r, 300));
@@ -129,5 +138,237 @@ describe("SyncHost client driver", () => {
       "---\ntitle: Shared\n---\n\nShared content\n",
     );
     host2.disconnect();
+
+    // The synced content and tree must also have been persisted to the
+    // vault's own store (not just held in the live in-memory doc) — a
+    // reload of engine2's store, with no server involved, must see it too.
+    // This is what makes a remote edit survive a page refresh and what lets
+    // the open editor's loro-codemirror binding (which watches doc.subscribe
+    // on the *stored* handle, not a copy) pick it up.
+    const treeStore2 = new OpfsVaultTreeStore(fs2);
+    const docStore2 = new OpfsDocStore(fs2);
+    const { engine: reopened } = await VaultEngine.open(treeStore2, docStore2, VAULT);
+    expect(reopened.tree.documentIds()).toContain(doc.id);
+    const reopenedDoc = reopened.getDocument(doc.id);
+    expect(reopenedDoc?.getText("content").toString()).toBe(
+      "---\ntitle: Shared\n---\n\nShared content\n",
+    );
   });
+
+  it("reports which rooms were touched so the UI can refresh", async () => {
+    const fs = new MemoryVaultFS();
+    const engine = await makeVault();
+    engine.createDocument(undefined, "touched.md", "hello\n");
+    const host = await SyncHost.create(makeHostOptions(engine, fs));
+
+    const changes: number[] = [];
+    host.onRemoteChange((report) => changes.push(report.touchedRoomIds.length));
+
+    const report = await host.sync();
+    expect(report.treeTouched).toBe(true);
+    expect(report.touchedRoomIds.length).toBeGreaterThan(0);
+    expect(changes).toEqual([report.touchedRoomIds.length]);
+    host.disconnect();
+  });
+
+  it("two devices independently seeding a same-named note converge on distinct names after sync, on both clients and the server disk", async () => {
+    const fsA = new MemoryVaultFS();
+    const engineA = await makeVaultOn(fsA);
+    const docA = engineA.createDocument(undefined, "welcome.md", "device A's welcome\n");
+    engineA.getDocument(docA.id)!.doc.commit();
+    const hostA = await SyncHost.create(makeHostOptions(engineA, fsA));
+
+    const fsB = new MemoryVaultFS();
+    const engineB = await makeVaultOn(fsB);
+    const docB = engineB.createDocument(undefined, "welcome.md", "device B's welcome\n");
+    engineB.getDocument(docB.id)!.doc.commit();
+    const hostB = await SyncHost.create(makeHostOptions(engineB, fsB));
+
+    await hostA.sync();
+    await waitFor(() => existsSync(join(tmpDir, "welcome.md")));
+
+    await hostB.sync();
+    // B's sync round both pulls A's node (collision now visible to B) and
+    // pushes B's node to the server — resolveTreeNameCollisions runs
+    // wherever the collision is first observed (client or server), so a
+    // second round on either side clears up anything the first missed.
+    await hostB.sync();
+    await waitFor(() =>
+      engineB.tree.documentIds().includes(docA.id) &&
+      engineB.tree.documentIds().includes(docB.id),
+    );
+
+    const namesB = [
+      engineB.tree.findByDocumentId(docA.id)!.name,
+      engineB.tree.findByDocumentId(docB.id)!.name,
+    ].sort();
+    expect(namesB).toEqual(["welcome 2.md", "welcome.md"]);
+
+    // A round-trips too, once it syncs again.
+    await hostA.sync();
+    await waitFor(() => engineA.tree.documentIds().includes(docB.id));
+    const namesA = [
+      engineA.tree.findByDocumentId(docA.id)!.name,
+      engineA.tree.findByDocumentId(docB.id)!.name,
+    ].sort();
+    expect(namesA).toEqual(["welcome 2.md", "welcome.md"]);
+    // Both clients agree on *which* document got which name (the CRDT
+    // rename converged, not just "two distinct names in some order").
+    expect(engineA.tree.findByDocumentId(docA.id)!.name).toBe(
+      engineB.tree.findByDocumentId(docA.id)!.name,
+    );
+
+    // The server materialized two distinct files, never one overwriting
+    // the other.
+    await waitFor(() => existsSync(join(tmpDir, "welcome 2.md")));
+    const names = ["welcome.md", "welcome 2.md"];
+    const contents = names.map((n) => readFileSync(join(tmpDir, n), "utf8"));
+    expect(new Set(contents)).toEqual(
+      new Set(["device A's welcome\n", "device B's welcome\n"]),
+    );
+
+    hostA.disconnect();
+    hostB.disconnect();
+  }, 15000);
+
+  it("a device that opened before configuring sync drops its untouched seed note on first connect, adopting the server's notes instead", async () => {
+    const { writeSeedMarker } = await import("@/lib/browser/seed-marker");
+
+    // First device: creates real content and syncs it up (server now has
+    // content for this vault).
+    const fsFirst = new MemoryVaultFS();
+    const engineFirst = await makeVaultOn(fsFirst);
+    const realDoc = engineFirst.createDocument(undefined, "real-note.md", "real content\n");
+    engineFirst.getDocument(realDoc.id)!.doc.commit();
+    const hostFirst = await SyncHost.create(makeHostOptions(engineFirst, fsFirst));
+    await hostFirst.sync();
+    await waitFor(() => existsSync(join(tmpDir, "real-note.md")));
+    hostFirst.disconnect();
+
+    // Second device: app was opened first (seeding a local welcome note,
+    // exactly like vault.ts's createFreshVault), and only *afterwards* did
+    // the user open Sync settings and connect.
+    const fsSecond = new MemoryVaultFS();
+    const engineSecond = await makeVaultOn(fsSecond);
+    const seedDoc = engineSecond.createDocument(undefined, "welcome.md", "seed text\n");
+    engineSecond.getDocument(seedDoc.id)!.doc.commit();
+    await engineSecond.persistTree();
+    await engineSecond.persistDocumentIncremental(seedDoc.id);
+    await writeSeedMarker(fsSecond, seedDoc.id, "seed text\n");
+
+    const hostSecond = await SyncHost.create(makeHostOptions(engineSecond, fsSecond));
+    await hostSecond.sync();
+    await waitFor(() => engineSecond.tree.documentIds().includes(realDoc.id));
+
+    // The untouched seed is gone locally — replaced by the server's real
+    // note, not sitting alongside it as a duplicate.
+    expect(engineSecond.tree.documentIds()).not.toContain(seedDoc.id);
+    expect(engineSecond.tree.documentIds()).toContain(realDoc.id);
+    expect(
+      engineSecond.getDocument(realDoc.id)?.getText("content").toString(),
+    ).toBe("real content\n");
+
+    hostSecond.disconnect();
+  }, 15000);
+});
+
+function waitFor(check: () => boolean, timeoutMs = 5000, stepMs = 25): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const tick = () => {
+      if (check()) return resolve();
+      if (Date.now() - start > timeoutMs) return reject(new Error("timed out"));
+      setTimeout(tick, stepMs);
+    };
+    tick();
+  });
+}
+
+describe("SyncHost sees disk edits made after a room has already been joined", () => {
+  // A dedicated server (watching a real filesystem tmp vault) rather than
+  // the shared in-memory-fs server above: this exercises the actual
+  // watcher -> ServerStore -> live-room-cache path (recordRoomSave /
+  // patchCachedRoomIfLoaded in sync-server.ts), which only matters once a
+  // real .md file gets edited on disk.
+  let tmp: string;
+  let diskServer: ReturnType<typeof createSyncServer>;
+  let diskWsPort: number;
+  let diskHttpPort: number;
+  const DISK_AUTH = "disk-token";
+  const DISK_VAULT = "disk-vault";
+
+  beforeAll(async () => {
+    tmp = mkdtempSync(join(tmpdir(), "adhd-disk-sync-"));
+    diskWsPort = 24500 + Math.floor(Math.random() * 1000);
+    diskHttpPort = diskWsPort + 1;
+    diskServer = createSyncServer({
+      port: diskWsPort,
+      httpPort: diskHttpPort,
+      vaultPath: tmp,
+      authToken: DISK_AUTH,
+      saveIntervalMs: 50,
+      watch: true,
+      vaultId: DISK_VAULT,
+    });
+    await diskServer.start();
+  });
+
+  afterAll(async () => {
+    await diskServer.stop();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("a disk edit made after the room is already cached reaches a client's next sync round", async () => {
+    const fs = new MemoryVaultFS();
+    const engine = await makeVaultOn(fs);
+    const doc = engine.createDocument(undefined, "disk-edit.md", "original content\n");
+    engine.getDocument(doc.id)!.doc.commit();
+
+    const host = await SyncHost.create({
+      fs,
+      engine,
+      wsUrl: `ws://127.0.0.1:${diskWsPort}`,
+      httpUrl: `http://127.0.0.1:${diskHttpPort}`,
+      authToken: DISK_AUTH,
+      vaultId: DISK_VAULT,
+    });
+
+    // First round: creates the room server-side (so it gets cached in
+    // SimpleServer's in-memory `rooms` Map — see patchCachedRoomIfLoaded's
+    // doc comment) and lets the Node-side vault mirror materialise the .md.
+    await host.sync();
+    await waitFor(() => existsSync(join(tmp, "disk-edit.md")));
+
+    // Baseline change-log position: recordRoomSave's store.recordChange for
+    // this room happens synchronously right before the live-room-cache
+    // patch (patchCachedRoomIfLoaded) in the same call — waiting for a new
+    // "doc" change row for this room id is therefore a deterministic
+    // signal that the patch has already run too, unlike polling doc text
+    // (which can observe the engine mutated slightly before/independently
+    // of console-logged progress and isn't a reliable ordering guarantee).
+    const roomId = `doc:${doc.id}`;
+    const baselineSeq = Math.max(0, ...diskServer.store.getChangesAfter(0).changes.map((c) => c.seq));
+
+    // Edit the file directly on the server's disk, exactly like an external
+    // editor would — bypassing the sync protocol entirely.
+    writeFileSync(join(tmp, "disk-edit.md"), "original content\nedited on disk\n");
+
+    await waitFor(
+      () =>
+        diskServer.store
+          .getChangesAfter(baselineSeq)
+          .changes.some((c) => c.objectId === roomId && c.type === "doc"),
+      5000,
+    );
+
+    // Second sync round: the room was already joined+left once above, so
+    // without patchCachedRoomIfLoaded this would still see the pre-edit
+    // snapshot no matter how many rounds run.
+    await host.sync();
+
+    const clientText = engine.getDocument(doc.id)!.getText("content").toString();
+    expect(clientText).toBe("original content\nedited on disk\n");
+
+    host.disconnect();
+  }, 15000);
 });

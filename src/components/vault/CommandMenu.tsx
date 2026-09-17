@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import { useTheme } from "next-themes";
-import { FileText, FolderPlus, Laptop, Moon, PanelLeft, Plus, Sun } from "lucide-react";
+import { FileText, FolderPlus, Laptop, Moon, PanelLeft, Plus, RefreshCw, Sun } from "lucide-react";
+import { useSync } from "@/lib/browser/sync-context";
 import {
   Command,
   CommandDialog,
@@ -35,6 +36,7 @@ export function CommandMenu({
 }: CommandMenuProps) {
   const { setTheme } = useTheme();
   const { toggleSidebar } = useSidebar();
+  const { setDialogOpen: setSyncDialogOpen } = useSync();
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -87,6 +89,14 @@ export function CommandMenu({
           >
             <PanelLeft data-icon="inline-start" />
             Toggle sidebar
+          </CommandItem>
+          <CommandItem
+            value="Sync settings"
+            keywords={["server", "connect", "device"]}
+            onSelect={() => run(() => setSyncDialogOpen(true))}
+          >
+            <RefreshCw data-icon="inline-start" />
+            Sync settings
           </CommandItem>
           <CommandItem
             value="Theme: Light"

@@ -1,6 +1,6 @@
 import { type LoroDoc, type LoroText } from "loro-crdt";
 import type { VaultEngine } from "@/lib/vault/engine";
-import { acquireVaultWriterLock } from "@/lib/vault/web-locks";
+import { acquireVaultOpLock } from "@/lib/vault/web-locks";
 import { getContentTextFromDoc } from "@/lib/editor/sync";
 
 export interface EditorSessionOptions {
@@ -81,7 +81,14 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
     if (!dirty) return;
     processing = true;
     try {
-      const lock = await acquireVaultWriterLock(engine.vaultId);
+      // A per-document mutex, deliberately distinct from the tab's own
+      // long-lived writer lock (§12) — re-acquiring that same lock name
+      // from inside the tab that already holds it would deadlock forever
+      // now that acquireVaultWriterLock genuinely holds the lock open —
+      // and scoped to this documentId rather than the whole vault, so
+      // saving two different notes at once doesn't serialize behind each
+      // other for no reason.
+      const lock = await acquireVaultOpLock(engine.vaultId, documentId);
       await lock.guard(() => engine.persistDocumentIncremental(documentId));
       lastPersisted = Date.now();
       dirty = false;

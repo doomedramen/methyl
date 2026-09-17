@@ -157,6 +157,100 @@ export class VaultTree {
   }
 
   /**
+   * Force `treeId` to re-uniquify its name against its *current* siblings,
+   * even when the name hasn't changed — used to break a post-merge
+   * same-name collision. `rename()`'s normal same-name-only-case-differs
+   * shortcut (above) would otherwise skip the uniqueName check entirely,
+   * since as far as a single `rename()` call is concerned nothing is
+   * "changing". Returns the new name, or null if there was no collision
+   * to break.
+   */
+  private forceUniquify(treeId: TreeID): string | null {
+    const node = this.tree.getNodeByID(treeId);
+    if (!node || node.isDeleted()) return null;
+    const parent = node.parent();
+    const currentName = (node.data.get("name") as string) || "";
+    const taken = this.siblingNameSet(parent?.id, treeId);
+    if (!taken.has(currentName.toLowerCase())) return null;
+    const final = uniqueName(currentName, (n) => taken.has(n.toLowerCase()), currentName);
+    if (final === currentName) return null;
+    node.data.set("name", final);
+    this.doc.commit();
+    return final;
+  }
+
+  /**
+   * Deterministically resolve every post-merge same-name-sibling collision
+   * in the tree. Two peers, offline, each independently creating a node
+   * with the same name in the same folder before ever syncing produces
+   * two nodes that legitimately carry the identical stored `name` once
+   * merged — nothing in the tree CRDT rejects that (it's two unrelated
+   * creates, not one field with last-writer-wins).
+   *
+   * This is a *real* CRDT tree edit (unlike computing a name only at
+   * materialize time): the result propagates through normal tree sync to
+   * every device, so a colliding document's on-disk file never has to be
+   * silently overwritten by a later save that happened to compute a
+   * different "winner" for the same plain name.
+   *
+   * For each colliding group (same parent, same case-insensitive name),
+   * the member whose *stable key* sorts lexicographically smallest keeps
+   * the plain name; every other member gets force-uniquified (" 2",
+   * " 3", ... — the same suffix convention create()/rename() use). The
+   * stable key is the node's own content-independent identity —
+   * documentId for a markdown node, sha256 for a binary, the treeId
+   * itself for a directory (nothing else to key on) — never anything
+   * that depends on arrival order or materialize timing, so every replica
+   * that runs this against the same merged tree computes the exact same
+   * renames with no further coordination.
+   *
+   * Returns the treeIds that were renamed (empty if there were no
+   * collisions). Idempotent: running it again after all collisions are
+   * resolved is a no-op.
+   */
+  resolveNameCollisions(): TreeID[] {
+    type Entry = { treeId: TreeID; key: string };
+    const groups = new Map<string, Entry[]>();
+
+    const visit = (
+      nodes: ReturnType<LoroTree["roots"]>,
+      parentKey: string,
+    ): void => {
+      for (const node of nodes) {
+        if (node.isDeleted()) continue;
+        const name = ((node.data.get("name") as string) || "").toLowerCase();
+        const kind = node.data.get("kind") as string | undefined;
+        const stableKey =
+          kind === "markdown"
+            ? ((node.data.get("documentId") as string) ?? String(node.id))
+            : kind === "binary"
+              ? ((node.data.get("sha256") as string) ?? String(node.id))
+              : String(node.id);
+        const groupKey = `${parentKey} ${name}`;
+        const arr = groups.get(groupKey) ?? [];
+        arr.push({ treeId: node.id, key: stableKey });
+        groups.set(groupKey, arr);
+        visit(node.children() ?? [], String(node.id));
+      }
+    };
+    visit(this.tree.roots(), " root");
+
+    const renamed: TreeID[] = [];
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue;
+      const sorted = [...group].sort((a, b) => a.key.localeCompare(b.key));
+      // sorted[0] (smallest key) keeps its plain name; every other member
+      // in the group is force-uniquified against the (now-updated) taken
+      // set, one at a time, so a three-way collision gets " 2", " 3", ...
+      // rather than everyone independently landing on " 2".
+      for (const loser of sorted.slice(1)) {
+        if (this.forceUniquify(loser.treeId) !== null) renamed.push(loser.treeId);
+      }
+    }
+    return renamed;
+  }
+
+  /**
    * Move a node to a new parent (optionally at `index`). If the node's
    * current name collides (case-insensitively) with a sibling already at
    * the destination, it is auto-suffixed the same way create/rename are —

@@ -25,6 +25,7 @@ export function NoteEditor({
   onDirtyChange,
   onPersisted,
   onSaveError,
+  readOnly = false,
 }: {
   engine: VaultEngine;
   documentId: string;
@@ -32,6 +33,14 @@ export function NoteEditor({
   onPersisted?: () => void;
   /** Edits did not reach the stored note (persist threw or text diverged). */
   onSaveError?: () => void;
+  /**
+   * This tab doesn't hold the vault's writer lock (§12) — disable editing
+   * rather than let two tabs write to the same OPFS store concurrently.
+   * Content still updates live if the writer tab (or a sync round) changes
+   * it, via the same loro-codemirror doc.subscribe binding as a writable
+   * editor; only local keystrokes are blocked.
+   */
+  readOnly?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -101,6 +110,8 @@ export function NoteEditor({
                 undoManager,
               }),
               editorBaseTheme(),
+              EditorState.readOnly.of(readOnly),
+              EditorView.editable.of(!readOnly),
               EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
                   session.schedulePersist();
@@ -164,7 +175,7 @@ export function NoteEditor({
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [engine, documentId]);
+  }, [engine, documentId, readOnly]);
 
   return <div ref={hostRef} className="cm-host h-full w-full overflow-auto" />;
 }

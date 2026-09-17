@@ -35,6 +35,8 @@ import { AppSidebar, type FolderRow, type NoteRow, type SidebarRow } from "./App
 import { CommandMenu } from "./CommandMenu";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
+import { SyncProvider } from "@/lib/browser/sync-context";
+import { VaultAccessBanner } from "./VaultAccessBanner";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -155,9 +157,21 @@ export function VaultApp() {
     saveErrorShown.current = false;
   }, [activeId]);
 
+  // Blocks mutations from a read-only tab (§12) — this engine is a real,
+  // writable-in-memory VaultEngine.open() result even when this tab
+  // doesn't hold the writer lock, so nothing else stops these calls from
+  // reaching OPFS concurrently with whichever tab *does* hold the lock.
+  const requireWriter = useCallback(() => {
+    if (engine && !engine.releaseWriterLock) {
+      toast.error("This vault is open for editing in another tab. Use \"Use here\" to take over.");
+      return false;
+    }
+    return true;
+  }, [engine]);
+
   const onCreateNote = useCallback(
     (parentTreeId?: TreeID) => {
-      if (!engine) return;
+      if (!engine || !requireWriter()) return;
       // Tree auto-suffixes on a name clash within the folder (Untitled.md
       // -> Untitled 2.md -> ...), so it's always safe to ask for the same
       // base name.
@@ -172,7 +186,7 @@ export function VaultApp() {
 
   const onCreateFolder = useCallback(
     (parentTreeId: TreeID | undefined, name: string) => {
-      if (!engine) return;
+      if (!engine || !requireWriter()) return;
       try {
         engine.createFolder(parentTreeId, name);
         void engine.persistTreeIncremental();
@@ -188,7 +202,7 @@ export function VaultApp() {
 
   const onRenameNote = useCallback(
     async (id: string, title: string) => {
-      if (!engine) return;
+      if (!engine || !requireWriter()) return;
       try {
         // Renames the file only (tree node name) — content is never
         // touched, so the note can't be orphaned by editing its heading.
@@ -206,7 +220,7 @@ export function VaultApp() {
 
   const onDeleteNote = useCallback(
     async (id: string) => {
-      if (!engine) return;
+      if (!engine || !requireWriter()) return;
       try {
         await engine.deleteDocument(id);
         setActiveId((cur) => (cur === id ? null : cur));
@@ -222,7 +236,7 @@ export function VaultApp() {
 
   const onRenameFolder = useCallback(
     async (treeId: TreeID, name: string) => {
-      if (!engine) return;
+      if (!engine || !requireWriter()) return;
       try {
         await engine.renameFolder(treeId, name);
         await engine.persistTreeIncremental();
@@ -238,7 +252,7 @@ export function VaultApp() {
 
   const onDeleteFolder = useCallback(
     async (treeId: TreeID) => {
-      if (!engine) return;
+      if (!engine || !requireWriter()) return;
       try {
         const folder = findFolder(rows, treeId);
         const containedIds = folder ? flattenNotes([folder]).map((n) => n.id) : [];
@@ -256,7 +270,7 @@ export function VaultApp() {
 
   const onMove = useCallback(
     async ({ treeId, newParent, index }: { treeId: TreeID; newParent: TreeID | undefined; index: number }) => {
-      if (!engine) return;
+      if (!engine || !requireWriter()) return;
       try {
         await engine.moveNode(treeId, newParent, index);
         await engine.persistTreeIncremental();
@@ -272,7 +286,12 @@ export function VaultApp() {
   const activeNote = notes.find((n) => n.id === activeId);
   const activeTitle = activeNote?.title ?? (engine ? null : "Loading…");
 
+  const onRemoteSyncChange = useCallback(() => {
+    if (engine) refreshNotes(engine);
+  }, [engine, refreshNotes]);
+
   return (
+    <SyncProvider engine={engine} onRemoteChange={onRemoteSyncChange}>
     <SidebarProvider className="h-full">
       <AppSidebar
         rows={rows}
@@ -290,6 +309,7 @@ export function VaultApp() {
         onNewFolderOpenChange={setNewFolderOpen}
       />
       <SidebarInset className="flex min-w-0 flex-1 flex-col">
+        <VaultAccessBanner engine={engine} />
         <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
           <SidebarTrigger className="size-10 md:size-8" />
           <Separator orientation="vertical" className="h-5" />
@@ -367,6 +387,7 @@ export function VaultApp() {
             <NoteEditor
               engine={engine}
               documentId={activeId}
+              readOnly={!engine.releaseWriterLock}
               onDirtyChange={(dirty) =>
                 setSaving((prev) =>
                   // Keep the error visible until a verified save clears it.
@@ -393,6 +414,7 @@ export function VaultApp() {
         />
       )}
     </SidebarProvider>
+    </SyncProvider>
   );
 }
 

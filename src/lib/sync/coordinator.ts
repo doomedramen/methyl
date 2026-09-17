@@ -22,6 +22,10 @@ export interface SyncReport {
   binariesSynced: number;
   dirtyCleared: number;
   durationMs: number;
+  /** Room ids (`doc:<id>`) that reached the server version this round — includes both locally-dirty and remotely-changed rooms, so the caller can persist/materialize them. */
+  touchedRoomIds: string[];
+  /** The vault tree room was joined and synced this round. */
+  treeTouched: boolean;
 }
 
 export interface SyncHooks {
@@ -81,7 +85,9 @@ export class SyncCoordinator {
 
   /** Run the §34 reconnect loop. No-op if already running. */
   async sync(): Promise<SyncReport> {
-    if (this.running) return { docsSynced: 0, binariesSynced: 0, dirtyCleared: 0, durationMs: 0 };
+    if (this.running) {
+      return { docsSynced: 0, binariesSynced: 0, dirtyCleared: 0, durationMs: 0, touchedRoomIds: [], treeTouched: false };
+    }
     this.running = true;
     const t0 = Date.now();
     try { return { ...(await this.loop()), durationMs: Date.now() - t0 }; }
@@ -145,7 +151,8 @@ export class SyncCoordinator {
     console.log("coord: work set", documents.length, binaries.length);
 
     // 9: sync doc rooms
-    const docsSynced = await this.syncDocs(documents, client, authToken);
+    const touchedRoomIds: string[] = [];
+    const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds);
 
     // 10: sync binaries
     const binariesSynced = await this.syncBinaries(binaries, httpUrl, hdr);
@@ -170,7 +177,7 @@ export class SyncCoordinator {
     client.destroy();
     this.client = null;
 
-    return { docsSynced, binariesSynced, dirtyCleared, durationMs: 0 };
+    return { docsSynced, binariesSynced, dirtyCleared, durationMs: 0, touchedRoomIds, treeTouched: true };
   }
 
   /* ── room sync (bounded concurrency) ───────────────────────────── */
@@ -179,6 +186,7 @@ export class SyncCoordinator {
     roomIds: string[],
     client: LoroWebsocketClient,
     authToken: string,
+    touched: string[],
   ): Promise<number> {
     if (roomIds.length === 0) return 0;
     const [acquire, release] = bounded(this.opts.maxConcurrentDocs);
@@ -208,6 +216,7 @@ export class SyncCoordinator {
           this.journal.markDirty(id, vv);
         }
         count++;
+        touched.push(id);
         room.leave();
       } finally { release(); }
     }));

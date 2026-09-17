@@ -2,7 +2,7 @@
 
 A self-hostable, offline-first Markdown vault. Obsidian-style notes in your browser, on your phone and on your own server — with plain folders and `.md` files as the only data format that matters.
 
-> **Status:** early development. The browser app works offline against a local vault. The sync server and Docker deployment described in [SPEC.md](SPEC.md) are in progress and not yet runnable as a standalone service.
+> **Status:** early development. The browser app works offline against a local vault, and can now connect to a self-hosted sync server (see [Connecting to a sync server](#connecting-to-a-sync-server)) so notes sync across devices.
 
 ## Principles
 
@@ -44,6 +44,76 @@ Open <http://localhost:3000>. A fresh vault is created in the browser's private 
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run lint` | ESLint |
+| `npm run build:server` | Bundle the sync server (`dist/server.cjs`) |
+| `npm run start:server` | Run the bundled sync server |
+
+## Self-hosting with Docker
+
+The sync server ships as a single container serving the static app, the HTTP API, and
+the sync WebSocket all on one port.
+
+```bash
+cp .env.example .env
+# put a random secret in .env, e.g.:
+openssl rand -hex 32
+```
+
+```yaml
+# docker-compose.yml
+services:
+  methyl:
+    image: ghcr.io/doomedramen/methyl:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./vault:/vault
+    environment:
+      METHYL_AUTH_TOKEN: ${METHYL_AUTH_TOKEN:?set METHYL_AUTH_TOKEN}
+    restart: unless-stopped
+```
+
+```bash
+docker compose up -d
+```
+
+Open <http://localhost:8080>. Notes live in `./vault` as plain Markdown files, readable
+and editable with any normal tool — `.adhd/` inside it holds sync metadata (CRDT history,
+discovery index), not required to read your notes.
+
+**Updating:**
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+**Backup:** back up the whole `./vault` directory, including `.adhd/` — that's what lets
+devices resume sync without a full resend.
+
+### Connecting to a sync server
+
+Once a server is running (above), point each browser at it:
+
+1. Open the app **from the server's own URL** (e.g. `http://localhost:8080`, or your
+   `https://adhd.home.example.com` if you're behind a reverse proxy) — this is required:
+   OPFS/service-worker storage is scoped per origin, so a vault opened from a different
+   origin is a different, unsynced vault.
+2. Open **Sync settings** — from the status popover in the sidebar footer, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> → "Sync settings".
+3. Paste the server URL (auto-filled with the current origin when it's detected as a
+   Methyl server) and the `METHYL_AUTH_TOKEN` you set above. "Test connection" checks
+   both before you save.
+4. Save. Only the tab holding the vault's writer lock (SPEC §12) opens a sync
+   connection; other tabs stay read-only and don't duplicate it.
+
+The server URL and access token are saved in this browser's `localStorage` — not a
+cookie — so treat them like any other locally-stored secret: anyone with access to this
+browser profile/device can read the token. This is fine for the intended deployment (a
+LAN-only server, see [Network/security model](SPEC.md) in SPEC.md §32) but is a real
+tradeoff versus a proper pairing flow.
+
+If the app and the sync server are served from **different origins** (not the default
+above), set `METHYL_ALLOWED_ORIGINS` on the server to a comma-separated list of allowed
+app origins so its `/api/*` and `/healthz` responses carry the right CORS headers — by
+default, cross-origin requests are rejected by the browser.
 
 ## Vault layout
 

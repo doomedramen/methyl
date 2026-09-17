@@ -151,17 +151,67 @@ export function createHttpApi(options: HttpApiOptions) {
 }
 
 /**
+ * loro-websocket's SimpleServer caches a room's decoded document forever
+ * once first loaded: `getOrCreateRoomDocument`
+ * (node_modules/loro-websocket/dist/server/index.js:587-608) returns the
+ * cached `this.rooms.get(roomKey)` entry immediately if present, and
+ * nothing ever deletes from `this.rooms` — not `handleLeave` (:576-580,
+ * only clears the per-*client* `rooms`/`permissions` sets) nor
+ * `handleDisconnect` (:581-586, same). `onLoadDocument` therefore only
+ * ever runs the *first* time any client joins a room for this server's
+ * process lifetime.
+ *
+ * That's the gap behind "external disk edit doesn't reach a client that
+ * re-syncs": the vault watcher's ingest writes the merged bytes into
+ * ServerStore/SQLite (via this function) but a client's subsequent
+ * join/rejoin calls `getOrCreateRoomDocument`, which — once the room has
+ * been touched by any client at all — hits the cache and never calls
+ * `onLoadDocument` again, so it keeps serving the pre-edit snapshot no
+ * matter how many discovery-poll rounds run.
+ *
+ * There's no public API to push an update into an already-cached room
+ * (the class comment on `createSyncServer` below already noted this for
+ * *live* push to already-open rooms), but `SimpleServer.rooms` is a plain,
+ * unencapsulated `Map` field — reaching in and overwriting the cached
+ * entry's `data` in place is the only way to make a rejoin see it. This is
+ * safe: `data` is always a full LoroDoc snapshot (the same shape
+ * `onSaveDocument`/`onLoadDocument` already exchange, and what
+ * `durableVersionOf` already treats as the comparison unit for §20), and
+ * every snapshot passed here is produced by importing into the *same*
+ * engine Document/tree that both directions (client save, disk ingest)
+ * share — so it's always a merge-superset of whatever was cached, never a
+ * regression.
+ */
+function patchCachedRoomIfLoaded(
+  server: SimpleServer,
+  roomId: string,
+  data: Uint8Array,
+): void {
+  const rooms = (server as unknown as { rooms: Map<string, { data: Uint8Array }> }).rooms;
+  const roomKey = `${roomId}:${CrdtType.Loro}`;
+  const cached = rooms.get(roomKey);
+  if (cached) cached.data = data;
+}
+
+/**
  * Feed `data` (a full room snapshot, as SimpleServer's onSaveDocument
  * hands us) into the durable-version/discovery bookkeeping ServerStore
  * already maintains for the WS relay — shared by both the normal
  * client-save path and the watcher's ingest-derived changes, so a
  * discovering/reconnecting client sees either kind of change the same way.
+ *
+ * `liveServer`, when given, also patches SimpleServer's in-memory room
+ * cache (see patchCachedRoomIfLoaded) so a client that already joined this
+ * room once — and so would otherwise never trigger a fresh
+ * `onLoadDocument` — sees this update on its next join/rejoin instead of a
+ * stale cached snapshot.
  */
 function recordRoomSave(
   store: ServerStore,
   roomId: string,
   data: Uint8Array,
   type: "doc" | "tree",
+  liveServer?: SimpleServer,
 ): void {
   const seq = store.getNextSeq();
   const room = store.getRoom(roomId);
@@ -172,6 +222,7 @@ function recordRoomSave(
   // Loro rooms only, so bind the CrdtType.Loro literal directly.
   store.upsertRoom(roomId, CrdtType.Loro, Buffer.from(data), Buffer.from(vvBytes), newServerSeq);
   store.recordChange(seq, roomId, type === "tree" ? "tree" : "doc");
+  if (liveServer) patchCachedRoomIfLoaded(liveServer, roomId, data);
 }
 
 export function createSyncServer(options: SyncServerOptions) {
@@ -267,7 +318,23 @@ export function createSyncServer(options: SyncServerOptions) {
       if (isTree) {
         eng.tree.doc.import(data);
         eng.tree.doc.commit();
+        // A client's tree save can merge in a foreign peer's node that
+        // collides (post-merge same-name siblings — see
+        // resolveTreeNameCollisions' doc comment); resolve it as a real
+        // tree edit before persisting, so a stale duplicate name never
+        // gets materialized to disk under a name some other node already
+        // owns.
+        const renamed = await eng.resolveTreeNameCollisions();
         await eng.persistTreeIncremental();
+        if (renamed.length > 0) {
+          // This rename is a NEW local edit the client that just saved
+          // doesn't have yet — record + patch the live room cache the
+          // same way the external-change watcher's ingest does, so it
+          // reaches every client (including this one) via the normal
+          // discovery-poll + rejoin path.
+          eng.tree.doc.commit();
+          recordRoomSave(store, roomId, eng.tree.doc.export({ mode: "snapshot" }), "tree", server);
+        }
         return;
       }
       if (roomId.startsWith("doc:")) {
@@ -326,8 +393,12 @@ export function createSyncServer(options: SyncServerOptions) {
           },
           onRoomUpdate: (roomId, update) => {
             // "Broadcast" here means: make it visible to discovery/reconnect
-            // (see the class doc above) — there is no live-push API.
-            recordRoomSave(store, roomId, update, roomId.startsWith("vault:") ? "tree" : "doc");
+            // (see the class doc above) — there is no live-push API. Pass
+            // `server` so an already-cached room (see recordRoomSave /
+            // patchCachedRoomIfLoaded) also gets patched in place — without
+            // this, a client that already joined the room once would never
+            // see this external edit, no matter how many times it re-syncs.
+            recordRoomSave(store, roomId, update, roomId.startsWith("vault:") ? "tree" : "doc", server);
           },
           onError: (err) => {
             console.error("[sync-server] vault watcher error:", err);
