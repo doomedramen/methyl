@@ -39,6 +39,12 @@ function compareVersions(a: string, b: string): number {
 export class PluginHost {
   private registrations = new Map<string, Registration>();
   private listeners = new Set<() => void>();
+  /** Set by `dispose()`. A disposed host still has in-flight `enable()`
+   *  calls that started before disposal roll back instead of committing
+   *  (see `enable()`), so a caller replacing this host with a fresh one
+   *  sharing the same `CommandRegistry`/`EditorExtensionRegistry` never
+   *  races a duplicate registration against the orphaned in-flight call. */
+  private disposed = false;
 
   readonly editorExtensions: EditorExtensionRegistry;
 
@@ -62,6 +68,7 @@ export class PluginHost {
   }
 
   async enable(id: string): Promise<void> {
+    if (this.disposed) return;
     const reg = this.registrations.get(id);
     if (!reg) throw new Error(`Unknown plugin: ${id}`);
 
@@ -113,6 +120,17 @@ export class PluginHost {
 
     try {
       await instance.onload();
+      if (this.disposed) {
+        // This host was torn down while onload() was in flight (e.g. a
+        // React effect cleanup racing a still-resolving enable() during
+        // StrictMode's double-invoke). The registrations this call already
+        // pushed to the shared CommandRegistry/EditorExtensionRegistry are
+        // real and must be rolled back — nothing else will, since `reg`
+        // never got a chance to record them — but this was never a real
+        // state change, so it must not be persisted.
+        for (const dispose of [...disposers].reverse()) dispose();
+        return;
+      }
       reg.instance = instance;
       reg.disposers = disposers;
       reg.state = "enabled";
@@ -161,8 +179,34 @@ export class PluginHost {
       }
     }
     for (const id of enabledIds) {
+      if (this.disposed) return;
       if (this.registrations.has(id)) await this.enable(id);
     }
+  }
+
+  /**
+   * Tear this host down synchronously: unload every currently-enabled
+   * plugin (running `onunload`/disposers, same as `disable()`) and mark the
+   * host so any `enable()` call already in flight rolls back instead of
+   * committing. Unlike `disable()`, this never writes to storage — it's
+   * meant for a caller (e.g. a React effect cleanup) discarding this host
+   * in favour of a new one, not a user-facing state change, and the
+   * storage already holds the correct persisted set from before this host
+   * existed.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const reg of this.registrations.values()) {
+      if (!reg.instance) continue;
+      reg.instance.onunload();
+      for (const dispose of [...reg.disposers].reverse()) dispose();
+      reg.instance = null;
+      reg.disposers = [];
+      reg.state = "disabled";
+      reg.error = undefined;
+    }
+    this.emit();
   }
 
   list(): PluginStatus[] {

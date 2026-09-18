@@ -313,6 +313,12 @@ function VaultPluginBridge({
     });
     return () => {
       cancelled = true;
+      // Synchronous: unwinds anything already committed to the shared
+      // CommandRegistry/EditorExtensionRegistry and marks in-flight
+      // enable() calls (e.g. from StrictMode's double-invoke) to roll back
+      // instead of racing a fresh host's registrations (PluginHost.dispose
+      // doc comment has the full race).
+      newHost.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { PluginHost } from "@/lib/plugins/host";
 import { InMemoryPluginStorage } from "@/lib/plugins/storage";
+import { CommandRegistry } from "@/lib/plugins/commands";
 import { Plugin, type App, type PluginManifest } from "@/lib/plugins/api";
 
 function makeApp(): App {
@@ -119,5 +120,68 @@ describe("PluginHost", () => {
     host.subscribe(cb);
     await host.enable("plugin-a");
     expect(cb).toHaveBeenCalled();
+  });
+
+  it("a disposed host's in-flight enable() rolls back instead of committing, so a fresh host sharing the same CommandRegistry can safely re-enable without leaking or duplicating commands", async () => {
+    const storage = new InMemoryPluginStorage();
+    const commands = new CommandRegistry();
+    const app = makeApp();
+
+    // onload adds a command synchronously, then suspends on a promise the
+    // test controls — simulating a React effect cleanup (dispose) racing an
+    // in-flight enable() call, e.g. StrictMode's double-invoke.
+    let releaseOnload: (() => void) | null = null;
+    class A extends Plugin {
+      onload(): Promise<void> {
+        this.addCommand({ id: "cmd", name: "Cmd", callback: () => {} });
+        return new Promise<void>((resolve) => {
+          releaseOnload = resolve;
+        });
+      }
+    }
+
+    const host1 = new PluginHost(app, storage, commands);
+    host1.register(manifestA, A);
+    const enabling = host1.enable("plugin-a");
+
+    // Let enable() run up through onload()'s synchronous prefix (the
+    // addCommand call) and suspend at `await instance.onload()`.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The synchronous part of onload() has already run (addCommand fired),
+    // but enable() hasn't resolved yet.
+    expect(commands.list(null)).toHaveLength(1);
+
+    // Cleanup fires before onload resolves.
+    host1.dispose();
+
+    // Let host1's suspended enable() resume and observe the disposal.
+    releaseOnload!();
+    await enabling;
+
+    // Rolled back: no leaked command, plugin never marked enabled on host1.
+    expect(commands.list(null)).toHaveLength(0);
+    expect(host1.list().find((s) => s.manifest.id === "plugin-a")?.state).toBe("disabled");
+
+    // Disposing never touched storage — it's still whatever was there
+    // before host1 existed (nothing, here).
+    expect(await storage.read(".adhd/plugins.json")).toBeNull();
+
+    // A fresh host sharing the same CommandRegistry can now enable cleanly.
+    // Reuse class A; its onload will suspend again, but nothing is racing
+    // this time, so resolve it right away.
+    const host2 = new PluginHost(app, storage, commands);
+    host2.register(manifestA, A);
+    const enabling2 = host2.enable("plugin-a");
+    releaseOnload!();
+    await enabling2;
+
+    expect(commands.list(null)).toHaveLength(1);
+    expect(host2.list().find((s) => s.manifest.id === "plugin-a")?.state).toBe("enabled");
+    const persisted = await storage.read(".adhd/plugins.json");
+    expect(persisted).not.toBeNull();
+    const parsed = JSON.parse(new TextDecoder().decode(persisted!)) as { enabled: string[] };
+    expect(parsed.enabled).toEqual(["plugin-a"]);
   });
 });
