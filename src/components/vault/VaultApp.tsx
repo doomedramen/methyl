@@ -407,8 +407,15 @@ function VaultPluginBridge({
   );
 }
 
-/** An `App` whose every namespace method delegates to `latest.current` at call time. */
-function forwardingApp(latest: { readonly current: App }): App {
+/**
+ * An `App` whose every namespace method delegates to `latest.current` at
+ * call time. Exported for the identity-stability regression test (Task A1,
+ * docs/superpowers/plans/2026-09-18-plugins-roadmap.md) — VaultPluginBridge
+ * hands one of these to `PluginHostProvider` and keeps `latest` pointed at
+ * the freshly rebuilt `appImpl` on every render, so `useApp()`'s return
+ * value never changes identity even though what it delegates to does.
+ */
+export function forwardingApp(latest: { readonly current: App }): App {
   const get = () => latest.current;
   const ns = <K extends "commands" | "workspace" | "vault">(key: K): App[K] =>
     new Proxy({} as App[K], {
