@@ -41,6 +41,11 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 
 export type NodeKind = "graph" | "todo";
@@ -738,59 +743,86 @@ const canEdit = !readOnly;
         )}
       </ReactFlow>
       <div className="absolute right-3 top-3 z-10 flex gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger
+        <Tooltip>
+          <DropdownMenu>
+            <TooltipTrigger
+              render={
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      disabled={!canEdit}
+                      aria-label="Add node"
+                    >
+                      <Plus />
+                    </Button>
+                  }
+                />
+              }
+            />
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => addNode("graph")}>
+                <StickyNote data-icon="inline-start" />
+                Note
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => addNode("todo")}>
+                <ListTodo data-icon="inline-start" />
+                To-do
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <TooltipContent side="bottom">Add node</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
             render={
               <Button
                 variant="outline"
                 size="icon"
                 disabled={!canEdit}
-                aria-label="Add node"
+                aria-label="Auto arrange"
+                onClick={autoArrange}
               >
-                <Plus />
+                <Workflow />
               </Button>
             }
           />
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => addNode("graph")}>
-              <StickyNote data-icon="inline-start" />
-              Note
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => addNode("todo")}>
-              <ListTodo data-icon="inline-start" />
-              To-do
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={!canEdit}
-          aria-label="Auto arrange"
-          onClick={autoArrange}
-        >
-          <Workflow />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={!canEdit}
-          aria-label="Fit view"
-          onClick={() => fitView({ padding: 0.2 })}
-        >
-          <Maximize2 />
-        </Button>
-        <Button
-          variant={animatedEdges ? "default" : "outline"}
-          size="icon"
-          disabled={!canEdit}
-          aria-label="Animated edges"
-          aria-pressed={animatedEdges}
-          title="Animated edges"
-          onClick={onToggleAnimatedEdges}
-        >
-          <Spline />
-        </Button>
+          <TooltipContent side="bottom">Auto arrange</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={!canEdit}
+                aria-label="Fit view"
+                onClick={() => fitView({ padding: 0.2 })}
+              >
+                <Maximize2 />
+              </Button>
+            }
+          />
+          <TooltipContent side="bottom">Fit view</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant={animatedEdges ? "default" : "outline"}
+                size="icon"
+                disabled={!canEdit}
+                aria-label="Animated edges"
+                aria-pressed={animatedEdges}
+                onClick={onToggleAnimatedEdges}
+              >
+                <Spline />
+              </Button>
+            }
+          />
+          <TooltipContent side="bottom">Animated edges</TooltipContent>
+        </Tooltip>
       </div>
       {!ready && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/60 text-sm text-muted-foreground">

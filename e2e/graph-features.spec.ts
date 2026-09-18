@@ -98,6 +98,20 @@ test("MiniMap renders on desktop only", async ({ page }) => {
   await expect(page.locator(".react-flow__minimap")).toHaveCount(0);
 });
 
+test("toolbar buttons show tooltips anchored below them", async ({ page }) => {
+  await newGraph(page);
+  const btn = page.getByRole("button", { name: "Auto arrange" });
+  await btn.hover();
+  await expect(page.getByText("Auto arrange")).toBeVisible();
+  const btnBox = (await btn.boundingBox())!;
+  await expect
+    .poll(async () => (await page.getByText("Auto arrange").boundingBox())?.y ?? -Infinity)
+    .toBeGreaterThan(btnBox.y + btnBox.height - 2);
+  const tipBox = (await page.getByText("Auto arrange").boundingBox())!;
+  expect(tipBox.x + tipBox.width / 2).toBeGreaterThan(btnBox.x);
+  expect(tipBox.x + tipBox.width / 2).toBeLessThan(btnBox.x + btnBox.width);
+});
+
 test("context menu converts a note to a to-do and back, persisting kind", async ({ page }) => {
   const pane = await newGraph(page);
   await addNote(page);
