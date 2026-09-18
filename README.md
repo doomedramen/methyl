@@ -19,9 +19,10 @@ Markdown is the portable truth, Loro is the sync/history format, everything else
 - Folder tree sidebar with drag-and-drop moves and manual ordering
 - Command palette (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>) for notes and actions
 - Rename / delete for notes and folders; titles come from file names
-- Light, dark and system themes
+- 7 themes (Light, Dark, Obsidian, Obsidian Light, Nord, Catppuccin Mocha, Rosé Pine Dawn) plus System
 - Installable PWA with storage-persistence and quota status
 - Note identity kept outside the files (vault tree + `.adhd/index.json`), so renames and moves keep history
+- A small plugin system (see [Plugins](#plugins))
 
 ## Getting started
 
@@ -122,6 +123,28 @@ above), set `METHYL_ALLOWED_ORIGINS` on the server to a comma-separated list of 
 app origins so its `/api/*` and `/healthz` responses carry the right CORS headers — by
 default, cross-origin requests are rejected by the browser.
 
+## Plugins
+
+Methyl has a small, Obsidian-inspired plugin system. A plugin registers editor
+extensions, commands (with optional hotkeys) and completion sources against an
+`App` facade — it never touches app internals directly. Four are bundled and
+enabled by default: Core Commands, Core Live Preview, Core Wikilinks, and Word
+Count (adds a "Word count: Show" command, default hotkey <kbd>⌘</kbd>/<kbd>Ctrl</kbd>
++ <kbd>Alt</kbd> + <kbd>W</kbd>).
+
+- **Plugins: Manage** (via <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>, or the
+  puzzle-piece icon) opens a dialog listing every bundled plugin with an
+  enable/disable toggle and any load error.
+- Enabled state persists to `.adhd/plugins.json`; a plugin's own data
+  (settings it saves via `saveData`/`loadData`) lives at
+  `.adhd/plugins/<id>/data.json`.
+- Hotkeys can be remapped by hand-editing `.adhd/hotkeys.json` — a map of
+  `"pluginId:commandId"` to an array of `{ modifiers, key }` bindings — which
+  overrides that command's default binding.
+
+See [the plugin system design spec](docs/superpowers/specs/2026-09-18-plugin-system-design.md)
+for the full API surface and rationale.
+
 ## Vault layout
 
 ```text
@@ -131,7 +154,10 @@ vault/
 ├── Attachments/
 └── .adhd/                # app metadata — sync history and identity, not needed to read notes
     ├── crdt/             # Loro snapshots and updates per document
-    └── index.json        # path → document id + content hash
+    ├── index.json        # path → document id + content hash
+    ├── plugins.json      # which bundled plugins are enabled
+    ├── plugins/<id>/data.json  # per-plugin settings
+    └── hotkeys.json      # optional hotkey overrides, keyed "pluginId:commandId"
 ```
 
 Internal names (`.adhd/`, `adhd-vault`) predate the Methyl name and are kept for compatibility with existing vaults.
