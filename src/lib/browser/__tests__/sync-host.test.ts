@@ -219,8 +219,11 @@ describe("SyncHost client driver", () => {
 
     // The server materialized two distinct files, never one overwriting
     // the other.
-    await waitFor(() => existsSync(join(tmpDir, "welcome 2.md")));
+    // Wait for BOTH files: the collision rename removes the old path and
+    // writes the new one, so "welcome 2.md" can exist for a moment while
+    // "welcome.md" is still being rewritten (this raced in CI).
     const names = ["welcome.md", "welcome 2.md"];
+    await waitFor(() => names.every((n) => existsSync(join(tmpDir, n))));
     const contents = names.map((n) => readFileSync(join(tmpDir, n), "utf8"));
     expect(new Set(contents)).toEqual(
       new Set(["device A's welcome\n", "device B's welcome\n"]),
