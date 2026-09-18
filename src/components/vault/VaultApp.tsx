@@ -55,6 +55,7 @@ import { Laptop, Puzzle } from "lucide-react";
 import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
 import { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikilink";
+import { PluginsDialog } from "@/components/plugins/PluginsDialog";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -353,6 +354,7 @@ export function VaultApp() {
   const [error, setError] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
   // Incremented each time the user asks to save (Cmd/Ctrl+S); the active
   // editor watches it and flushes immediately.
   const [saveRequest, setSaveRequest] = useState(0);
@@ -749,6 +751,7 @@ export function VaultApp() {
       onOpenNote={setActiveId}
       onNotesChanged={() => engine && refreshNotes(engine)}
       readOnly={!isWriterTab}
+      onManagePlugins={() => setPluginsDialogOpen(true)}
     >
       <AppSidebar
         rows={rows}
@@ -894,6 +897,7 @@ export function VaultApp() {
           onSelectNote={setActiveId}
         />
       )}
+      <PluginsDialog open={pluginsDialogOpen} onOpenChange={setPluginsDialogOpen} />
     </VaultPluginBridge>
     </SidebarProvider>
     </SyncProvider>
