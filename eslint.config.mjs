@@ -13,6 +13,52 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    files: ["src/plugins/**/*.ts", "src/plugins/**/*.tsx"],
+    ignores: ["src/plugins/**/__tests__/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              // `ignore`-style negation can't re-include a path whose parent
+              // directory is already excluded (a gitignore gotcha), so every
+              // ancestor segment of an allowed import needs its own `!`
+              // entry, not just the leaf.
+              //
+              // Deviation from the plan: `core-live-preview`/`core-wikilinks`
+              // (Task 10) wrap `@/lib/editor/live-preview` and
+              // `@/lib/editor/wikilink-autocomplete` directly — those two
+              // CodeMirror modules exist precisely to be owned by those core
+              // plugins, and moving their contents into `api.ts` or the
+              // plugins themselves would just relocate the same code. The
+              // plan's own Task 12 note handles an analogous case
+              // (`core-commands` and `@/lib/themes`) by moving the
+              // conflicting logic out of the plugin instead; that isn't
+              // practical here since these two imports *are* the plugin's
+              // entire implementation. So the two specific paths are
+              // allow-listed rather than avoided — every other `@/lib/*`
+              // internal stays forbidden.
+              group: [
+                "@/lib/**",
+                "!@/lib/plugins",
+                "!@/lib/plugins/api",
+                "!@/lib/editor",
+                "!@/lib/editor/live-preview",
+                "!@/lib/editor/wikilink-autocomplete",
+              ],
+              message: "Plugins may only import @/lib/plugins/api, not other @/lib internals (see docs/superpowers/specs/2026-09-18-plugin-system-design.md §4).",
+            },
+            {
+              group: ["@/components/*", "@/app/*"],
+              message: "Plugins may not import app components or routes directly.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;
