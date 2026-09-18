@@ -71,7 +71,18 @@ export class PluginHost {
     });
   }
 
-  async enable(id: string): Promise<void> {
+  /**
+   * @param persist Whether a state change here should be written to
+   *   `.adhd/plugins.json`. Defaults to `true` (an explicit user toggle,
+   *   e.g. from `PluginsDialog`). `enableFromStorage()` passes `false` for
+   *   its own replay of already-persisted ids: a plugin that fails to load
+   *   during that automatic boot pass (a transient error, a temporarily
+   *   broken environment) must not get silently baked into storage as
+   *   "the user disabled this" — that would permanently defeat the "file
+   *   absent ⇒ isCore enabled" default the next time the id keeps failing,
+   *   since the file is no longer absent once anything has written it.
+   */
+  async enable(id: string, persist = true): Promise<void> {
     if (this.disposed) return;
     const reg = this.registrations.get(id);
     if (!reg) throw new Error(`Unknown plugin: ${id}`);
@@ -79,6 +90,7 @@ export class PluginHost {
     if (compareVersions(reg.manifest.minAppVersion, API_VERSION) > 0) {
       reg.state = "failed";
       reg.error = `minAppVersion ${reg.manifest.minAppVersion} exceeds API_VERSION ${API_VERSION}`;
+      if (persist) await this.persistEnabled();
       this.emit();
       return;
     }
@@ -154,7 +166,7 @@ export class PluginHost {
       console.error(`[plugins] ${reg.manifest.id} failed to load:`, err);
     }
 
-    await this.persistEnabled();
+    if (persist) await this.persistEnabled();
     this.emit();
   }
 
@@ -191,7 +203,13 @@ export class PluginHost {
     }
     for (const id of enabledIds) {
       if (this.disposed) return;
-      if (this.registrations.has(id)) await this.enable(id);
+      // persist=false: this is replaying already-persisted (or defaulted)
+      // state, not a user decision — see enable()'s doc comment. A plugin
+      // that fails here (transient error, temporarily broken environment)
+      // must not get written into .adhd/plugins.json as "disabled", or the
+      // next boot would see the file as present-but-excluding-it forever,
+      // permanently defeating the isCore default for that id.
+      if (this.registrations.has(id)) await this.enable(id, false);
     }
   }
 
