@@ -3,6 +3,7 @@ import {
   Decoration,
   type DecorationSet,
   EditorView,
+  keymap,
   ViewPlugin,
   type ViewUpdate,
   WidgetType,
@@ -102,7 +103,33 @@ function collectWikilinks(doc: string, claimed: TextRange[]): TextRange[] {
   return out;
 }
 
-export function computeLivePreviewSpecs(doc: string, selection: TextRange[]): LivePreviewSpec[] {
+/** Find the `[[...]]` wikilink (if any) whose range contains `pos`. */
+export function findWikilinkAt(
+  doc: string,
+  pos: number,
+): { from: number; to: number; target: string } | undefined {
+  const re = /\[\[([^\]|\n]+?)(\|([^\]\n]+?))?\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(doc))) {
+    const from = m.index;
+    const to = from + m[0].length;
+    if (pos >= from && pos <= to) {
+      return { from, to, target: m[1]!.trim() };
+    }
+  }
+  return undefined;
+}
+
+export interface LivePreviewComputeOptions {
+  /** Resolve a wikilink target to a document id, or undefined if missing. */
+  resolveWikilink?: (target: string) => string | undefined;
+}
+
+export function computeLivePreviewSpecs(
+  doc: string,
+  selection: TextRange[],
+  options: LivePreviewComputeOptions = {},
+): LivePreviewSpec[] {
   const specs: LivePreviewSpec[] = [];
   const frontmatter = detectFrontmatter(doc);
   const codeRanges: TextRange[] = [];
@@ -287,15 +314,27 @@ export function computeLivePreviewSpecs(doc: string, selection: TextRange[]): Li
 
   // ---- Wikilinks (not part of the CommonMark/GFM grammar) -----------------
   for (const range of collectWikilinks(doc, codeRanges)) {
-    specs.push({ kind: "mark", from: range.from, to: range.to, class: "cm-lp-wikilink" });
+    const inner = doc.slice(range.from + 2, range.to - 2);
+    const pipeIdx = inner.indexOf("|");
+    const target = (pipeIdx === -1 ? inner : inner.slice(0, pipeIdx)).trim();
+    const resolvedId = options.resolveWikilink?.(target);
+    const missing = !!options.resolveWikilink && !resolvedId;
+    specs.push({
+      kind: "mark",
+      from: range.from,
+      to: range.to,
+      class: missing ? "cm-lp-wikilink cm-lp-wikilink-missing" : "cm-lp-wikilink",
+      attrs: {
+        "data-lp-wikilink-target": target,
+        ...(resolvedId ? { "data-lp-wikilink-id": resolvedId } : {}),
+      },
+    });
     if (!touches(selection, range.from, range.to)) {
-      const inner = doc.slice(range.from + 2, range.to - 2);
-      const pipe = inner.indexOf("|");
-      if (pipe === -1) {
+      if (pipeIdx === -1) {
         specs.push({ kind: "hide", from: range.from, to: range.from + 2 });
         specs.push({ kind: "hide", from: range.to - 2, to: range.to });
       } else {
-        specs.push({ kind: "hide", from: range.from, to: range.from + 2 + pipe + 1 });
+        specs.push({ kind: "hide", from: range.from, to: range.from + 2 + pipeIdx + 1 });
         specs.push({ kind: "hide", from: range.to - 2, to: range.to });
       }
     }
@@ -429,41 +468,77 @@ function specsToDecorations(specs: LivePreviewSpec[], visible: readonly TextRang
   return builder.finish();
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
+export interface LivePreviewOptions {
+  /** Resolve a wikilink target to a document id, or undefined if missing. */
+  resolveWikilink?: (target: string) => string | undefined;
+  /** Cmd/Ctrl-click (or Mod-Enter) on a resolved wikilink. */
+  onOpenWikilink?: (documentId: string) => void;
+  /** Cmd/Ctrl-click (or Mod-Enter) on an unresolved wikilink. */
+  onCreateWikilink?: (target: string) => void;
+}
+
+function buildDecorations(view: EditorView, options: LivePreviewOptions): DecorationSet {
   const doc = view.state.doc.toString();
   const selection = view.state.selection.ranges.map((r) => ({ from: r.from, to: r.to }));
-  const specs = computeLivePreviewSpecs(doc, selection);
+  const specs = computeLivePreviewSpecs(doc, selection, { resolveWikilink: options.resolveWikilink });
   return specsToDecorations(specs, view.visibleRanges);
 }
 
-const livePreviewPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
-    }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged || update.selectionSet) {
-        this.decorations = buildDecorations(update.view);
+function activateWikilinkAt(view: EditorView, pos: number, options: LivePreviewOptions): boolean {
+  const doc = view.state.doc.toString();
+  const hit = findWikilinkAt(doc, pos);
+  if (!hit) return false;
+  const resolved = options.resolveWikilink?.(hit.target);
+  if (resolved) {
+    options.onOpenWikilink?.(resolved);
+    return true;
+  }
+  if (options.resolveWikilink) {
+    options.onCreateWikilink?.(hit.target);
+    return true;
+  }
+  return false;
+}
+
+function makeLivePreviewPlugin(options: LivePreviewOptions) {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = buildDecorations(view, options);
       }
-    }
-  },
-  {
-    decorations: (v) => v.decorations,
-    eventHandlers: {
-      mousedown(event, view) {
-        if (!(event.metaKey || event.ctrlKey)) return;
-        const target = event.target as HTMLElement | null;
-        const link = target?.closest<HTMLElement>("[data-lp-url]");
-        const url = link?.getAttribute("data-lp-url");
-        if (!url) return;
-        event.preventDefault();
-        void view;
-        window.open(url, "_blank", "noopener,noreferrer");
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged || update.selectionSet) {
+          this.decorations = buildDecorations(update.view, options);
+        }
+      }
+    },
+    {
+      decorations: (v) => v.decorations,
+      eventHandlers: {
+        mousedown(event, view) {
+          if (!(event.metaKey || event.ctrlKey)) return;
+          const target = event.target as HTMLElement | null;
+
+          const wikilink = target?.closest<HTMLElement>(".cm-lp-wikilink");
+          if (wikilink) {
+            const pos = view.posAtDOM(wikilink);
+            if (activateWikilinkAt(view, pos, options)) {
+              event.preventDefault();
+            }
+            return;
+          }
+
+          const link = target?.closest<HTMLElement>("[data-lp-url]");
+          const url = link?.getAttribute("data-lp-url");
+          if (!url) return;
+          event.preventDefault();
+          window.open(url, "_blank", "noopener,noreferrer");
+        },
       },
     },
-  },
-);
+  );
+}
 
 const livePreviewTheme = EditorView.baseTheme({
   // `@codemirror/language`'s defaultHighlightStyle bolds+underlines every
@@ -496,7 +571,11 @@ const livePreviewTheme = EditorView.baseTheme({
   },
   ".cm-lp-dim": { opacity: "0.45" },
   ".cm-lp-link": { color: "var(--primary)", textDecoration: "underline", cursor: "pointer" },
-  ".cm-lp-wikilink": { color: "var(--primary)", textDecoration: "underline" },
+  ".cm-lp-wikilink": { color: "var(--primary)", textDecoration: "underline", cursor: "pointer" },
+  ".cm-lp-wikilink-missing": {
+    color: "var(--muted-foreground)",
+    textDecoration: "underline dashed",
+  },
   ".cm-lp-blockquote": {
     borderLeft: "3px solid var(--border)",
     paddingLeft: "0.75em",
@@ -530,6 +609,15 @@ const livePreviewTheme = EditorView.baseTheme({
   },
 });
 
-export function livePreview(): Extension {
-  return [livePreviewPlugin, livePreviewTheme];
+export function livePreview(options: LivePreviewOptions = {}): Extension {
+  return [
+    makeLivePreviewPlugin(options),
+    livePreviewTheme,
+    keymap.of([
+      {
+        key: "Mod-Enter",
+        run: (view) => activateWikilinkAt(view, view.state.selection.main.head, options),
+      },
+    ]),
+  ];
 }

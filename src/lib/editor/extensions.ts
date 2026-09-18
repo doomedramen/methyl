@@ -1,4 +1,4 @@
-import { type Extension } from "@codemirror/state";
+import { Prec, type Extension } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -18,7 +18,10 @@ import {
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { livePreview } from "@/lib/editor/live-preview";
+import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
+import { livePreview, type LivePreviewOptions } from "@/lib/editor/live-preview";
+import { wikilinkCompletionSource } from "@/lib/editor/wikilink-autocomplete";
+import type { WikilinkCandidate } from "@/lib/vault/wikilink";
 import { type LoroDoc, type LoroText, type EphemeralStore, type UndoManager } from "loro-crdt";
 import {
   LoroEphemeralPlugin,
@@ -42,8 +45,10 @@ export function adhdEditorExtensions(opts: {
   ephemeral: EphemeralStore;
   user: EditorUser;
   undoManager: UndoManager;
+  /** Wikilink resolution + click/keyboard-open/create wiring (§ wikilinks). */
+  wikilinks?: LivePreviewOptions & { getCandidates?: () => WikilinkCandidate[] };
 }): Extension {
-const { doc, ephemeral, user, undoManager } = opts;
+const { doc, ephemeral, user, undoManager, wikilinks } = opts;
   const getText: (d: LoroDoc) => LoroText = getContentTextFromDoc;
 
   return [
@@ -57,6 +62,15 @@ const { doc, ephemeral, user, undoManager } = opts;
     amoledDark,
     amoledMono,
     syntaxHighlighting(defaultHighlightStyle),
+    autocompletion({
+      override: wikilinks?.getCandidates
+        ? [wikilinkCompletionSource(wikilinks.getCandidates)]
+        : undefined,
+    }),
+    // Accepting a completion (e.g. Enter on an open wikilink popup) must win
+    // over markdownKeymap's own Enter (list continuation) below — CodeMirror's
+    // autocomplete docs call for Prec.highest on its keymap for this reason.
+    Prec.highest(keymap.of(completionKeymap)),
     keymap.of([
       // Markdown-aware Enter/Backspace (continue lists, dedent markup) takes
       // precedence over the generic defaults below.
@@ -74,7 +88,7 @@ const { doc, ephemeral, user, undoManager } = opts;
       codeLanguages: languages,
       addKeymap: false,
     }),
-    livePreview(),
+    livePreview(wikilinks),
     // Collaborative binding first so state is authoritative in Loro
     LoroSyncPlugin(doc, getText),
     LoroUndoPlugin(doc, undoManager, getText),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
 import type { EditorSession } from "@/lib/editor/session";
@@ -26,6 +27,8 @@ export function NoteEditor({
   onPersisted,
   onSaveError,
   readOnly = false,
+  onOpenNote,
+  onNotesChanged,
 }: {
   engine: VaultEngine;
   documentId: string;
@@ -41,6 +44,10 @@ export function NoteEditor({
    * editor; only local keystrokes are blocked.
    */
   readOnly?: boolean;
+  /** Cmd/Ctrl-click (or Mod-Enter) a wikilink: open the target note. */
+  onOpenNote?: (documentId: string) => void;
+  /** A wikilink click created a new note — let the caller refresh its rows. */
+  onNotesChanged?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -64,8 +71,9 @@ export function NoteEditor({
       import("@/lib/editor/session"),
       import("@/lib/editor/sync"),
       import("@/lib/editor/extensions"),
+      import("@/lib/vault/wikilink"),
     ])
-      .then(async ([stateMod, viewMod, sessionMod, syncMod, extMod]) => {
+      .then(async ([stateMod, viewMod, sessionMod, syncMod, extMod, wikilinkMod]) => {
         if (disposed) return;
 
         const { EditorState } = stateMod;
@@ -77,6 +85,14 @@ export function NoteEditor({
           getContentTextFromDoc,
         } = syncMod;
         const { adhdEditorExtensions, editorBaseTheme } = extMod;
+        const { resolveWikilink, listWikilinkCandidates } = wikilinkMod;
+
+        /** Parent tree node of the currently open note, for "create in this folder". */
+        const currentParentTreeId = () => {
+          const node = engine.tree.findByDocumentId(documentId);
+          if (!node) return undefined;
+          return engine.tree.tree.getNodeByID(node.treeId)?.parent()?.id;
+        };
 
         const undoManager = createUndoManager(handle.doc);
         const ephemeral = createCursorEphemeral();
@@ -108,6 +124,27 @@ export function NoteEditor({
                 ephemeral,
                 user,
                 undoManager,
+                wikilinks: {
+                  resolveWikilink: (target) => resolveWikilink(engine.tree, target, documentId),
+                  getCandidates: () => listWikilinkCandidates(engine.tree),
+                  onOpenWikilink: (id) => onOpenNote?.(id),
+                  onCreateWikilink: (target) => {
+                    if (!onOpenNote) return;
+                    // A read-only tab doesn't hold the writer lock (§12), so
+                    // it must not create notes behind the writer tab's back.
+                    if (readOnly) {
+                      toast.error("This vault is open for editing in another tab.");
+                      return;
+                    }
+                    const name = target.toLowerCase().endsWith(".md") ? target : `${target}.md`;
+                    const created = engine.createDocument(currentParentTreeId(), name, "");
+                    void engine.persistTreeIncremental();
+                    void engine.persistDocumentIncremental(created.id);
+                    onNotesChanged?.();
+                    toast.success(`Created "${target}"`);
+                    onOpenNote(created.id);
+                  },
+                },
               }),
               editorBaseTheme(),
               EditorState.readOnly.of(readOnly),

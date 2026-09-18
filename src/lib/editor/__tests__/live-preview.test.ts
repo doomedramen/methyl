@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { computeLivePreviewSpecs, detectFrontmatter, type TextRange } from "@/lib/editor/live-preview";
+import {
+  computeLivePreviewSpecs,
+  detectFrontmatter,
+  findWikilinkAt,
+  type TextRange,
+} from "@/lib/editor/live-preview";
 
 function hides(specs: ReturnType<typeof computeLivePreviewSpecs>) {
   return specs.filter((s) => s.kind === "hide") as { kind: "hide"; from: number; to: number }[];
@@ -119,5 +124,67 @@ describe("computeLivePreviewSpecs", () => {
   it("returns null frontmatter detection for a doc without one", () => {
     expect(detectFrontmatter("# Hello\nbody")).toBeNull();
     expect(detectFrontmatter("not frontmatter\n---\n")).toBeNull();
+  });
+});
+
+describe("wikilink specs", () => {
+  it("marks a plain wikilink without a resolver, with no missing class", () => {
+    const doc = "see [[Note]] now";
+    const specs = computeLivePreviewSpecs(doc, cursorAt(0));
+    const link = specs.find((s) => s.kind === "mark" && s.class.includes("cm-lp-wikilink"));
+    expect(link).toBeTruthy();
+    if (link?.kind === "mark") {
+      expect(link.class).toBe("cm-lp-wikilink");
+      expect(link.attrs?.["data-lp-wikilink-target"]).toBe("Note");
+      expect(link.attrs?.["data-lp-wikilink-id"]).toBeUndefined();
+    }
+  });
+
+  it("adds data-lp-wikilink-id when the resolver finds a target", () => {
+    const doc = "see [[Note]] now";
+    const specs = computeLivePreviewSpecs(doc, cursorAt(0), {
+      resolveWikilink: (target) => (target === "Note" ? "doc-123" : undefined),
+    });
+    const link = specs.find((s) => s.kind === "mark" && s.class.includes("cm-lp-wikilink"));
+    expect(link?.kind === "mark" && link.attrs?.["data-lp-wikilink-id"]).toBe("doc-123");
+    expect(link?.kind === "mark" && link.class).toBe("cm-lp-wikilink");
+  });
+
+  it("marks an unresolved wikilink as missing", () => {
+    const doc = "see [[Nope]] now";
+    const specs = computeLivePreviewSpecs(doc, cursorAt(0), {
+      resolveWikilink: () => undefined,
+    });
+    const link = specs.find((s) => s.kind === "mark" && s.class.includes("cm-lp-wikilink"));
+    expect(link?.kind === "mark" && link.class).toBe("cm-lp-wikilink cm-lp-wikilink-missing");
+  });
+
+  it("uses only the target (not the alias) for resolution", () => {
+    const doc = "[[Note|Display text]]";
+    let resolvedWith: string | undefined;
+    computeLivePreviewSpecs(doc, cursorAt(0), {
+      resolveWikilink: (target) => {
+        resolvedWith = target;
+        return undefined;
+      },
+    });
+    expect(resolvedWith).toBe("Note");
+  });
+});
+
+describe("findWikilinkAt", () => {
+  it("finds the wikilink range and target containing a position", () => {
+    const doc = "see [[Note]] now";
+    expect(findWikilinkAt(doc, 6)).toEqual({ from: 4, to: 12, target: "Note" });
+  });
+
+  it("uses the target (not alias) for an aliased wikilink", () => {
+    const doc = "[[Note|alias]]";
+    expect(findWikilinkAt(doc, 2)?.target).toBe("Note");
+  });
+
+  it("returns undefined outside any wikilink", () => {
+    const doc = "see [[Note]] now";
+    expect(findWikilinkAt(doc, 1)).toBeUndefined();
   });
 });

@@ -93,11 +93,10 @@ describe("SyncHost client driver", () => {
     active.doc.commit();
 
     const host = await SyncHost.create(makeHostOptions(engine, fs));
-    console.log("engine doc ids", engine.tree.documentIds(), "tree vv", Object.fromEntries(engine.tree.doc.version().toJSON()), "doc vv", Object.fromEntries(active.doc.version().toJSON()));
-    const report = await Promise.race([
-      host.sync().then((r) => { console.log("sync report", JSON.stringify(r)); return r; }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("sync timeout")), 4000)),
-    ]) as SyncReport;
+    // No race against a fixed deadline here: under a loaded full-suite run
+    // a real sync can exceed it, which made this test flaky in CI. Vitest's
+    // own per-test timeout is the backstop.
+    const report = (await host.sync()) as SyncReport;
 
     expect(report.docsSynced).toBeGreaterThan(0);
     expect(host.journal.get(`doc:${doc.id}`)).toBeUndefined();

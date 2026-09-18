@@ -455,6 +455,8 @@ export function VaultApp() {
               }
               onPersisted={onPersisted}
               onSaveError={onSaveError}
+              onOpenNote={setActiveId}
+              onNotesChanged={() => refreshNotes(engine)}
             />
           ) : (
             <VaultEmpty onCreate={onCreateNote} />

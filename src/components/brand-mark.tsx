@@ -11,12 +11,7 @@
 export function BrandMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 512 512" aria-hidden className={className}>
-      <rect
-        width="512"
-        height="512"
-        rx="96"
-        className="fill-[#0f1115] dark:fill-[#fafafa]"
-      />
+      <rect width="512" height="512" className="fill-[#0f1115] dark:fill-[#fafafa]" />
       <rect x="104" y="96" width="304" height="40" rx="12" fill="#3b82f6" />
       <rect
         x="104"
