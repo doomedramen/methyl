@@ -5,8 +5,12 @@
  *
  * The plate flips with the theme so the mark never blends into the
  * surface behind it; the blue accent bar stays put in both. Keep the two
- * public/*.svg files in sync with these colours — today the artwork is a
- * placeholder standing in for lines of text.
+ * public/*.svg files in sync with these colours.
+ *
+ * The artwork is a full-bleed square on purpose: iOS masks app icons with
+ * its own superellipse, so baking in corner radii would show through as
+ * the wrong shape. Callers round it themselves (`rounded-md` in the
+ * sidebar); don't add `rx` here.
  */
 export function BrandMark({ className }: { className?: string }) {
   return (

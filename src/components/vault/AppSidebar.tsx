@@ -414,7 +414,7 @@ export function AppSidebar({
     <Sidebar variant="inset">
       <SidebarHeader className="flex-row items-center justify-between gap-2 px-4 pt-6 md:pt-3">
         <div className="flex min-w-0 items-center gap-2">
-          <BrandMark className="size-6 shrink-0" />
+          <BrandMark className="size-6 shrink-0 rounded-md" />
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>
         <div className="flex items-center gap-0.5">
