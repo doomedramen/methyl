@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TreeID } from "loro-crdt";
 import { Check, Inbox, Plus, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
@@ -42,6 +42,14 @@ import { VaultAccessBanner } from "./VaultAccessBanner";
 import { captureToInbox, INBOX_FOLDER_NAME } from "@/lib/vault/inbox";
 import { setAppBadge } from "@/lib/browser/pwa";
 import { shareToCaptures, type SharePayload } from "@/lib/vault/share-payload";
+import { PluginHost } from "@/lib/plugins/host";
+import { CommandRegistry } from "@/lib/plugins/commands";
+import { vaultPluginStorage } from "@/lib/plugins/vault-storage";
+import { InMemoryPluginStorage } from "@/lib/plugins/storage";
+import { PluginHostProvider } from "@/lib/plugins/react";
+import type { App, NoteContext } from "@/lib/plugins/api";
+import { useSidebar } from "@/components/ui/sidebar";
+import { useSync } from "@/lib/browser/sync-context";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -138,6 +146,112 @@ function findFolder(rows: SidebarRow[], treeId: TreeID): FolderRow | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Builds the plugin `App` facade and owns the `PluginHost`/`CommandRegistry`
+ * for the mounted vault. Rendered inside `SyncProvider`/`SidebarProvider` (not
+ * `VaultApp` itself) because `useSidebar`/`useSync` are only valid inside
+ * those providers.
+ */
+function VaultPluginBridge({
+  engine,
+  onCreateNote,
+  onCreateGraph,
+  onCreateFolder,
+  children,
+}: {
+  engine: VaultEngine | null;
+  onCreateNote: () => Promise<string> | void;
+  onCreateGraph: () => Promise<string> | void;
+  onCreateFolder: () => void;
+  children: ReactNode;
+}) {
+  const { toggleSidebar } = useSidebar();
+  const { setDialogOpen: setSyncDialogOpen } = useSync();
+
+  const commandRegistry = useMemo(() => new CommandRegistry(), []);
+  const fallbackHost = useMemo(() => new PluginHost(makeNoopApp(), new InMemoryPluginStorage()), []);
+  const [host, setHost] = useState<PluginHost | null>(null);
+
+  const notify = useCallback((msg: string, kind?: "info" | "success" | "error") => {
+    if (kind === "error") toast.error(msg);
+    else if (kind === "success") toast.success(msg);
+    else toast(msg);
+  }, []);
+
+  const app: App = useMemo<App>(
+    () => ({
+      commands: {
+        list: () => commandRegistry.list(null),
+        execute: (fullId) => {
+          void commandRegistry.execute(fullId, null, null, notify);
+        },
+      },
+      workspace: {
+        getActiveNote: (): NoteContext | null => null,
+        openNote: () => {},
+        toggleSidebar: () => toggleSidebar(),
+        openDialog: (name: string) => {
+          if (name === "sync") {
+            setSyncDialogOpen(true);
+            return;
+          }
+        },
+      },
+      vault: {
+        createNote: async () => {
+          await onCreateNote();
+          return "";
+        },
+        createGraph: async () => {
+          await onCreateGraph();
+          return "";
+        },
+        createFolder: async () => {
+          onCreateFolder();
+        },
+        read: async () => null,
+        list: () => [],
+      },
+      notify,
+    }),
+    [commandRegistry, notify, onCreateFolder, onCreateGraph, onCreateNote, setSyncDialogOpen, toggleSidebar],
+  );
+
+  useEffect(() => {
+    if (!engine) return;
+    let cancelled = false;
+    const newHost = new PluginHost(app, vaultPluginStorage(engine));
+    void newHost.enableFromStorage().then(() => {
+      if (!cancelled) setHost(newHost);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine]);
+
+  return (
+    <PluginHostProvider host={host ?? fallbackHost} commands={commandRegistry} app={app} activeNote={null}>
+      {children}
+    </PluginHostProvider>
+  );
+}
+
+function makeNoopApp(): App {
+  return {
+    commands: { list: () => [], execute: () => {} },
+    workspace: { getActiveNote: () => null, openNote: () => {}, toggleSidebar: () => {}, openDialog: () => {} },
+    vault: {
+      createNote: async () => "",
+      createGraph: async () => "",
+      createFolder: async () => {},
+      read: async () => null,
+      list: () => [],
+    },
+    notify: () => {},
+  };
 }
 
 export function VaultApp() {
@@ -531,6 +645,12 @@ export function VaultApp() {
   return (
     <SyncProvider engine={engine} onRemoteChange={onRemoteSyncChange}>
     <SidebarProvider className="h-full">
+    <VaultPluginBridge
+      engine={engine}
+      onCreateNote={onCreateNote}
+      onCreateGraph={onCreateGraph}
+      onCreateFolder={() => setNewFolderOpen(true)}
+    >
       <AppSidebar
         rows={rows}
         activeId={activeId}
@@ -680,6 +800,7 @@ export function VaultApp() {
           onCreateFolder={() => setNewFolderOpen(true)}
         />
       )}
+    </VaultPluginBridge>
     </SidebarProvider>
     </SyncProvider>
   );
