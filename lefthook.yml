@@ -1,0 +1,9 @@
+# Git hooks (https://lefthook.dev). Installed by `npm install` via the
+# "prepare" script. Never bypass with --no-verify.
+pre-commit:
+  parallel: true
+  commands:
+    test:
+      run: npm test
+    typecheck:
+      run: npx tsc --noEmit
