@@ -428,6 +428,11 @@ export function AppSidebar({
 
   const isEmpty = rows.length === 0;
 
+  // Create actions no-op before the vault engine holds the writer lock
+  // (VaultApp's onCreate* guard on a missing engine/lock), so the buttons
+  // that surface them stay disabled until writing is actually possible.
+  const canWrite = Boolean(engine?.releaseWriterLock);
+
   return (
     <Sidebar variant="inset">
       <SidebarHeader className="flex-row items-center justify-between gap-2 px-4 pt-6 md:pt-3">
@@ -448,6 +453,7 @@ export function AppSidebar({
                   }}
                   aria-label="New folder"
                   className="size-9 text-muted-foreground md:size-8"
+                  disabled={!canWrite}
                 >
                   <FolderPlus />
                 </Button>
@@ -464,6 +470,7 @@ export function AppSidebar({
                   onClick={() => onCreate()}
                   aria-label="New note"
                   className="size-9 text-muted-foreground md:size-8"
+                  disabled={!canWrite}
                 >
                   <Plus />
                 </Button>
@@ -480,6 +487,7 @@ export function AppSidebar({
                   onClick={() => onCreateGraph()}
                   aria-label="New graph"
                   className="size-9 text-muted-foreground md:size-8"
+                  disabled={!canWrite}
                 >
                   <Workflow />
                 </Button>

@@ -2,10 +2,10 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 
 /**
  * Graph editor layout coverage:
- *  - The Add-note toolbar button adds a node that always lands inside the
+ *  - The Add-node toolbar button adds a node that always lands inside the
  *    viewport (regression guard against nodes being placed off-pane).
  *  - Double-clicking the pane adds a node at the cursor position.
- *  - Auto-arrange lays out the current nodes and persists the layout.
+ *  - Auto arrange lays out the current nodes and persists the layout.
  *  - Cmd+S shows the "Saved" badge, and again when already saved.
  */
 
@@ -31,7 +31,7 @@ async function inside(el: Locator, at: { x: number; y: number }): Promise<boolea
 test("Add-note keeps every node inside the viewport", async ({ page }) => {
   const pane = await newGraph(page);
   for (let i = 0; i < 6; i++) {
-    await page.getByRole("button", { name: "Add note" }).click();
+    await page.getByRole("button", { name: "Add node" }).click();
   }
   await expect(page.locator(".react-flow__node")).toHaveCount(6);
   for (const node of await page.locator(".react-flow__node").all()) {
@@ -51,17 +51,18 @@ test("double-click on the pane adds a node at the cursor", async ({ page }) => {
 
 test("auto-arrange lays nodes out and persists the layout", async ({ page }) => {
   await newGraph(page);
-  await page.getByRole("button", { name: "Add note" }).click();
-  await page.getByRole("button", { name: "Add note" }).click();
+  await page.getByRole("button", { name: "Add node" }).click();
+  await page.getByRole("button", { name: "Add node" }).click();
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
-  const btn = page.getByRole("button", { name: "Auto-arrange" });
+  const btn = page.getByRole("button", { name: "Auto arrange" });
   await expect(btn).toBeVisible();
   await btn.click();
   await page.waitForTimeout(700);
   const files = await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
-    const vault = await root.getDirectoryHandle("vault", { create: true });
-    const meta = await vault.getDirectoryHandle(".vault-meta", { create: true });
+    const vault = await root.getDirectoryHandle("adhd-vault");
+    const adhd = await vault.getDirectoryHandle(".adhd", { create: true });
+    const meta = await adhd.getDirectoryHandle("vault-meta", { create: true });
     return (await (await meta.getFileHandle("graph-layout.json")).getFile()).text();
   });
   expect(files).toContain('"nodes"');
@@ -69,7 +70,7 @@ test("auto-arrange lays nodes out and persists the layout", async ({ page }) => 
 
 test("Cmd+S shows the Saved badge, and again when already saved", async ({ page }) => {
   await newGraph(page);
-  await page.getByRole("button", { name: "Add note" }).click();
+  await page.getByRole("button", { name: "Add node" }).click();
   await page.keyboard.press("Meta+s");
   await expect(page.getByText("Saved")).toBeVisible();
   await expect(page.getByText("Saved")).toBeHidden({ timeout: 4000 });

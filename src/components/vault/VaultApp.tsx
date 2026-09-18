@@ -468,6 +468,7 @@ export function VaultApp() {
                     onClick={() => onCreateNote()}
                     aria-label="New note"
                     className="size-10 md:size-9"
+                    disabled={!engine?.releaseWriterLock}
                   >
                     <Plus />
                   </Button>
@@ -517,7 +518,7 @@ export function VaultApp() {
               />
             )
           ) : (
-            <VaultEmpty onCreate={onCreateNote} />
+            <VaultEmpty onCreate={onCreateNote} disabled={!engine?.releaseWriterLock} />
           )}
         </main>
       </SidebarInset>
@@ -548,14 +549,14 @@ function VaultLoading() {
   );
 }
 
-function VaultEmpty({ onCreate }: { onCreate: () => void }) {
+function VaultEmpty({ onCreate, disabled }: { onCreate: () => void; disabled?: boolean }) {
   return (
     <Empty>
       <EmptyMedia variant="icon">
         <Inbox />
       </EmptyMedia>
       <EmptyTitle>Nothing open</EmptyTitle>
-      <Button size="lg" onClick={onCreate}>
+      <Button size="lg" onClick={onCreate} disabled={disabled}>
         <Plus data-icon="inline-start" />
         New note
       </Button>

@@ -476,6 +476,7 @@ function GraphEditorInner({
         nodesConnectable={canEdit}
         elementsSelectable
         deleteKeyCode={canEdit ? ["Backspace", "Delete"] : []}
+        zoomOnDoubleClick={false}
         fitView
         proOptions={{ hideAttribution: true }}
       >
