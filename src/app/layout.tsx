@@ -29,7 +29,11 @@ export const metadata: Metadata = {
     ],
     apple: "/icons/apple-touch-icon.png",
   },
-  appleWebApp: { capable: true, title: "Methyl", statusBarStyle: "black-translucent" },
+  // Opaque ("default"), not black-translucent: from iOS 26 the system paints a
+  // Liquid Glass blur over anything drawn under the status bar (heavy in
+  // iOS 27), with no CSS to disable it. Opaque keeps the web view below it.
+  // iOS reads this once at install — reinstall the home-screen app to apply.
+  appleWebApp: { capable: true, title: "Methyl", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
@@ -50,6 +54,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="h-svh flex flex-col overflow-hidden">
+        {/* iOS 26+ ignores theme-color and tints the status bar from a real
+            element's background-color at the top edge, so give it one. */}
+        <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-50 h-px bg-background" />
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
