@@ -5,7 +5,6 @@ import {
   ReactFlow,
   ReactFlowProvider,
   Background,
-  Controls,
   MiniMap,
   Handle,
   Position,
@@ -654,7 +653,6 @@ const canEdit = !readOnly;
         proOptions={{ hideAttribution: true }}
       >
         <Background />
-        <Controls showInteractive={false} />
         {showMinimap && (
           <MiniMap
             pannable

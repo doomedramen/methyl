@@ -153,11 +153,6 @@
    stops rendering in the framework's stock light palette regardless of
    theme. Scoped to the graph's `.react-flow` root via its className. */
 .graph-editor-flow {
-  --xy-controls-button-background-color: var(--card);
-  --xy-controls-button-background-color-hover: var(--secondary);
-  --xy-controls-button-color: var(--muted-foreground);
-  --xy-controls-button-color-hover: var(--foreground);
-  --xy-controls-button-border-color: var(--border);
   --xy-edge-stroke: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
   --xy-edge-stroke-selected: var(--primary);
   --xy-edge-label-color: var(--muted-foreground);
