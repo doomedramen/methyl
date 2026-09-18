@@ -28,6 +28,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
@@ -306,7 +307,15 @@ export function AppSidebar({
     setActiveDragId(event.active.id as TreeID);
   };
 
-  const handleDragOver = (event: DragOverEvent) => {
+  /**
+   * dnd-kit only fires `onDragOver` when the *row* under the pointer
+   * changes — not as you move within one row. Computing before/inside/after
+   * there alone froze the drop mode at whatever it was when the row was
+   * entered (usually "after"), so dropping onto a folder reordered instead
+   * of moving into it. `onDragMove` fires continuously, so both handlers
+   * run this.
+   */
+  const updateDropTarget = (event: DragOverEvent | DragMoveEvent) => {
     const { active, over } = event;
     if (!over) {
       setOverId(null);
@@ -348,6 +357,9 @@ export function AppSidebar({
       clearAutoExpand();
     }
   };
+
+  const handleDragOver = (event: DragOverEvent) => updateDropTarget(event);
+  const handleDragMove = (event: DragMoveEvent) => updateDropTarget(event);
 
   const handleDragEnd = (event: DragEndEvent) => {
     clearAutoExpand();
@@ -472,6 +484,7 @@ export function AppSidebar({
                 collisionDetection={closestCenter}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
+                onDragMove={handleDragMove}
                 onDragEnd={handleDragEnd}
                 onDragCancel={handleDragCancel}
               >
