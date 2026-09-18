@@ -112,6 +112,9 @@ export function VaultApp() {
   const [error, setError] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  // Incremented each time the user asks to save (Cmd/Ctrl+S); the active
+  // editor watches it and flushes immediately.
+  const [saveRequest, setSaveRequest] = useState(0);
 
   const refreshNotes = useCallback((eng: VaultEngine) => {
     setRows(buildRootRows(eng.tree, eng));
@@ -208,6 +211,26 @@ export function VaultApp() {
   const onPersisted = useCallback(() => {
     setSaving((prev) => (prev === "idle" ? prev : "saved"));
   }, []);
+
+  // Cmd/Ctrl+S: trigger a save in the open editor and surface the "Saved"
+  // badge — both when there's something to flush and as a confirmation that
+  // the doc is already persisted. A stale writer-lock flag is avoided by
+  // reading `isWriter` below, which re-derives on the §12 promotion tick.
+  const isWriter = Boolean(engine?.releaseWriterLock);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (!engine || !activeId || !isWriter) return;
+        setSaveRequest((n) => n + 1);
+        // Show the confirmation immediately; a failing persist overwrites
+        // it with the error state.
+        setSaving((prev) => (prev === "error" ? prev : "saved"));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [engine, activeId, isWriter]);
 
   useEffect(() => {
     if (saving !== "saved") return;
@@ -473,6 +496,7 @@ export function VaultApp() {
                 }
                 onPersisted={onPersisted}
                 onSaveError={onSaveError}
+                saveRequest={saveRequest}
               />
             ) : (
               <NoteEditor
@@ -489,6 +513,7 @@ export function VaultApp() {
                 onSaveError={onSaveError}
                 onOpenNote={setActiveId}
                 onNotesChanged={() => refreshNotes(engine)}
+                saveRequest={saveRequest}
               />
             )
           ) : (

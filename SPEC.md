@@ -29,7 +29,7 @@ The core philosophy is:
 | Layer                   | Choice                                                 |
 | ----------------------- | ------------------------------------------------------ |
 | Application             | Next.js 16, React, TypeScript                          |
-| Deployment              | Next standalone server (single-port container)         |
+| Deployment              | Next.js server (single-port container)                |
 | UI                      | Tailwind CSS 4, shadcn/ui, next-themes                 |
 | Markdown editor         | CodeMirror 6                                           |
 | Editor/CRDT integration | `loro-codemirror`                                      |
@@ -749,15 +749,11 @@ Never label a locally saved note simply "Synced."
 Next.js is used as a build/framework layer, and — since dynamic route params
 (`/<vaultId>/<vault path>`) must resolve in a real path URL, which a static
 export refuses for unlisted params — as the in-process server too, run
-alongside the sync server behind one public port. Configure:
-
-```js
-output: "standalone"
-```
-
-`output: "standalone"` traces only the deps the server actually needs into
-`.next/standalone`, keeping the runtime image close to the old static
-export's size despite running a real server.
+inside `src/server/main.ts` alongside the sync server behind one public port.
+`next()` (the custom-server API) serves the app via `getRequestHandler()`;
+the sync HTTP API, `/healthz`, and the sync WebSocket live in the same
+process. No `output: "standalone"` build — that mode forbids custom-server
+usage and would double the build pipeline.
 
 The application's main workspace is a client shell. The open note lives in
 the URL as a real path:
@@ -801,7 +797,7 @@ Build:
 ```text
 next build
       ↓
-.next/standalone, .next/static
+.next/server, .next/static
 
 service-worker build
       ↓

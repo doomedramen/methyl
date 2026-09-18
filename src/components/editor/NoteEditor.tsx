@@ -29,6 +29,8 @@ export function NoteEditor({
   readOnly = false,
   onOpenNote,
   onNotesChanged,
+  /** Incrementing counter; a new value asks for an immediate flush. */
+  saveRequest = 0,
 }: {
   engine: VaultEngine;
   documentId: string;
@@ -48,9 +50,21 @@ export function NoteEditor({
   onOpenNote?: (documentId: string) => void;
   /** A wikilink click created a new note — let the caller refresh its rows. */
   onNotesChanged?: () => void;
+  saveRequest?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  // Updated when the (async-bootstrapped) editor session creates its flush,
+  // so a save request can fire it from outside the session's lifecycle.
+  const flushRef = useRef<(() => void) | null>(null);
+
+  // Reply to the app-level "save now" request (Cmd/Ctrl+S in VaultApp).
+  // If nothing is dirty the session's flush no-ops, which is fine — VaultApp
+  // shows the "Saved" badge itself for the already-saved case.
+  useEffect(() => {
+    if (!saveRequest) return;
+    flushRef.current?.();
+  }, [saveRequest]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -187,6 +201,7 @@ export function NoteEditor({
         });
 
         const flush = () => void session.flush();
+        flushRef.current = flush;
         const onHidden = () => {
           if (document.visibilityState === "hidden") flush();
         };
@@ -209,6 +224,7 @@ export function NoteEditor({
 
     return () => {
       disposed = true;
+      flushRef.current = null;
       cleanupRef.current?.();
       cleanupRef.current = null;
     };

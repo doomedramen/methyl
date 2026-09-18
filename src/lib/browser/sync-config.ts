@@ -5,8 +5,9 @@
  *
  * NOTE: the access token is stored in plain `localStorage`, readable by any
  * script running on this origin (SPEC §31 describes a cookie-based pairing
- * flow instead — not what this server implements today; see main.ts /
- * sync-server.ts, which authenticate with a single static bearer token).
+ * flow instead — not what this server implements today; see
+ * src/server/main.ts / sync-server.ts, which authenticate with a single
+ * static bearer token).
  * This matches the server's actual (simpler, self-hosted, LAN-only) auth
  * model, but is a real tradeoff worth knowing about.
  */

@@ -39,7 +39,7 @@ Open <http://localhost:3000>. A fresh vault is created in the browser's private 
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Next dev server plus service-worker build in watch mode |
-| `npm run build` | Next standalone server build (`.next/standalone`) and service-worker build |
+| `npm run build` | Next build and service-worker build |
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run test:e2e` | Playwright end-to-end tests (real Chromium; builds and serves the app first) |
@@ -50,7 +50,7 @@ Open <http://localhost:3000>. A fresh vault is created in the browser's private 
 
 ## Self-hosting with Docker
 
-The sync server ships as a single container serving the static app, the HTTP API, and
+The sync server ships as a single container serving the app (Next.js in-process), the HTTP API, and
 the sync WebSocket all on one port.
 
 ```bash
@@ -138,7 +138,7 @@ Internal names (`.adhd/`, `adhd-vault`) predate the Methyl name and are kept for
 
 ## Tech stack
 
-Next.js 16 (standalone server) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (Base UI) · CodeMirror 6 · Loro CRDT · OPFS · Web Locks · Serwist · dnd-kit · Vitest
+Next.js 16 (in-process server) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (Base UI) · CodeMirror 6 · Loro CRDT · OPFS · Web Locks · Serwist · dnd-kit · Vitest
 
 ## Project structure
 

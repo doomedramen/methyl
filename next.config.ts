@@ -1,18 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
   reactStrictMode: true,
   images: {
-    // No self-hosted image optimization (no sharp in the runtime image) —
-    // avoids the extra CPU/deps for a single-user, self-hosted app.
+    // No self-hosted image optimization (no sharp) — avoids the extra
+    // CPU/deps for a single-user, self-hosted app.
     unoptimized: true,
-  },
-  // images.unoptimized means sharp is never loaded at runtime; keep it (and
-  // its native @img/* deps) out of `.next/standalone`, which would
-  // otherwise trace and copy it into every build regardless.
-  outputFileTracingExcludes: {
-    "*": ["node_modules/sharp/**", "node_modules/@img/**"],
   },
   // Browsers must always re-check sw.js so an update is picked up promptly
   // (standard PWA guidance) — Next serves public/ files with no special

@@ -351,7 +351,10 @@ export function createSyncServer(options: SyncServerOptions) {
   };
 
   const server = new SimpleServer(config);
-  const httpPort = options.httpPort ?? options.port + 1;
+  // The in-process host (src/server/main.ts) routes /api/* itself, so its
+  // own HTTP API server must NOT be created here. Tests that want the API
+  // on a known port pass `httpPort` explicitly.
+  const httpPort = options.httpPort;
   let http: Server | null = null;
 
   return {
@@ -407,10 +410,12 @@ export function createSyncServer(options: SyncServerOptions) {
       }
 
       await server.start();
-      http = createServer(
-        createHttpApi({ store, authToken: options.authToken, assetDir }),
-      );
-      await new Promise<void>((resolve) => http!.listen(httpPort, options.host ?? "0.0.0.0", resolve));
+      if (httpPort !== undefined) {
+        http = createServer(
+          createHttpApi({ store, authToken: options.authToken, assetDir }),
+        );
+        await new Promise<void>((resolve) => http!.listen(httpPort, options.host ?? "0.0.0.0", resolve));
+      }
       return httpPort;
     },
     stop: async () => {

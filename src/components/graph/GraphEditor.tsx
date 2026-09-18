@@ -20,7 +20,7 @@ import {
   type OnConnect,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Maximize2 } from "lucide-react";
+import { Plus, Maximize2, Workflow } from "lucide-react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { detectGraphDocument, buildGraphMarkdown } from "@/lib/graph/detect";
 import type { FlowchartGraph } from "@/lib/graph/mermaid";
@@ -43,6 +43,82 @@ function autoPosition(index: number): { x: number; y: number } {
   const col = index % columns;
   const row = Math.floor(index / columns);
   return { x: col * 220, y: row * 120 };
+}
+
+const H_GAP = 240;
+const V_GAP = 140;
+
+/**
+ * Dependency-free layered (top-down) layout for the graph: Kahn's algorithm
+ * assigns each node the earliest layer consistent with its incoming edges,
+ * then nodes are spread horizontally within their layer and centered against
+ * the widest layer. Cycles and isolated nodes fall back to their own rows, so
+ * the button always produces a readable spread — no graph database platform
+ * strip, no `dagre` dependency.
+ */
+function computeLayeredPositions(
+  nodes: GraphFlowNode[],
+  edges: Edge[],
+): Record<string, { x: number; y: number }> {
+  const out: Record<string, { x: number; y: number }> = {};
+  if (nodes.length === 0) return out;
+
+  const outgoing = new Map<string, string[]>();
+  const indegree = new Map<string, number>();
+  for (const n of nodes) {
+    outgoing.set(n.id, []);
+    indegree.set(n.id, 0);
+  }
+  for (const e of edges) {
+    if (!outgoing.has(e.source) || !indegree.has(e.target)) continue;
+    outgoing.get(e.source)!.push(e.target);
+    indegree.set(e.target, (indegree.get(e.target) ?? 0) + 1);
+  }
+
+  const layer = new Map<string, number>();
+  const queue: string[] = [];
+  for (const n of nodes) {
+    if ((indegree.get(n.id) ?? 0) === 0) {
+      layer.set(n.id, 0);
+      queue.push(n.id);
+    }
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const id = queue[head++];
+    const l = layer.get(id) ?? 0;
+    for (const target of outgoing.get(id)!) {
+      const pushed = l + 1;
+      if (pushed > (layer.get(target) ?? -1)) layer.set(target, pushed);
+      const remaining = (indegree.get(target) ?? 1) - 1;
+      indegree.set(target, remaining);
+      if (remaining <= 0) queue.push(target);
+    }
+  }
+  // Nodes Kahn never reached (cycles, self-loops) get their own rows.
+  let extraRow = 0;
+  for (const n of nodes) {
+    if (!layer.has(n.id)) {
+      layer.set(n.id, extraRow + 1);
+      extraRow++;
+    }
+  }
+
+  const byLayer = new Map<number, string[]>();
+  for (const n of nodes) {
+    const l = layer.get(n.id) ?? 0;
+    const row = byLayer.get(l) ?? [];
+    row.push(n.id);
+    byLayer.set(l, row);
+  }
+  const widest = Math.max(...[...byLayer.values()].map((row) => row.length));
+  for (const [l, row] of byLayer) {
+    const startX = ((widest - row.length) * H_GAP) / 2;
+    row.forEach((id, i) => {
+      out[id] = { x: startX + i * H_GAP, y: l * V_GAP };
+    });
+  }
+  return out;
 }
 
 function GraphLabelNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
@@ -120,6 +196,8 @@ interface GraphEditorProps {
   onDirtyChange?: (dirty: boolean) => void;
   onPersisted?: () => void;
   onSaveError?: () => void;
+  /** Incrementing counter; a new value asks for an immediate persist. */
+  saveRequest?: number;
 }
 
 function GraphEditorInner({
@@ -129,6 +207,7 @@ function GraphEditorInner({
   onDirtyChange,
   onPersisted,
   onSaveError,
+  saveRequest = 0,
 }: GraphEditorProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -138,7 +217,9 @@ function GraphEditorInner({
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const ready = loadedFor === documentId;
   const { screenToFlowPosition, fitView } = useReactFlow();
+  const rf = useReactFlow();
 
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disposed = useRef(false);
@@ -262,7 +343,28 @@ function GraphEditorInner({
     (position?: { x: number; y: number }) => {
       if (readOnly) return;
       const id = newNodeId();
-      const pos = position ?? autoPosition(nodesRef.current.length);
+      // Default placement is the center of the current viewport (the pane
+      // double-click already passes an exact flow position) so the node
+      // never lands off-screen when the graph was panned elsewhere. A small
+      // cascade keeps successive button-adds from stacking exactly on top of
+      // each other.
+      let base = position;
+      if (!base) {
+        const el = wrapperRef.current;
+        if (el) {
+          // getBoundingClientRect() returns viewport-relative coords, which
+          // is exactly what screenToFlowPosition expects.
+          const rect = el.getBoundingClientRect();
+          base = screenToFlowPosition({
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+          });
+        } else {
+          base = autoPosition(nodesRef.current.length);
+        }
+      }
+      const count = nodesRef.current.length;
+      const pos = { x: base.x + (count % 5) * 20, y: base.y + (count % 5) * 20 };
       const next: GraphFlowNode[] = [
         ...nodesRef.current,
         {
@@ -278,8 +380,25 @@ function GraphEditorInner({
       schedulePersist(next, edgesRef.current);
       scheduleLayoutSave(next);
     },
-    [readOnly, setNodes, onLabelChange, schedulePersist, scheduleLayoutSave],
+    [
+      readOnly,
+      setNodes,
+      onLabelChange,
+      schedulePersist,
+      scheduleLayoutSave,
+      screenToFlowPosition,
+    ],
   );
+
+  const autoArrange = useCallback(() => {
+    if (readOnly) return;
+    const positions = computeLayeredPositions(nodesRef.current, edgesRef.current);
+    const next = nodesRef.current.map((n) => ({ ...n, position: positions[n.id] }));
+    setNodes(next);
+    // Layout only — node positions never touch the Markdown, so no persist.
+    scheduleLayoutSave(next);
+    requestAnimationFrame(() => fitView({ padding: 0.2 }));
+  }, [readOnly, setNodes, scheduleLayoutSave, fitView]);
 
   const onPaneDoubleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -317,8 +436,6 @@ function GraphEditorInner({
     [onEdgesChange, schedulePersist],
   );
 
-  const rf = useReactFlow();
-
   const onMoveEnd = useCallback(() => {
     if (readOnly) return;
     const vp = rf.getViewport();
@@ -331,6 +448,12 @@ function GraphEditorInner({
     }, 400);
   }, [engine, documentId, readOnly, rf]);
 
+  // Reply to the app-level "save now" request (Cmd/Ctrl+S in VaultApp).
+  useEffect(() => {
+    if (!saveRequest || readOnly) return;
+    void persistNow(nodesRef.current, edgesRef.current);
+  }, [saveRequest, readOnly, persistNow]);
+
   const onNodeDoubleClick: NodeMouseHandler = useCallback((e) => {
     e.stopPropagation();
   }, []);
@@ -338,7 +461,7 @@ function GraphEditorInner({
   const canEdit = !readOnly;
 
   return (
-    <div className="relative h-full w-full">
+    <div ref={wrapperRef} className="relative h-full w-full">
       <ReactFlow<GraphFlowNode, Edge>
         nodes={nodes}
         edges={edges}
@@ -368,6 +491,15 @@ function GraphEditorInner({
           onClick={() => addNode()}
         >
           <Plus />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          disabled={!canEdit}
+          aria-label="Auto arrange"
+          onClick={autoArrange}
+        >
+          <Workflow />
         </Button>
         <Button
           variant="outline"

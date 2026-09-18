@@ -54,3 +54,4 @@ public/sw.js.map
 /test-results/
 /playwright-report/
 /.playwright/
+/.e2e-vault/
