@@ -90,8 +90,9 @@ export function NoteEditor({
       .then(async ([stateMod, viewMod, sessionMod, syncMod, extMod, wikilinkMod]) => {
         if (disposed) return;
 
-        const { EditorState } = stateMod;
+        const { EditorState, Compartment } = stateMod;
         const { EditorView } = viewMod;
+        const pluginCompartment = new Compartment();
         const { createEditorSession } = sessionMod;
         const {
           createCursorEphemeral,
@@ -138,6 +139,7 @@ export function NoteEditor({
                 ephemeral,
                 user,
                 undoManager,
+                pluginCompartment,
                 wikilinks: {
                   resolveWikilink: (target) => resolveWikilink(engine.tree, target, documentId),
                   getCandidates: () => listWikilinkCandidates(engine.tree),
