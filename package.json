@@ -14,7 +14,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "prepare": "lefthook install"
+    "prepare": "node -e \"if(require('fs').existsSync('.git'))require('child_process').execSync('lefthook install',{stdio:'inherit'})\""
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
