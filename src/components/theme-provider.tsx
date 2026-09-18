@@ -32,7 +32,18 @@ function ThemeColorMeta() {
 
   useEffect(() => {
     if (!resolvedTheme) return;
-    document.querySelectorAll('meta[name="theme-color"][media]').forEach((el) => el.remove());
+    // Disable (don't remove) layout.tsx's two static `prefers-color-scheme`
+    // metas: they're React/Next-managed "Hoistable" resources (React 19
+    // tracks and later tears down their DOM nodes itself). Detaching them
+    // with `el.remove()` desyncs that bookkeeping — React's own cleanup
+    // then runs `stateNode.parentNode.removeChild(stateNode)` against an
+    // already-null parentNode on the next full remount (e.g. every Next.js
+    // Fast Refresh), throwing "Cannot read properties of null (reading
+    // 'removeChild')". Neutralizing the media query instead leaves the
+    // nodes right where React put them.
+    document
+      .querySelectorAll('meta[name="theme-color"][media]')
+      .forEach((el) => el.setAttribute("media", "not all"));
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]:not([media])');
     if (!meta) {
       meta = document.createElement("meta");
