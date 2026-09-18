@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   ClipboardCopy,
   CloudCheck,
@@ -8,6 +8,7 @@ import {
   CloudOff,
   Download,
   HardDrive,
+  RefreshCw,
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
@@ -77,6 +78,21 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
     if (!pwa.installPrompt) return;
     await pwa.installPrompt.prompt();
   }, [pwa.installPrompt]);
+
+  // Surface the update as a toast the moment it's ready, once per reload —
+  // the popover row below (Reload button) stays available for anyone who
+  // dismisses or misses it.
+  const updateToastShown = useRef(false);
+  const { updateReady, applyUpdate } = pwa;
+  useEffect(() => {
+    if (!updateReady || updateToastShown.current) return;
+    updateToastShown.current = true;
+    toast("New version available", {
+      description: "Reload to update Methyl.",
+      duration: Infinity,
+      action: { label: "Reload", onClick: () => applyUpdate() },
+    });
+  }, [updateReady, applyUpdate]);
 
   const copyDiagnostics = useCallback(async () => {
     try {
@@ -186,6 +202,16 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
             <ClipboardCopy data-icon="inline-start" />
             Copy diagnostics
           </Button>
+
+          {pwa.updateReady && (
+            <>
+              <Separator className="my-1" />
+              <Button size="sm" onClick={pwa.applyUpdate} className="w-full">
+                <RefreshCw data-icon="inline-start" />
+                Reload to update
+              </Button>
+            </>
+          )}
 
           {pwa.installPrompt && (
             <>

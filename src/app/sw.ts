@@ -19,7 +19,13 @@ declare const self: ServiceWorkerGlobalScope;
  */
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
-  skipWaiting: true,
+  // A waiting worker no longer activates itself: an open tab may still be
+  // relying on the chunks the old worker is serving, and skipWaiting here
+  // would swap them out from under it mid-session (stale-chunk errors on
+  // the next lazy import). Instead the page decides when it's safe — see
+  // usePwa()/applyUpdate() in src/lib/browser/pwa.ts, which posts
+  // SKIP_WAITING once the user accepts the "reload to update" prompt.
+  skipWaiting: false,
   clientsClaim: true,
   navigationPreload: true,
   cacheId: "adhd-app",
@@ -51,3 +57,11 @@ const serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// Lets the waiting worker activate on the page's schedule instead of ours
+// (see the skipWaiting: false comment above).
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") {
+    void self.skipWaiting();
+  }
+});

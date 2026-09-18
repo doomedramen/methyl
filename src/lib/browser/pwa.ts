@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface InviteEvent extends Event {
   prompt(): Promise<void>;
@@ -11,6 +11,8 @@ export interface PwaState {
   installPrompt: InviteEvent | null;
   persistent: boolean | null;
   quota: { usage: number; quota: number } | null;
+  /** A new SW has installed and is waiting — applyUpdate() activates it. */
+  updateReady: boolean;
 }
 
 interface NavWithStandalone {
@@ -57,19 +59,26 @@ export function isStandalone(): boolean {
  * development it unregisters any existing worker and clears its caches so
  * code changes show on reload instead of stale cached chunks. Registration
  * fails in browsers or webviews that block service workers.
+ *
+ * Returns the registration (so callers can watch it for updates) alongside
+ * the coarse offline-readiness state.
  */
-export async function registerServiceWorker(): Promise<PwaState["offline"]> {
-  if (!("serviceWorker" in navigator)) return "unavailable";
+export async function registerServiceWorker(): Promise<{
+  offline: PwaState["offline"];
+  registration: ServiceWorkerRegistration | null;
+}> {
+  if (!("serviceWorker" in navigator)) return { offline: "unavailable", registration: null };
   if (process.env.NODE_ENV !== "production") {
     await unregisterDevServiceWorker();
-    return "disabled";
+    return { offline: "disabled", registration: null };
   }
   try {
     const reg = await navigator.serviceWorker.register("/sw.js");
-    return reg.active || reg.waiting || reg.installing ? "ready" : "unavailable";
+    const offline = reg.active || reg.waiting || reg.installing ? "ready" : "unavailable";
+    return { offline, registration: reg };
   } catch (err) {
     console.warn("[pwa] service worker registration failed", err);
-    return "unavailable";
+    return { offline: "unavailable", registration: null };
   }
 }
 
@@ -93,8 +102,10 @@ export function usePwa() {
     installPrompt: null,
     persistent: null,
     quota: null,
+    updateReady: false,
   });
   const notified = useRef(false);
+  const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {
     const onBeforeInstall = (e: Event) => {
@@ -114,8 +125,36 @@ export function usePwa() {
 
   useEffect(() => {
     let alive = true;
-    registerServiceWorker().then((offline) => {
-      if (alive) setState((s) => ({ ...s, offline }));
+
+    // A worker already sitting in `waiting` (installed while no tab was
+    // open, or from a previous visit) means an update is ready right away.
+    const watchForWaiting = (reg: ServiceWorkerRegistration) => {
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        setState((s) => ({ ...s, updateReady: true }));
+      }
+      // `updatefound` fires when reg.installing appears (a new SW started
+      // installing, whether from our own reg.update() call or a fetch of
+      // /sw.js the browser did on its own). Once it flips to "installed"
+      // *and* there's already a controller, the old worker is still
+      // running the page — that's exactly the "update ready" moment.
+      reg.addEventListener("updatefound", () => {
+        const installing = reg.installing;
+        if (!installing) return;
+        installing.addEventListener("statechange", () => {
+          if (installing.state === "installed" && navigator.serviceWorker.controller) {
+            setState((s) => ({ ...s, updateReady: true }));
+          }
+        });
+      });
+    };
+
+    registerServiceWorker().then(({ offline, registration }) => {
+      if (!alive) return;
+      setState((s) => ({ ...s, offline }));
+      if (registration) {
+        registrationRef.current = registration;
+        watchForWaiting(registration);
+      }
     });
     tryPersistStorage().then((p) => {
       if (alive) setState((s) => ({ ...s, persistent: p }));
@@ -126,13 +165,42 @@ export function usePwa() {
       });
     refreshQuota();
     const t = setInterval(refreshQuota, 30_000);
+
+    // Cheap freshness check: the browser re-fetches /sw.js (byte-compared
+    // against the installed worker) and starts installing a new one if it
+    // differs. Doesn't force anything on the user — just makes "reload to
+    // update" show up sooner than waiting for the browser's own ~24h check.
+    const checkForUpdate = () => registrationRef.current?.update().catch(() => {});
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkForUpdate();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const hourly = setInterval(checkForUpdate, 60 * 60 * 1000);
+
     return () => {
       alive = false;
       clearInterval(t);
+      clearInterval(hourly);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
-  return state;
+  // Activates the waiting worker and reloads once it takes control. The
+  // reload is tied to `controllerchange` (fired exactly once, when the new
+  // worker claims clients) rather than done eagerly, so it can't race the
+  // activation and reload onto a half-updated worker.
+  const applyUpdate = useCallback(() => {
+    const reg = registrationRef.current;
+    if (!reg?.waiting) return;
+    navigator.serviceWorker.addEventListener(
+      "controllerchange",
+      () => window.location.reload(),
+      { once: true },
+    );
+    reg.waiting.postMessage("SKIP_WAITING");
+  }, []);
+
+  return { ...state, applyUpdate };
 }
 
 export function formatBytes(n: number): string {
