@@ -31,13 +31,19 @@ describe("synchost debug", () => {
     };
     const c = new SyncCoordinator({ wsUrl: `ws://127.0.0.1:${wsPort}`, httpUrl: `http://127.0.0.1:${httpPort}`, authToken: "t", vaultId: "v" }, new DirtyJournal(), hooks);
     console.log("sync start");
+    // 4000ms left ~1s of headroom under the (default) 5000ms test timeout —
+    // too tight when many other test files are also spinning up real
+    // WebSocket servers in parallel (Task A3's 30x `vitest run` flaky-hunt
+    // reproduced a spurious "sync timeout" here under that load). Both
+    // numbers are widened with the same headroom-over-race margin the
+    // sync-host disk-watch test uses.
     const report = await Promise.race([
       c.sync().then((r) => { console.log("sync done", JSON.stringify(r)); return r; }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("sync timeout")), 4000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("sync timeout")), 15000)),
     ]) as Awaited<ReturnType<SyncCoordinator["sync"]>>;
     expect(report.docsSynced).toBeGreaterThan(0);
     c.disconnect();
     await server.stop();
     rmSync(tmp, { recursive: true, force: true });
-  });
+  }, 20000);
 });

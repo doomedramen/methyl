@@ -356,15 +356,20 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
     writeFileSync(join(tmp, "disk-edit.md"), "original content\nedited on disk\n");
 
     // The watcher chain (chokidar stability window + ingest debounce + an
-    // fs-scanning ingest pass) is normally <1s, but a loaded CI box can
-    // stretch it past a tight deadline — poll for it with headroom instead
-    // of racing it (same class of flake as the seeded-vault waits above).
+    // fs-scanning ingest pass) is normally <1s, but a loaded box (e.g. many
+    // vitest worker processes each running their own real fs watcher and
+    // WebSocket server, as Task A3's 30x `vitest run` flaky-hunt does) can
+    // stretch it well past a tight deadline — poll for it with generous
+    // headroom instead of racing it (same class of flake as the
+    // seeded-vault waits above). Bumped from 10s to 25s after that hunt
+    // reproduced a spurious timeout under heavy parallel load (see
+    // docs/superpowers/plans/2026-09-18-plugins-roadmap.md, Task A3).
     await waitFor(
       () =>
         diskServer.store
           .getChangesAfter(baselineSeq)
           .changes.some((c) => c.objectId === roomId && c.type === "doc"),
-      10000,
+      25000,
     );
 
     // Second sync round: the room was already joined+left once above, so
@@ -376,5 +381,5 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
     expect(clientText).toBe("original content\nedited on disk\n");
 
     host.disconnect();
-  }, 15000);
+  }, 30000);
 });
