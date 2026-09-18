@@ -76,3 +76,10 @@ limits) live there, not here — only their *deviations* are listed below.
       `better-sqlite3`; distroless or Alpine would cut it if it matters.
 - [ ] **Flaky tests:** two timing-dependent sync tests have been stabilised; watch
       for others under full-suite load rather than in isolation.
+- [x] **Sidebar drag-and-drop now has real-browser e2e coverage**
+      (`e2e/sidebar-organise.spec.ts`, `npm run test:e2e`) — create/nest/reorder/
+      move-out/refuse-descendant, asserting both the sidebar tree and the OPFS
+      files on disk. Added after three drag bugs (drop-into-folder computed only
+      in `onDragOver`, and a Loro remove-then-reinsert index overshoot on
+      downward moves) shipped uncaught, since jsdom unit tests have no real
+      layout for dnd-kit's hit-testing to run against.

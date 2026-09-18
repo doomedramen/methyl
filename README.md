@@ -42,6 +42,8 @@ Open <http://localhost:3000>. A fresh vault is created in the browser's private 
 | `npm run build` | Next standalone server build (`.next/standalone`) and service-worker build |
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Vitest in watch mode |
+| `npm run test:e2e` | Playwright end-to-end tests (real Chromium; builds and serves the app first) |
+| `npm run test:e2e:ui` | Playwright's interactive UI runner |
 | `npm run lint` | ESLint |
 | `npm run build:server` | Bundle the sync server (`dist/server.cjs`) |
 | `npm run start:server` | Run the bundled sync server |

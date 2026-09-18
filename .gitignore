@@ -49,3 +49,8 @@ public/sw.js.map
 
 # local captured notes (/note)
 .agent-notes/
+
+# playwright
+/test-results/
+/playwright-report/
+/.playwright/
