@@ -20,8 +20,8 @@ export const metadata: Metadata = {
   description: "Self-hostable, offline-first Markdown vault",
   manifest: "/manifest.webmanifest",
   icons: {
-    // Browsers pick the variant that suits their current theme; the dark
-    // one has a light plate so it stays visible on a dark tab strip.
+    // Browsers pick the variant that suits their current theme. Both files
+    // are identical for now; theme-specific artwork lands here later.
     icon: [
       { url: "/icon.svg", media: "(prefers-color-scheme: light)" },
       { url: "/icon-dark.svg", media: "(prefers-color-scheme: dark)" },
