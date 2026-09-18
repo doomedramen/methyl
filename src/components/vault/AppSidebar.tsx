@@ -400,6 +400,18 @@ export function AppSidebar({
     } else {
       newParent = overFlat.parentTreeId;
       index = overFlat.siblingIndex + (currentMode === "after" ? 1 : 0);
+      // Loro removes the node before re-inserting it, so every later
+      // sibling shifts up by one. Without this, dragging an item DOWN
+      // within its own parent (e.g. from above a folder to just below it)
+      // landed one slot too far.
+      const draggedFlat = flatById.get(draggedId);
+      if (
+        draggedFlat &&
+        draggedFlat.parentTreeId === newParent &&
+        draggedFlat.siblingIndex < index
+      ) {
+        index -= 1;
+      }
     }
 
     onMove({ treeId: draggedId, newParent, index });
