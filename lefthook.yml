@@ -7,3 +7,10 @@ pre-commit:
       run: npm test
     typecheck:
       run: npx tsc --noEmit
+
+# E2E needs a full production build (~minutes), so it gates pushes, not
+# every commit.
+pre-push:
+  commands:
+    e2e:
+      run: npm run test:e2e
