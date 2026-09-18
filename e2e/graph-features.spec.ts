@@ -97,3 +97,22 @@ test("MiniMap renders on desktop only", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 });
   await expect(page.locator(".react-flow__minimap")).toHaveCount(0);
 });
+
+test("context menu converts a note to a to-do and back, persisting kind", async ({ page }) => {
+  const pane = await newGraph(page);
+  await addNote(page);
+  const node = pane.locator(".react-flow__node").first();
+  await expect(pane.getByRole("checkbox", { name: "Mark done" })).toHaveCount(0);
+
+  await node.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Convert to to-do" }).click();
+  await expect(pane.getByRole("checkbox", { name: "Mark done" })).toBeVisible();
+  await page.waitForTimeout(700);
+  expect(await readLayoutFile(page)).toContain('"kind":"todo"');
+
+  await node.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Convert to note" }).click();
+  await expect(pane.getByRole("checkbox", { name: "Mark done" })).toHaveCount(0);
+  await page.waitForTimeout(700);
+  expect(await readLayoutFile(page)).toContain('"kind":"graph"');
+});

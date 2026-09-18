@@ -35,6 +35,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Button } from "@/components/ui/button";
 
 export type NodeKind = "graph" | "todo";
@@ -46,6 +52,7 @@ interface NodeData extends Record<string, unknown> {
   done?: boolean;
   onLabelChange: (id: string, label: string) => void;
   onToggleDone: (id: string, done: boolean) => void;
+  onConvertType: (id: string, kind: NodeKind) => void;
 }
 
 type GraphFlowNode = Node<NodeData>;
@@ -161,7 +168,7 @@ function GraphLabelNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
   // sync effect.
   const [value, setValue] = useState(data.label);
 
-  return (
+  const card = (
     <div
       className={`min-w-[140px] max-w-[260px] rounded-md border bg-card px-3 py-2 text-sm shadow-sm ${
         selected ? "border-primary ring-1 ring-primary" : "border-border"
@@ -180,13 +187,26 @@ function GraphLabelNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
+
+  if (data.readOnly) return card;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger render={card} />
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => data.onConvertType(id, "todo")}>
+          <ListTodo data-icon="inline-start" />
+          Convert to to-do
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 
 function TodoNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
   const [value, setValue] = useState(data.label);
   const done = data.done === true;
 
-  return (
+  const card = (
     <div
       className={`min-w-[170px] max-w-[260px] rounded-md border bg-card px-3 py-2 text-sm shadow-sm ${
         selected ? "border-primary ring-1 ring-primary" : "border-border"
@@ -217,6 +237,19 @@ function TodoNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
+
+  if (data.readOnly) return card;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger render={card} />
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => data.onConvertType(id, "graph")}>
+          <StickyNote data-icon="inline-start" />
+          Convert to note
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 
 const nodeTypes = { graphNode: GraphLabelNode, todoNode: TodoNode };
@@ -227,6 +260,7 @@ function graphToFlow(
   readOnly: boolean,
   onLabelChange: (id: string, label: string) => void,
   onToggleDone: (id: string, done: boolean) => void,
+  onConvertType: (id: string, kind: NodeKind) => void,
   meta?: Record<string, GraphNodeMeta>,
   animatedEdges = true,
 ): { nodes: GraphFlowNode[]; edges: Edge[] } {
@@ -244,6 +278,7 @@ function graphToFlow(
         done: nodeMeta?.done === true,
         onLabelChange,
         onToggleDone,
+        onConvertType,
       },
     };
   });
@@ -431,6 +466,7 @@ function GraphEditorInner({
         readOnly,
         onLabelChange,
         onToggleDone,
+        onConvertType,
         layout?.meta,
         layout?.animatedEdges ?? true,
       );
@@ -462,6 +498,37 @@ function GraphEditorInner({
         [id]: { ...(m[id] ?? { kind: "todo" }), done, kind: "todo" },
       }));
       // Done state only lives in the layout file, so just save that.
+      scheduleLayoutSave(next);
+    },
+    [readOnly, setNodes, scheduleLayoutSave],
+  );
+
+  const onConvertType = useCallback(
+    (id: string, kind: NodeKind) => {
+      if (readOnly) return;
+      const next = nodesRef.current.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              type: kind === "todo" ? "todoNode" : "graphNode",
+              data: {
+                ...n.data,
+                kind,
+                done: kind === "todo" ? n.data.done === true : undefined,
+              },
+            }
+          : n,
+      );
+      setNodes(next);
+      const prev = metaRef.current[id] ?? {};
+      setMeta((m) => ({
+        ...m,
+        [id]:
+          kind === "todo"
+            ? { ...prev, kind }
+            : { ...prev, kind, done: undefined },
+      }));
+      // Kind only lives in the layout file, so just save that.
       scheduleLayoutSave(next);
     },
     [readOnly, setNodes, scheduleLayoutSave],
@@ -538,6 +605,7 @@ function GraphEditorInner({
             done: false,
             onLabelChange,
             onToggleDone,
+            onConvertType,
           },
         },
       ];
@@ -551,6 +619,7 @@ function GraphEditorInner({
       setNodes,
       onLabelChange,
       onToggleDone,
+      onConvertType,
       schedulePersist,
       scheduleLayoutSave,
       screenToFlowPosition,
