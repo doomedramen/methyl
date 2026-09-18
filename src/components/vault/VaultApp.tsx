@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeID } from "loro-crdt";
 import { Check, Inbox, Plus, TriangleAlert } from "lucide-react";
@@ -31,15 +32,29 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { NoteEditor } from "@/components/editor/NoteEditor";
-import { GraphEditor } from "@/components/graph/GraphEditor";
 import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
 import { AppSidebar, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
-import { CommandMenu } from "./CommandMenu";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
 import type { docIdForPath, notePathFromLocation, pathForDocId } from "@/lib/vault/note-path";
 import { VaultAccessBanner } from "./VaultAccessBanner";
+
+/**
+ * The graph editor (ReactFlow ~100KB+) and the command palette (cmdk) are
+ * on-demand features, so they're split out of the initial route bundle and
+ * fetched only when a graph document opens / Cmd+K is pressed. Both are
+ * client-only and rendered only once the engine is ready, so skipping SSR
+ * costs nothing (the pre-boot shell already renders the loading skeleton).
+ */
+const GraphEditor = dynamic(
+  () => import("@/components/graph/GraphEditor").then((mod) => mod.GraphEditor),
+  { ssr: false, loading: () => <GraphLoading /> },
+);
+const CommandMenu = dynamic(
+  () => import("./CommandMenu").then((mod) => mod.CommandMenu),
+  { ssr: false },
+);
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -545,6 +560,15 @@ function VaultLoading() {
       {[0, 1, 2].map((i) => (
         <Skeleton key={i} className="h-11 w-full" />
       ))}
+    </div>
+  );
+}
+
+function GraphLoading() {
+  return (
+    <div className="space-y-3 p-4">
+      <Skeleton className="h-8 w-40" />
+      <Skeleton className="h-[60vh] w-full" />
     </div>
   );
 }
