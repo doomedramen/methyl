@@ -27,7 +27,7 @@ export const metadata: Metadata = {
       { url: "/icon.svg", media: "(prefers-color-scheme: light)" },
       { url: "/icon-dark.svg", media: "(prefers-color-scheme: dark)" },
     ],
-    apple: "/icon.svg",
+    apple: "/icons/apple-touch-icon.png",
   },
   appleWebApp: { capable: true, title: "Methyl", statusBarStyle: "black-translucent" },
 };
@@ -37,6 +37,9 @@ export const viewport: Viewport = {
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
     { media: "(prefers-color-scheme: dark)", color: "#0f1115" },
   ],
+  // Lets the app draw under the notch/home-indicator safe areas (env(safe-area-inset-*)
+  // in globals.css) instead of leaving a plain background band there.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
