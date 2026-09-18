@@ -2,6 +2,7 @@ import { Plugin, bindPluginContext, API_VERSION, type App, type PluginContext, t
 import type { PluginStorage } from "@/lib/plugins/storage";
 import { CommandRegistry } from "@/lib/plugins/commands";
 import { EditorExtensionRegistry } from "@/lib/plugins/editor";
+import { HotkeyManager } from "@/lib/plugins/hotkeys";
 
 export type PluginState = "disabled" | "enabled" | "failed";
 
@@ -47,14 +48,17 @@ export class PluginHost {
   private disposed = false;
 
   readonly editorExtensions: EditorExtensionRegistry;
+  readonly hotkeys: HotkeyManager;
 
   constructor(
     private app: App,
     private storage: PluginStorage,
     private commands: CommandRegistry = new CommandRegistry(),
     editorExtensions: EditorExtensionRegistry = new EditorExtensionRegistry(),
+    hotkeys: HotkeyManager = new HotkeyManager(storage),
   ) {
     this.editorExtensions = editorExtensions;
+    this.hotkeys = hotkeys;
   }
 
   register(manifest: PluginManifest, PluginClass: new (app: App, manifest: PluginManifest) => Plugin): void {
@@ -89,7 +93,13 @@ export class PluginHost {
     // never by patching properties onto `instance`.
     const ctx: PluginContext = {
       addCommand: (cmd) => {
-        disposers.push(this.commands.add(reg.manifest.id, cmd));
+        const disposeCommand = this.commands.add(reg.manifest.id, cmd);
+        const fullId = `${reg.manifest.id}:${cmd.id}`;
+        if (cmd.hotkeys?.length) this.hotkeys.setDefault(fullId, cmd.hotkeys);
+        disposers.push(() => {
+          disposeCommand();
+          this.hotkeys.clearDefault(fullId);
+        });
         return cmd;
       },
       registerEditorExtension: (ext) => {
@@ -166,6 +176,7 @@ export class PluginHost {
   /** Enable every plugin listed in `.adhd/plugins.json`, or every `isCore`
    *  plugin when the file is absent (spec §1). Call once at boot. */
   async enableFromStorage(): Promise<void> {
+    await this.hotkeys.loadOverrides();
     const bytes = await this.storage.read(PLUGINS_JSON_PATH);
     let enabledIds: string[];
     if (!bytes) {

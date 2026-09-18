@@ -363,6 +363,32 @@ function VaultPluginBridge({
     return () => disposers.forEach((dispose) => dispose());
   }, [commandRegistry, onManagePlugins, setTheme]);
 
+  // Dispatch registered command hotkeys (Command.hotkeys, via
+  // PluginHost.hotkeys) globally. ⌘K itself stays hard-wired inside
+  // CommandMenu.tsx (spec §2) and is never registered as a default here, so
+  // there's no collision. Plain text inputs (search boxes, dialogs) opt out
+  // so typing isn't hijacked; the CodeMirror editor's own contenteditable
+  // host is NOT excluded, since editorCallback commands need to fire while
+  // the editor has focus too — app.commands.execute already threads the
+  // active EditorView through (see setActiveEditorView above) so a matched
+  // editorCallback command still gets a real (EditorView, NoteContext) pair
+  // without a separate CodeMirror-level keymap.
+  useEffect(() => {
+    if (!host) return;
+    const platform = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "mac" : "other";
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      const matches = host.hotkeys.handleKeydown(e, platform);
+      if (matches.length === 0) return;
+      e.preventDefault();
+      for (const fullId of matches) app.commands.execute(fullId);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [host, app]);
+
   return (
     <PluginHostProvider host={host ?? fallbackHost} commands={commandRegistry} app={app} activeNote={activeNote}>
       {children}

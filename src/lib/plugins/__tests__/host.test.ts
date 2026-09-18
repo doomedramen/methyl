@@ -184,4 +184,73 @@ describe("PluginHost", () => {
     const parsed = JSON.parse(new TextDecoder().decode(persisted!)) as { enabled: string[] };
     expect(parsed.enabled).toEqual(["plugin-a"]);
   });
+
+  it("registers a command's hotkeys as HotkeyManager defaults on enable and clears them on disable", async () => {
+    const host = new PluginHost(makeApp(), new InMemoryPluginStorage());
+    class A extends Plugin {
+      onload() {
+        this.addCommand({
+          id: "cmd",
+          name: "Cmd",
+          hotkeys: [{ modifiers: ["Mod"], key: "j" }],
+          callback: () => {},
+        });
+      }
+    }
+    host.register(manifestA, A);
+    await host.enable("plugin-a");
+    expect(host.hotkeys.getEffective("plugin-a:cmd")).toEqual([{ modifiers: ["Mod"], key: "j" }]);
+
+    await host.disable("plugin-a");
+    expect(host.hotkeys.getEffective("plugin-a:cmd")).toEqual([]);
+  });
+
+  it("dispatches a command's hotkey end to end: registered on enable, matched by handleKeydown, executable via CommandRegistry", async () => {
+    const commands = new CommandRegistry();
+    const host = new PluginHost(makeApp(), new InMemoryPluginStorage(), commands);
+    const run = vi.fn();
+    class A extends Plugin {
+      onload() {
+        this.addCommand({
+          id: "cmd",
+          name: "Cmd",
+          hotkeys: [{ modifiers: ["Mod"], key: "j" }],
+          callback: run,
+        });
+      }
+    }
+    host.register(manifestA, A);
+    await host.enable("plugin-a");
+
+    const matches = host.hotkeys.handleKeydown(
+      { key: "j", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false } as KeyboardEvent,
+      "mac",
+    );
+    expect(matches).toEqual(["plugin-a:cmd"]);
+    await commands.execute(matches[0], null, null, vi.fn());
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("loads .adhd/hotkeys.json overrides via enableFromStorage before enabling plugins", async () => {
+    const storage = new InMemoryPluginStorage();
+    await storage.write(
+      ".adhd/hotkeys.json",
+      new TextEncoder().encode(JSON.stringify({ "plugin-a:cmd": [{ modifiers: ["Mod", "Shift"], key: "j" }] })),
+    );
+    const host = new PluginHost(makeApp(), storage);
+    class A extends Plugin {
+      onload() {
+        this.addCommand({
+          id: "cmd",
+          name: "Cmd",
+          hotkeys: [{ modifiers: ["Mod"], key: "j" }],
+          callback: () => {},
+        });
+      }
+    }
+    host.register({ ...manifestA, isCore: true }, A);
+    await host.enableFromStorage();
+    // The override from storage beats the command's own default hotkey.
+    expect(host.hotkeys.getEffective("plugin-a:cmd")).toEqual([{ modifiers: ["Mod", "Shift"], key: "j" }]);
+  });
 });

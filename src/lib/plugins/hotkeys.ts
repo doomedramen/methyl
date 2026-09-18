@@ -58,6 +58,13 @@ export class HotkeyManager {
     this.order.push(fullId);
   }
 
+  /** Undo a `setDefault` — called when the command that registered it is
+   *  disposed (plugin disabled), so a stale binding can't still match. */
+  clearDefault(fullId: string): void {
+    this.defaults.delete(fullId);
+    this.order = this.order.filter((id) => id !== fullId);
+  }
+
   getEffective(fullId: string): Hotkey[] {
     if (this.overrides.has(fullId)) return this.overrides.get(fullId)!;
     return this.defaults.get(fullId) ?? [];
