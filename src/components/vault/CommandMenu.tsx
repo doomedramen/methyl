@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import { useTheme } from "next-themes";
-import { FileText, FolderPlus, Laptop, Moon, PanelLeft, Plus, RefreshCw, Sun, Workflow } from "lucide-react";
+import { FileText, FolderPlus, Laptop, PanelLeft, Plus, RefreshCw, Workflow } from "lucide-react";
+import { APP_THEMES } from "@/lib/themes";
 import { useSync } from "@/lib/browser/sync-context";
 import {
   Command,
@@ -108,24 +109,13 @@ export function CommandMenu({
             <RefreshCw data-icon="inline-start" />
             Sync settings
           </CommandItem>
-          <CommandItem
-            value="Theme: Light"
-            onSelect={() => run(() => setTheme("light"))}
-          >
-            <Sun data-icon="inline-start" />
-            Theme: Light
-          </CommandItem>
-          <CommandItem
-            value="Theme: Dark"
-            onSelect={() => run(() => setTheme("dark"))}
-          >
-            <Moon data-icon="inline-start" />
-            Theme: Dark
-          </CommandItem>
-          <CommandItem
-            value="Theme: System"
-            onSelect={() => run(() => setTheme("system"))}
-          >
+          {APP_THEMES.map(({ id, label, icon: Icon }) => (
+            <CommandItem key={id} value={`Theme: ${label}`} onSelect={() => run(() => setTheme(id))}>
+              <Icon data-icon="inline-start" />
+              Theme: {label}
+            </CommandItem>
+          ))}
+          <CommandItem value="Theme: System" onSelect={() => run(() => setTheme("system"))}>
             <Laptop data-icon="inline-start" />
             Theme: System
           </CommandItem>

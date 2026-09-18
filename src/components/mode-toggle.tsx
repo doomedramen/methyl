@@ -1,7 +1,8 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { Moon, Sun } from "lucide-react";
+import { Moon, Sun, Monitor } from "lucide-react";
+import { APP_THEMES } from "@/lib/themes";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -37,15 +38,14 @@ export function ModeToggle() {
         <TooltipContent>Toggle theme</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => setTheme("light")}>
-          <Sun data-icon="inline-start" />
-          Light
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("dark")}>
-          <Moon data-icon="inline-start" />
-          Dark
-        </DropdownMenuItem>
+        {APP_THEMES.map(({ id, label, icon: Icon }) => (
+          <DropdownMenuItem key={id} onClick={() => setTheme(id)}>
+            <Icon data-icon="inline-start" />
+            {label}
+          </DropdownMenuItem>
+        ))}
         <DropdownMenuItem onClick={() => setTheme("system")}>
+          <Monitor data-icon="inline-start" />
           System
         </DropdownMenuItem>
       </DropdownMenuContent>
