@@ -54,11 +54,20 @@ export function useApp(): App {
 
 export function usePluginStatuses(): PluginStatus[] {
   const { host } = useContextValue();
-  const cacheRef = useRef<PluginStatus[] | null>(null);
+  // Keyed on `host` itself, not just truthiness — an empty snapshot (`[]`)
+  // is truthy, so a `!cacheRef.current` guard alone would keep serving a
+  // stale empty list forever once `host` swaps from the fallback host to
+  // the real one (VaultApp's PluginHost only becomes available after an
+  // async enableFromStorage() resolves, so that swap always happens at
+  // least once) — the store's own notify never fires for that swap since
+  // it's a prop change, not a state change on either host.
+  const cacheRef = useRef<{ host: PluginHost; snapshot: PluginStatus[] } | null>(null);
 
   const getSnapshot = useCallback(() => {
-    if (!cacheRef.current) cacheRef.current = host.getSnapshot();
-    return cacheRef.current;
+    if (!cacheRef.current || cacheRef.current.host !== host) {
+      cacheRef.current = { host, snapshot: host.getSnapshot() };
+    }
+    return cacheRef.current.snapshot;
   }, [host]);
 
   const subscribe = useCallback(
@@ -78,11 +87,13 @@ export function usePluginStatuses(): PluginStatus[] {
 
 export function useCommands(): RegisteredCommand[] {
   const { commands, activeNote } = useContextValue();
-  const cacheRef = useRef<{ activeNote: NoteContext | null; list: RegisteredCommand[] } | null>(null);
+  const cacheRef = useRef<{ commands: CommandRegistry; activeNote: NoteContext | null; list: RegisteredCommand[] } | null>(
+    null,
+  );
 
   const getSnapshot = useCallback(() => {
-    if (!cacheRef.current || cacheRef.current.activeNote !== activeNote) {
-      cacheRef.current = { activeNote, list: commands.list(activeNote) };
+    if (!cacheRef.current || cacheRef.current.commands !== commands || cacheRef.current.activeNote !== activeNote) {
+      cacheRef.current = { commands, activeNote, list: commands.list(activeNote) };
     }
     return cacheRef.current.list;
   }, [commands, activeNote]);

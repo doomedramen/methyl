@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import { PluginHost } from "@/lib/plugins/host";
 import { CommandRegistry } from "@/lib/plugins/commands";
 import { InMemoryPluginStorage } from "@/lib/plugins/storage";
 import { PluginHostProvider, useApp, useCommands, usePluginStatuses } from "@/lib/plugins/react";
-import { Plugin, type App, type NoteContext } from "@/lib/plugins/api";
+import { Plugin, type App, type NoteContext, type PluginManifest } from "@/lib/plugins/api";
 
 function makeApp(): App {
   return {
@@ -30,6 +31,62 @@ function AppLabel() {
   const app = useApp();
   return <span>{app.workspace.getActiveNote()?.documentId ?? "none"}</span>;
 }
+
+const manifestA: PluginManifest = { id: "a", name: "A", version: "1.0.0", minAppVersion: "1.0.0", isCore: true };
+
+class APlugin extends Plugin {
+  onload() {
+    this.addCommand({ id: "cmd", name: "A command", callback: () => {} });
+  }
+}
+
+/**
+ * Mirrors VaultPluginBridge's actual pattern (src/components/vault/
+ * VaultApp.tsx): a `fallbackHost` with nothing registered is used until an
+ * effect asynchronously builds and enables the real host, then swaps it in
+ * via setState. Under StrictMode the effect (and its cleanup) run twice.
+ */
+function Bridge() {
+  const commands = useMemo(() => new CommandRegistry(), []);
+  const fallbackHost = useMemo(() => new PluginHost(makeApp(), new InMemoryPluginStorage()), []);
+  const [host, setHost] = useState<PluginHost | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const newHost = new PluginHost(makeApp(), new InMemoryPluginStorage(), commands);
+    newHost.register(manifestA, APlugin);
+    void newHost.enableFromStorage().then(() => {
+      if (!cancelled) setHost(newHost);
+    });
+    return () => {
+      cancelled = true;
+      newHost.dispose();
+    };
+  }, [commands]);
+
+  return (
+    <PluginHostProvider host={host ?? fallbackHost} commands={commands} app={makeApp()} activeNote={null}>
+      <StatusList />
+      <CommandList />
+    </PluginHostProvider>
+  );
+}
+
+describe("PluginHostProvider under StrictMode (host swaps from fallback to real)", () => {
+  it("usePluginStatuses/useCommands pick up the real host's plugins and commands once it replaces the fallback", async () => {
+    render(
+      <StrictMode>
+        <Bridge />
+      </StrictMode>,
+    );
+    // Regression guard: a naive `!cacheRef.current` truthiness check treats
+    // the fallback host's empty snapshot ([]) as "already cached" and never
+    // re-reads after the swap to the real host, so this would otherwise
+    // hang forever waiting for text that never appears.
+    expect(await screen.findByText("enabled")).toBeTruthy();
+    expect(await screen.findByText("A command")).toBeTruthy();
+  });
+});
 
 describe("PluginHostProvider", () => {
   it("useApp exposes the app instance the provider was given, wired to the same activeNote", async () => {
