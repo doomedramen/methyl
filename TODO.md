@@ -1,0 +1,78 @@
+# TODO
+
+Work that [SPEC.md](SPEC.md) doesn't already describe: bugs found in use, gaps
+between the spec and what's built, and polish. Features the spec covers
+(attachments, graph view, Mermaid/math, export, multi-vault, mobile/iOS
+limits) live there, not here — only their *deviations* are listed below.
+
+## Bugs
+
+- [ ] **Vault wipe, cause unconfirmed.** A browser vault once lost its tree and
+      every CRDT file under `.adhd/crdt`. Never reproduced. Safety rails (empty-scan
+      guard, index rebuild, mass-deletion refusal, reserved-path guard) and a
+      diagnostics ring buffer are in place; if it recurs, read the buffer via
+      "Copy diagnostics" in the status popover.
+- [ ] **`src/lib/vault/tree.ts` reads as binary** to `grep` and `file` — some stray
+      byte in the file. Harmless so far; find and remove it.
+- [ ] **Lint:** `set-state-in-effect` error and an unused `event` in
+      `AppSidebar.tsx`, plus warnings in `engine.ts`, `store.ts`, `carousel.tsx`.
+      All predate the current work.
+- [ ] **Cmd/Ctrl-click on a wikilink is unverified with a real mouse.** It works
+      when the event is dispatched directly; the automation tool's modifier-click
+      never reached the page.
+
+## Gaps against what's built
+
+- [ ] **Full-text search isn't wired up.** `src/lib/search/index.ts` (MiniSearch)
+      exists with tests, but ⌘K only matches note titles.
+- [ ] **Backlinks.** Wikilink resolution exists (`src/lib/vault/wikilink.ts`); a
+      "what links here" panel does not.
+- [ ] **Sync isn't live.** Remote changes arrive on the next discovery round
+      (~15s), not pushed: `loro-websocket`'s `SimpleServer` has no public API to
+      broadcast into an already-joined room. Fixing it means patching the
+      vendored package.
+- [ ] **Sync token is stored in `localStorage`.** Fine for a LAN deployment,
+      readable by anything with access to the browser profile. SPEC §31 describes
+      a pairing flow that isn't implemented.
+- [ ] **No release tag**, so no version is shown anywhere and the diagnostics
+      summary reports `NEXT_PUBLIC_APP_VERSION` only if it's set at build time.
+      `latest` currently tracks `main`.
+- [ ] **Upstream bug not reported:** `loro-codemirror`'s `LoroSyncPluginValue`
+      swallows the first view update when the initial content already matches
+      (worked around in `NoteEditor.tsx`). Repro: `loro-codemirror-swallow.test.ts`.
+
+## Editor polish
+
+- [ ] Slash (`/`) menu: headings, lists, tables, code blocks, date.
+- [ ] Smart paste: URL over a selection becomes a link; pasted HTML becomes Markdown.
+- [ ] Image/file paste and drop into a note (needs attachments — SPEC).
+- [ ] Table helpers: Tab between cells, keep columns aligned.
+- [ ] Drag to reorder blocks from a gutter handle.
+- [ ] Wikilink affordance: no hint that Cmd/Ctrl is needed — tooltip, or a pointer
+      cursor while the modifier is held.
+- [ ] Selection colour uses `--accent`, which reads heavy now that the
+      current-line highlight is gone.
+
+## UI polish
+
+- [ ] **Real logo.** The current mark is a placeholder (bars standing in for lines
+      of text), square by design so iOS can apply its own mask.
+- [ ] **Manifest icon `purpose`** is `any`; add a `maskable` entry so Android
+      launchers crop to their own shape.
+- [ ] **Onboarding.** Nothing explains ⌘K, sync setup or wikilinks beyond the
+      welcome note.
+- [ ] **Folder vs note icon alignment:** notes sit at the gutter, folders indent by
+      the chevron column. Deliberate, but worth a second look.
+
+## Quality
+
+- [ ] **Mobile is untested** since the sidebar, editor and drag-and-drop changed —
+      including press-and-hold dragging and the sheet sidebar.
+- [ ] **No accessibility pass:** keyboard-only navigation, screen readers, focus
+      order, and a keyboard path for moving notes between folders.
+- [ ] **Offline verified only in Chrome**, by stopping the server; not on iOS
+      Safari, which has the storage limits SPEC §15 describes.
+- [ ] **Image is 464MB.** Most of it is the Debian base, Node and
+      `better-sqlite3`; distroless or Alpine would cut it if it matters.
+- [ ] **Flaky tests:** two timing-dependent sync tests have been stabilised; watch
+      for others under full-suite load rather than in isolation.

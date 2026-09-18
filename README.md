@@ -159,6 +159,7 @@ src/
 
 ## Documentation
 
+[TODO.md](TODO.md) tracks known bugs, gaps and polish that the spec doesn't cover.
 [SPEC.md](SPEC.md) is the architecture specification: data model, identity, persistence, crash-safe writes, sync topology and service-worker design.
 
 ## License
