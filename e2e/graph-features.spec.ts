@@ -130,3 +130,36 @@ test("context menu converts a note to a to-do and back, persisting kind", async 
   await page.waitForTimeout(700);
   expect(await readLayoutFile(page)).toContain('"kind":"graph"');
 });
+
+test("context menu deletes a node and its connected edges, pruning layout meta", async ({ page }) => {
+  const pane = await newGraph(page);
+  await addNote(page);
+  await addNote(page);
+  await expect(pane.locator(".react-flow__node")).toHaveCount(2);
+
+  const nodes = pane.locator(".react-flow__node");
+  const n0 = await nodes.nth(0).boundingBox();
+  const n1 = await nodes.nth(1).boundingBox();
+  await page.mouse.move(n0!.x + n0!.width / 2, n0!.y + n0!.height);
+  await page.mouse.down();
+  await page.mouse.move(n1!.x + n1!.width / 2, n1!.y, { steps: 20 });
+  await page.mouse.up();
+  await expect(pane.locator(".react-flow__edge")).toHaveCount(1);
+
+  await nodes.nth(0).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await expect(pane.locator(".react-flow__node")).toHaveCount(1);
+  await expect(pane.locator(".react-flow__edge")).toHaveCount(0);
+
+  await page.waitForTimeout(700);
+  const parsed = JSON.parse(await readLayoutFile(page));
+  const layout = Object.values(parsed)[0] as {
+    nodes: Record<string, unknown>;
+    meta?: Record<string, unknown>;
+  };
+  const nodeIds = Object.keys(layout.nodes ?? {});
+  expect(nodeIds).toHaveLength(1);
+  const metaIds = Object.keys(layout.meta ?? {});
+  expect(metaIds).toHaveLength(1);
+  expect(metaIds.every((k) => nodeIds.includes(k))).toBe(true);
+});

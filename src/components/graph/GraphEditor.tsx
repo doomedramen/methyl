@@ -20,7 +20,7 @@ import {
   type OnConnect,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Maximize2, Workflow, StickyNote, ListTodo, Spline } from "lucide-react";
+import { Plus, Maximize2, Workflow, StickyNote, ListTodo, Spline, Trash2 } from "lucide-react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { detectGraphDocument, buildGraphMarkdown } from "@/lib/graph/detect";
 import type { FlowchartGraph } from "@/lib/graph/mermaid";
@@ -58,6 +58,7 @@ interface NodeData extends Record<string, unknown> {
   onLabelChange: (id: string, label: string) => void;
   onToggleDone: (id: string, done: boolean) => void;
   onConvertType: (id: string, kind: NodeKind) => void;
+  onDelete: (id: string) => void;
 }
 
 type GraphFlowNode = Node<NodeData>;
@@ -202,6 +203,10 @@ function GraphLabelNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
           <ListTodo data-icon="inline-start" />
           Convert to to-do
         </ContextMenuItem>
+        <ContextMenuItem variant="destructive" onClick={() => data.onDelete(id)}>
+          <Trash2 data-icon="inline-start" />
+          Delete
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -252,6 +257,10 @@ function TodoNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
           <StickyNote data-icon="inline-start" />
           Convert to note
         </ContextMenuItem>
+        <ContextMenuItem variant="destructive" onClick={() => data.onDelete(id)}>
+          <Trash2 data-icon="inline-start" />
+          Delete
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -266,6 +275,7 @@ function graphToFlow(
   onLabelChange: (id: string, label: string) => void,
   onToggleDone: (id: string, done: boolean) => void,
   onConvertType: (id: string, kind: NodeKind) => void,
+  onDelete: (id: string) => void,
   meta?: Record<string, GraphNodeMeta>,
   animatedEdges = true,
 ): { nodes: GraphFlowNode[]; edges: Edge[] } {
@@ -284,6 +294,7 @@ function graphToFlow(
         onLabelChange,
         onToggleDone,
         onConvertType,
+        onDelete,
       },
     };
   });
@@ -472,6 +483,7 @@ function GraphEditorInner({
         onLabelChange,
         onToggleDone,
         onConvertType,
+        onDelete,
         layout?.meta,
         layout?.animatedEdges ?? true,
       );
@@ -537,6 +549,21 @@ function GraphEditorInner({
       scheduleLayoutSave(next);
     },
     [readOnly, setNodes, scheduleLayoutSave],
+  );
+
+  const onDelete = useCallback(
+    (id: string) => {
+      if (readOnly) return;
+      const nextNodes = nodesRef.current.filter((n) => n.id !== id);
+      const nextEdges = edgesRef.current.filter(
+        (e) => e.source !== id && e.target !== id,
+      );
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      schedulePersist(nextNodes, nextEdges);
+      scheduleLayoutSave(nextNodes);
+    },
+    [readOnly, setNodes, setEdges, schedulePersist, scheduleLayoutSave],
   );
 
   const onToggleAnimatedEdges = useCallback(() => {
@@ -611,6 +638,7 @@ function GraphEditorInner({
             onLabelChange,
             onToggleDone,
             onConvertType,
+            onDelete,
           },
         },
       ];
@@ -625,6 +653,7 @@ function GraphEditorInner({
       onLabelChange,
       onToggleDone,
       onConvertType,
+      onDelete,
       schedulePersist,
       scheduleLayoutSave,
       screenToFlowPosition,
