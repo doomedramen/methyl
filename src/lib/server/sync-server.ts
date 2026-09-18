@@ -268,6 +268,28 @@ export function createSyncServer(options: SyncServerOptions) {
   let watcher: FSWatcher | null = null;
   let bootReconciling = false;
 
+  /**
+   * Doc ids whose .md mirror is waiting on a tree node that arrives with a
+   * later save in the same round (see the doc branch of onSaveDocument).
+   * The tree branch drains this once it has imported the node, so a stale
+   * doc never blocks the save pipeline (that used to deadlock the whole
+   * relay: SimpleServer pipelines saves through the same handler).
+   */
+  const pendingDocMirrors = new Set<string>();
+
+  async function drainPendingDocMirrors(): Promise<void> {
+    const eng = engine;
+    if (!eng) return;
+    for (const docId of pendingDocMirrors) {
+      const node = eng.tree.findByDocumentId(docId);
+      const path = node ? buildPathFromNode(eng.tree, node) : null;
+      if (path) {
+        await eng.materializeDocument(docId, path);
+        pendingDocMirrors.delete(docId);
+      }
+    }
+  }
+
   async function ensureEngine(): Promise<VaultEngine> {
     if (engine) return engine;
     const treeStore = new NodeVaultTreeStore(options.vaultPath);
@@ -326,6 +348,10 @@ export function createSyncServer(options: SyncServerOptions) {
         // owns.
         const renamed = await eng.resolveTreeNameCollisions();
         await eng.persistTreeIncremental();
+        // Docs whose .md couldn't be materialized earlier (their node
+        // hadn't reached the mirror yet) can be materialized now that the
+        // node exists — see drainPendingDocMirrors.
+        await drainPendingDocMirrors();
         if (renamed.length > 0) {
           // This rename is a NEW local edit the client that just saved
           // doesn't have yet — record + patch the live room cache the
@@ -341,10 +367,21 @@ export function createSyncServer(options: SyncServerOptions) {
         const docId = roomId.slice(4);
         await eng.importDocumentUpdate(docId, data);
         await eng.persistDocumentIncremental(docId);
+        // Materialize the .md. The mirror tree can lag here: the client's
+        // tree room is saved in the SAME round, but its onSaveDocument
+        // handler runs concurrently, so this node may arrive a moment
+        // after our lookup. Never block the save path for it (SimpleServer
+        // pipelines saves — a stall breaks every other room); instead park
+        // the docId and let the tree handler (which imports the node)
+        // drain it right after. Nothing re-materializes a doc otherwise,
+        // which is why this used to flake: a doc-before-tree race left the
+        // .md missing forever.
         const node = eng.tree.findByDocumentId(docId);
-        if (node) {
-          const path = buildPathFromNode(eng.tree, node);
-          if (path) await eng.materializeDocument(docId, path);
+        const path = node ? buildPathFromNode(eng.tree, node) : null;
+        if (node && path) {
+          await eng.materializeDocument(docId, path);
+        } else {
+          pendingDocMirrors.add(docId);
         }
       }
     },
