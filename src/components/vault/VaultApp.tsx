@@ -39,7 +39,8 @@ import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
 import type { docIdForPath, notePathFromLocation, pathForDocId } from "@/lib/vault/note-path";
 import { VaultAccessBanner } from "./VaultAccessBanner";
-import { captureToInbox } from "@/lib/vault/inbox";
+import { captureToInbox, INBOX_FOLDER_NAME } from "@/lib/vault/inbox";
+import { setAppBadge } from "@/lib/browser/pwa";
 import { shareToCaptures, type SharePayload } from "@/lib/vault/share-payload";
 
 /**
@@ -168,6 +169,16 @@ export function VaultApp() {
   const notePathRef = useRef<typeof import("@/lib/vault/note-path") | null>(null);
 
   const notes = useMemo(() => flattenNotes(rows), [rows]);
+
+  // OS icon badge mirrors how many notes are waiting in Inbox/ — the one
+  // place captures land unread — rather than the whole vault's note count,
+  // which would just be background noise. Direct children only: a note
+  // filed deeper by the user has already been "read" out of the inbox.
+  useEffect(() => {
+    const inbox = rows.find((r): r is FolderRow => r.kind === "directory" && r.name === INBOX_FOLDER_NAME);
+    const count = inbox ? inbox.children.filter((c) => c.kind === "markdown").length : 0;
+    void setAppBadge(count);
+  }, [rows]);
 
   useEffect(() => {
     let cancelled = false;
@@ -539,8 +550,8 @@ export function VaultApp() {
       />
       <SidebarInset className="flex min-w-0 flex-1 flex-col">
         <VaultAccessBanner engine={engine} />
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
-          <SidebarTrigger className="size-10 md:size-8" />
+        <header className="app-titlebar wco-drag flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
+          <SidebarTrigger className="wco-no-drag size-10 md:size-8" />
           <Separator orientation="vertical" className="h-5" />
           <Breadcrumb className="min-w-0">
             <BreadcrumbList className="flex-nowrap">
@@ -548,7 +559,13 @@ export function VaultApp() {
                 <>
                   <BreadcrumbItem>
                     <BreadcrumbLink
-                      render={<button type="button" onClick={() => setActiveId(null)} />}
+                      render={
+                        <button
+                          type="button"
+                          className="wco-no-drag"
+                          onClick={() => setActiveId(null)}
+                        />
+                      }
                     >
                       Vault
                     </BreadcrumbLink>
@@ -567,7 +584,7 @@ export function VaultApp() {
               )}
             </BreadcrumbList>
           </Breadcrumb>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="wco-no-drag ml-auto flex items-center gap-2">
             <span aria-live="polite" className="contents">
               {activeId && saving !== "idle" && (
                 <Badge

@@ -308,10 +308,35 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* viewport-fit=cover (layout.tsx) lets content draw under the
+       notch/home-indicator; these keep it from sitting under them
+       instead. The header/footer below own top/bottom themselves since
+       they're the edges that actually touch a safe-area inset. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
   html {
     @apply font-sans;
   }
+}
+
+/*
+ * Window Controls Overlay (desktop PWA, display_override in the manifest):
+ * when WCO is active the title bar is gone and the browser-drawn window
+ * controls float over the top-left/right of the page instead, exposing
+ * env(titlebar-area-*). Falls back to plain safe-area-inset-top (notch)
+ * everywhere else, where these are 0/unset and harmless.
+ */
+.app-titlebar {
+  padding-top: max(env(safe-area-inset-top, 0px), env(titlebar-area-height, 0px));
+}
+.app-titlebar.wco-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+.app-titlebar .wco-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 /* Remote presence cursors (shipped via Loro ephemeral, rendered by the

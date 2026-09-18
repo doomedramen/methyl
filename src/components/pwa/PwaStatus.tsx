@@ -13,7 +13,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
-import { formatBytes, usePwa, type PwaState } from "@/lib/browser/pwa";
+import { formatBytes, isStandalone, usePwa, type PwaState } from "@/lib/browser/pwa";
 import { useSync } from "@/lib/browser/sync-context";
 import { SyncStatusRow, syncTriggerLabel } from "@/components/sync/SyncStatusRow";
 import { SyncSettingsDialog } from "@/components/sync/SyncSettingsDialog";
@@ -163,7 +163,9 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
                 {pwa.persistent === true
                   ? "The browser won't clear your notes to free up space."
                   : pwa.persistent === false
-                    ? "The browser may clear notes if the device runs low on space. Installing the app usually protects them."
+                    ? isStandalone()
+                      ? "The browser may clear notes if the device runs low on space."
+                      : "The browser may clear notes if the device runs low on space. Installing the app usually protects them."
                     : "Checking whether the browser keeps your notes."}
               </ItemDescription>
             </ItemContent>

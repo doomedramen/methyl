@@ -114,6 +114,10 @@ export function usePwa() {
     };
     const onInstalled = () => {
       setState((s) => ({ ...s, installPrompt: null }));
+      // Installed browsers grant persistent storage far more readily than
+      // an ordinary tab does, so it's worth immediately re-asking rather
+      // than waiting for next launch's initial tryPersistStorage() call.
+      void tryPersistStorage().then((p) => setState((s) => ({ ...s, persistent: p })));
     };
     window.addEventListener("beforeinstallprompt", onBeforeInstall);
     window.addEventListener("appinstalled", onInstalled);
@@ -201,6 +205,27 @@ export function usePwa() {
   }, []);
 
   return { ...state, applyUpdate };
+}
+
+interface NavWithBadge {
+  setAppBadge?(count?: number): Promise<void>;
+  clearAppBadge?(): Promise<void>;
+}
+
+/**
+ * Sets (or clears, at 0) the OS-level app icon badge — Badging API,
+ * Chromium/Edge/Safari on installed PWAs only. Silently a no-op elsewhere
+ * (guarded by the feature check, wrapped in case a browser advertises the
+ * API but still throws, e.g. when not installed).
+ */
+export async function setAppBadge(count: number): Promise<void> {
+  const nav = navigator as Navigator & NavWithBadge;
+  try {
+    if (count > 0) await nav.setAppBadge?.(count);
+    else await nav.clearAppBadge?.();
+  } catch {
+    // Badging unsupported or disallowed in this context — nothing to do.
+  }
 }
 
 export function formatBytes(n: number): string {
