@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TreeID } from "loro-crdt";
 import { Check, Inbox, Plus, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
@@ -226,7 +226,7 @@ function VaultPluginBridge({
   // unmount) so `Command.editorCallback` commands have something to act on.
   const activeViewRef = useRef<EditorView | null>(null);
 
-  const app: App = useMemo<App>(
+  const appImpl: App = useMemo<App>(
     () => ({
       commands: {
         list: () => commandRegistry.list(activeNote),
@@ -313,6 +313,17 @@ function VaultPluginBridge({
     ],
   );
 
+  // Plugins keep the `app` they were constructed with for their whole
+  // lifetime, and NoteEditor must not rebuild when it changes — so expose one
+  // stable object whose methods always forward to the latest implementation.
+  const appImplRef = useRef(appImpl);
+  useLayoutEffect(() => {
+    appImplRef.current = appImpl;
+  }, [appImpl]);
+  // The ref is only dereferenced when a plugin calls a method, never during render.
+  // eslint-disable-next-line react-hooks/refs
+  const [app] = useState(() => forwardingApp(appImplRef));
+
   useEffect(() => {
     if (!engine) return;
     let cancelled = false;
@@ -394,6 +405,28 @@ function VaultPluginBridge({
       {children}
     </PluginHostProvider>
   );
+}
+
+/** An `App` whose every namespace method delegates to `latest.current` at call time. */
+function forwardingApp(latest: { readonly current: App }): App {
+  const get = () => latest.current;
+  const ns = <K extends "commands" | "workspace" | "vault">(key: K): App[K] =>
+    new Proxy({} as App[K], {
+      get: (_t, prop) => {
+        const target = get()[key] as Record<PropertyKey, unknown>;
+        const value = target[prop];
+        return typeof value === "function"
+          ? (...args: unknown[]) => (get()[key] as Record<PropertyKey, (...a: unknown[]) => unknown>)[prop](...args)
+          : value;
+      },
+      has: (_t, prop) => prop in (get()[key] as object),
+    });
+  return {
+    commands: ns("commands"),
+    workspace: ns("workspace"),
+    vault: ns("vault"),
+    notify: (...args) => get().notify(...args),
+  };
 }
 
 function makeNoopApp(): App {

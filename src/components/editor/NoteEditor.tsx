@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
 import type { EditorSession } from "@/lib/editor/session";
@@ -57,6 +57,13 @@ export function NoteEditor({
   // EditorExtensionRegistry to seed and live-reconfigure the compartment.
   const pluginHost = usePluginHost();
   const app = useApp();
+  // `app` is rebuilt by VaultPluginBridge whenever the active note or save
+  // state changes; read it through a ref so those changes never tear down
+  // and recreate the editor (which dropped focus, open completions and undo).
+  const appRef = useRef(app);
+  useLayoutEffect(() => {
+    appRef.current = app;
+  }, [app]);
 
   // Reply to the app-level "save now" request (Cmd/Ctrl+S in VaultApp).
   // If nothing is dirty the session's flush no-ops, which is fine — VaultApp
@@ -175,7 +182,7 @@ export function NoteEditor({
 
         // Exposes this view to app.commands.execute for Command.editorCallback
         // commands (word-count's "Show", any future editor-scoped command).
-        app.workspace.setActiveEditorView?.(view);
+        appRef.current.workspace.setActiveEditorView?.(view);
 
         const flush = () => void session.flush();
         flushRef.current = flush;
@@ -197,7 +204,7 @@ export function NoteEditor({
           document.removeEventListener("visibilitychange", onHidden);
           window.removeEventListener("beforeunload", flush);
           unsubscribePluginExtensions();
-          app.workspace.setActiveEditorView?.(null);
+          appRef.current.workspace.setActiveEditorView?.(null);
           const v = view;
           sessionPromise = session.dispose(true).then(() => v?.destroy());
         };
@@ -214,7 +221,7 @@ export function NoteEditor({
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [engine, documentId, readOnly, pluginHost, app]);
+  }, [engine, documentId, readOnly, pluginHost]);
 
   return <div ref={hostRef} className="cm-host h-full w-full overflow-auto" />;
 }
