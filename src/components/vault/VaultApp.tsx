@@ -54,7 +54,7 @@ import { useTheme } from "next-themes";
 import { Laptop, Puzzle } from "lucide-react";
 import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
-import { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikilink";
+import type { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikilink";
 import { PluginsDialog } from "@/components/plugins/PluginsDialog";
 
 /**
@@ -194,6 +194,26 @@ function VaultPluginBridge({
   const fallbackHost = useMemo(() => new PluginHost(makeNoopApp(), new InMemoryPluginStorage()), []);
   const [host, setHost] = useState<PluginHost | null>(null);
 
+  // `@/lib/vault/wikilink` value-imports `@/lib/vault/engine`, which
+  // value-imports `loro-crdt` (WASM) — statically importing it here would
+  // pull loro-crdt into the SSR module graph via src/app/page.tsx -> VaultApp
+  // and crash the server render (ENOENT on the wasm binary, since the SSR
+  // bundle doesn't ship/resolve it the way the client chunk does). Load it
+  // dynamically, same as NoteEditor.tsx already does for the same reason.
+  const wikilinkModRef = useRef<{
+    resolveWikilink: typeof resolveWikilink;
+    listWikilinkCandidates: typeof listWikilinkCandidates;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void import("@/lib/vault/wikilink").then((mod) => {
+      if (!cancelled) wikilinkModRef.current = mod;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const notify = useCallback((msg: string, kind?: "info" | "success" | "error") => {
     if (kind === "error") toast.error(msg);
     else if (kind === "success") toast.success(msg);
@@ -223,10 +243,13 @@ function VaultPluginBridge({
           }
         },
         resolveWikilink: (target: string) =>
-          engine ? resolveWikilink(engine.tree, target, activeNote?.documentId ?? "") : undefined,
-        getWikilinkCandidates: () => (engine ? listWikilinkCandidates(engine.tree) : []),
+          engine && wikilinkModRef.current
+            ? wikilinkModRef.current.resolveWikilink(engine.tree, target, activeNote?.documentId ?? "")
+            : undefined,
+        getWikilinkCandidates: () =>
+          engine && wikilinkModRef.current ? wikilinkModRef.current.listWikilinkCandidates(engine.tree) : [],
         createWikilinkTarget: (target: string) => {
-          if (!engine) return;
+          if (!engine || !wikilinkModRef.current) return;
           if (readOnly) {
             toast.error("This vault is open for editing in another tab.");
             return;

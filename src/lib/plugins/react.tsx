@@ -70,7 +70,10 @@ export function usePluginStatuses(): PluginStatus[] {
     [host],
   );
 
-  return useSyncExternalStore(subscribe, getSnapshot);
+  // `PluginsDialog`/`CommandMenu` render inside VaultApp's SSR'd tree, so
+  // this hook runs during the server render too; useSyncExternalStore
+  // throws without a getServerSnapshot in that case.
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 export function useCommands(): RegisteredCommand[] {
@@ -93,5 +96,5 @@ export function useCommands(): RegisteredCommand[] {
     [commands],
   );
 
-  return useSyncExternalStore(subscribe, getSnapshot);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
