@@ -23,6 +23,13 @@ async function newGraph(page: Page): Promise<Locator> {
   return pane;
 }
 
+/** The "+" toolbar button now opens a node-type dropdown (SPEC §37's
+ * "Add node" is the menu trigger); both call sites below go through it. */
+async function addNote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Add node" }).click();
+  await page.getByRole("menuitem", { name: "Note" }).click();
+}
+
 async function inside(el: Locator, at: { x: number; y: number }): Promise<boolean> {
   const b = (await el.boundingBox())!;
   return at.x >= b.x && at.x <= b.x + b.width && at.y >= b.y && at.y <= b.y + b.height;
@@ -31,7 +38,7 @@ async function inside(el: Locator, at: { x: number; y: number }): Promise<boolea
 test("Add-note keeps every node inside the viewport", async ({ page }) => {
   const pane = await newGraph(page);
   for (let i = 0; i < 6; i++) {
-    await page.getByRole("button", { name: "Add node" }).click();
+    await addNote(page);
   }
   await expect(page.locator(".react-flow__node")).toHaveCount(6);
   for (const node of await page.locator(".react-flow__node").all()) {
@@ -51,8 +58,8 @@ test("double-click on the pane adds a node at the cursor", async ({ page }) => {
 
 test("auto-arrange lays nodes out and persists the layout", async ({ page }) => {
   await newGraph(page);
-  await page.getByRole("button", { name: "Add node" }).click();
-  await page.getByRole("button", { name: "Add node" }).click();
+  await addNote(page);
+  await addNote(page);
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
   const btn = page.getByRole("button", { name: "Auto arrange" });
   await expect(btn).toBeVisible();
@@ -70,7 +77,7 @@ test("auto-arrange lays nodes out and persists the layout", async ({ page }) => 
 
 test("Cmd+S shows the Saved badge, and again when already saved", async ({ page }) => {
   await newGraph(page);
-  await page.getByRole("button", { name: "Add node" }).click();
+  await addNote(page);
   await page.keyboard.press("Meta+s");
   await expect(page.getByText("Saved")).toBeVisible();
   await expect(page.getByText("Saved")).toBeHidden({ timeout: 4000 });

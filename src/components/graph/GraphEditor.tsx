@@ -6,6 +6,7 @@ import {
   ReactFlowProvider,
   Background,
   Controls,
+  MiniMap,
   Handle,
   Position,
   addEdge,
@@ -20,20 +21,51 @@ import {
   type OnConnect,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Maximize2, Workflow } from "lucide-react";
+import { Plus, Maximize2, Workflow, StickyNote, ListTodo, Spline } from "lucide-react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { detectGraphDocument, buildGraphMarkdown } from "@/lib/graph/detect";
 import type { FlowchartGraph } from "@/lib/graph/mermaid";
-import { readGraphLayout, writeGraphLayout } from "@/lib/graph/layout-store";
+import {
+  readGraphLayout,
+  writeGraphLayout,
+  type GraphNodeMeta,
+} from "@/lib/graph/layout-store";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+
+export type NodeKind = "graph" | "todo";
 
 interface NodeData extends Record<string, unknown> {
   label: string;
   readOnly: boolean;
+  kind: NodeKind;
+  done?: boolean;
   onLabelChange: (id: string, label: string) => void;
+  onToggleDone: (id: string, done: boolean) => void;
 }
 
 type GraphFlowNode = Node<NodeData>;
+
+/** True once the viewport is at least `minWidth` wide; no SSR needed since
+ * GraphEditor is client-only (lazy-chunked with `ssr: false`). */
+function useMinWidth(minWidth: number): boolean {
+  const [matches, setMatches] = useState(
+    () => typeof window === "undefined" || window.matchMedia(`(min-width: ${minWidth}px)`).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${minWidth}px)`);
+    const onChange = () => setMatches(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [minWidth]);
+  return matches;
+}
 
 /** Simple deterministic grid fallback for nodes with no stored position —
  * so a graph opened somewhere that's never seen `graph-layout.json` (a
@@ -151,25 +183,77 @@ function GraphLabelNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
   );
 }
 
-const nodeTypes = { graphNode: GraphLabelNode };
+function TodoNode({ id, data, selected }: NodeProps<GraphFlowNode>) {
+  const [value, setValue] = useState(data.label);
+  const done = data.done === true;
+
+  return (
+    <div
+      className={`min-w-[170px] max-w-[260px] rounded-md border bg-card px-3 py-2 text-sm shadow-sm ${
+        selected ? "border-primary ring-1 ring-primary" : "border-border"
+      } ${done ? "opacity-70" : ""}`}
+    >
+      <Handle type="target" position={Position.Top} />
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={done}
+          disabled={data.readOnly}
+          onChange={(e) => data.onToggleDone(id, e.target.checked)}
+          aria-label="Mark done"
+          className="mt-1 h-4 w-4 shrink-0 accent-[var(--primary)]"
+        />
+        <textarea
+          value={value}
+          readOnly={data.readOnly}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={() => data.onLabelChange(id, value)}
+          rows={Math.max(1, value.split("\n").length)}
+          className={`w-full resize-none border-0 bg-transparent p-0 text-sm outline-none focus-visible:outline-none ${
+            done ? "text-muted-foreground line-through" : ""
+          }`}
+          placeholder="Untitled to-do"
+        />
+      </div>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+
+const nodeTypes = { graphNode: GraphLabelNode, todoNode: TodoNode };
 
 function graphToFlow(
   graph: FlowchartGraph,
   positions: Record<string, { x: number; y: number }>,
   readOnly: boolean,
   onLabelChange: (id: string, label: string) => void,
+  onToggleDone: (id: string, done: boolean) => void,
+  meta?: Record<string, GraphNodeMeta>,
+  animatedEdges = true,
 ): { nodes: GraphFlowNode[]; edges: Edge[] } {
-  const nodes: GraphFlowNode[] = graph.nodes.map((n, i) => ({
-    id: n.id,
-    type: "graphNode",
-    position: positions[n.id] ?? autoPosition(i),
-    data: { label: n.label, readOnly, onLabelChange },
-  }));
+  const nodes: GraphFlowNode[] = graph.nodes.map((n, i) => {
+    const nodeMeta = meta?.[n.id];
+    const kind: NodeKind = nodeMeta?.kind === "todo" ? "todo" : "graph";
+    return {
+      id: n.id,
+      type: kind === "todo" ? "todoNode" : "graphNode",
+      position: positions[n.id] ?? autoPosition(i),
+      data: {
+        label: n.label,
+        readOnly,
+        kind,
+        done: nodeMeta?.done === true,
+        onLabelChange,
+        onToggleDone,
+      },
+    };
+  });
   const edges: Edge[] = graph.edges.map((e) => ({
     id: `${e.source}->${e.target}:${e.label ?? ""}`,
     source: e.source,
     target: e.target,
     label: e.label,
+    animated: animatedEdges,
   }));
   return { nodes, edges };
 }
@@ -218,6 +302,17 @@ function GraphEditorInner({
   const ready = loadedFor === documentId;
   const { screenToFlowPosition, fitView } = useReactFlow();
   const rf = useReactFlow();
+
+  const [meta, setMeta] = useState<Record<string, GraphNodeMeta>>({});
+  const [animatedEdges, setAnimatedEdges] = useState(true);
+  const metaRef = useRef(meta);
+  useEffect(() => {
+    metaRef.current = meta;
+  }, [meta]);
+  const animatedEdgesRef = useRef(animatedEdges);
+  useEffect(() => {
+    animatedEdgesRef.current = animatedEdges;
+  }, [animatedEdges]);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -285,14 +380,36 @@ function GraphEditorInner({
     [setNodes, schedulePersist],
   );
 
+  // Layout-only persistence. Node positions never touch the Markdown, so
+  // this never triggers a document persist; it also carries the per-node
+  // `meta` (kind/done) and the edge-animation preference, which live in the
+  // layout file because the Mermaid source has no slot for them. Reads the
+  // previously stored layout first so a non-position write (e.g. toggling a
+  // to-do's done flag) doesn't drop recorded viewport/other-device state.
   const scheduleLayoutSave = useCallback(
     (nextNodes: GraphFlowNode[]) => {
       if (readOnly) return;
       if (layoutTimer.current) clearTimeout(layoutTimer.current);
       layoutTimer.current = setTimeout(() => {
-        const layoutNodes: Record<string, { x: number; y: number }> = {};
-        for (const n of nextNodes) layoutNodes[n.id] = { x: n.position.x, y: n.position.y };
-        void writeGraphLayout(engine.docStore, documentId, { nodes: layoutNodes });
+        void (async () => {
+          const existing =
+            (await readGraphLayout(engine.docStore, documentId)) ?? undefined;
+          const layoutNodes: Record<string, { x: number; y: number }> = {};
+          for (const n of nextNodes) {
+            layoutNodes[n.id] = { x: n.position.x, y: n.position.y };
+          }
+          // Read from the refs, which the 400ms debounce always outlives.
+          const meta: Record<string, GraphNodeMeta> = {};
+          for (const [id, m] of Object.entries(metaRef.current)) {
+            if (id in layoutNodes) meta[id] = m;
+          }
+          await writeGraphLayout(engine.docStore, documentId, {
+            nodes: layoutNodes,
+            viewport: existing?.viewport,
+            meta: Object.keys(meta).length > 0 ? meta : undefined,
+            animatedEdges: animatedEdgesRef.current,
+          });
+        })();
       }, 400);
     },
     [engine, documentId, readOnly],
@@ -314,7 +431,12 @@ function GraphEditorInner({
         positions,
         readOnly,
         onLabelChange,
+        onToggleDone,
+        layout?.meta,
+        layout?.animatedEdges ?? true,
       );
+      setMeta(layout?.meta ?? {});
+      setAnimatedEdges(layout?.animatedEdges ?? true);
       setNodes(flowNodes);
       setEdges(flowEdges);
       setLoadedFor(documentId);
@@ -329,10 +451,46 @@ function GraphEditorInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, documentId, readOnly]);
 
+  const onToggleDone = useCallback(
+    (id: string, done: boolean) => {
+      if (readOnly) return;
+      const next = nodesRef.current.map((n) =>
+        n.id === id ? { ...n, data: { ...n.data, done } } : n,
+      );
+      setNodes(next);
+      setMeta((m) => ({
+        ...m,
+        [id]: { ...(m[id] ?? { kind: "todo" }), done, kind: "todo" },
+      }));
+      // Done state only lives in the layout file, so just save that.
+      scheduleLayoutSave(next);
+    },
+    [readOnly, setNodes, scheduleLayoutSave],
+  );
+
+  const onToggleAnimatedEdges = useCallback(() => {
+    if (readOnly) return;
+    const next = !animatedEdgesRef.current;
+    setAnimatedEdges(next);
+    scheduleLayoutSave(nodesRef.current);
+  }, [readOnly, scheduleLayoutSave]);
+
+  // Re-apply the animation flag to freshly loaded edges when the preference
+  // changes (a mount-time no-op, since graphToFlow already set it for the
+  // current value; matters when the user flips the toolbar toggle).
+  useEffect(() => {
+    setEdges((prev) => prev.map((e) => ({ ...e, animated: animatedEdges })));
+  }, [animatedEdges, setEdges]);
+
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
       if (readOnly) return;
-      const next = addEdge(connection, edgesRef.current);
+      // addEdge() stamps nothing onto newly-created edges, so carry the
+      // animation preference through explicitly (source/target handle only).
+      const next = addEdge(
+        { ...connection, animated: animatedEdgesRef.current },
+        edgesRef.current,
+      );
       setEdges(next);
       schedulePersist(nodesRef.current, next);
     },
@@ -340,7 +498,7 @@ function GraphEditorInner({
   );
 
   const addNode = useCallback(
-    (position?: { x: number; y: number }) => {
+    (kind: NodeKind, position?: { x: number; y: number }) => {
       if (readOnly) return;
       const id = newNodeId();
       // Default placement is the center of the current viewport (the pane
@@ -365,18 +523,27 @@ function GraphEditorInner({
       }
       const count = nodesRef.current.length;
       const pos = { x: base.x + (count % 5) * 20, y: base.y + (count % 5) * 20 };
+      const todo = kind === "todo";
       const next: GraphFlowNode[] = [
         ...nodesRef.current,
         {
           id,
-          type: "graphNode",
+          type: todo ? "todoNode" : "graphNode",
           position: pos,
           // Give it a name: an empty label serialises as `id[""]`, which
           // reads as an empty box in any other Mermaid renderer.
-          data: { label: "Node", readOnly, onLabelChange },
+          data: {
+            label: todo ? "To-do" : "Node",
+            readOnly,
+            kind,
+            done: false,
+            onLabelChange,
+            onToggleDone,
+          },
         },
       ];
       setNodes(next);
+      setMeta((m) => ({ ...m, [id]: { kind, done: false } }));
       schedulePersist(next, edgesRef.current);
       scheduleLayoutSave(next);
     },
@@ -384,6 +551,7 @@ function GraphEditorInner({
       readOnly,
       setNodes,
       onLabelChange,
+      onToggleDone,
       schedulePersist,
       scheduleLayoutSave,
       screenToFlowPosition,
@@ -404,7 +572,7 @@ function GraphEditorInner({
     (e: React.MouseEvent) => {
       if (readOnly) return;
       const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      addNode(pos);
+      addNode("graph", pos);
     },
     [readOnly, screenToFlowPosition, addNode],
   );
@@ -416,7 +584,10 @@ function GraphEditorInner({
       const positional = changes.some((c) => c.type === "position" && c.dragging === false);
       if (structural) {
         // Compute post-change arrays on next tick (state has just been queued).
-        setTimeout(() => schedulePersist(nodesRef.current, edgesRef.current), 0);
+        const nodesAfter = nodesRef.current;
+        setTimeout(() => schedulePersist(nodesAfter, edgesRef.current), 0);
+        // Prune the removed node's meta from the layout file too.
+        setTimeout(() => scheduleLayoutSave(nodesAfter), 0);
       }
       if (positional) {
         setTimeout(() => scheduleLayoutSave(nodesRef.current), 0);
@@ -458,13 +629,15 @@ function GraphEditorInner({
     e.stopPropagation();
   }, []);
 
-  const canEdit = !readOnly;
+const canEdit = !readOnly;
+  const showMinimap = useMinWidth(768);
 
   return (
     <div ref={wrapperRef} className="relative h-full w-full">
       <ReactFlow<GraphFlowNode, Edge>
         nodes={nodes}
         edges={edges}
+        className="graph-editor-flow"
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
@@ -482,17 +655,46 @@ function GraphEditorInner({
       >
         <Background />
         <Controls showInteractive={false} />
+        {showMinimap && (
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(n) =>
+              n.type === "todoNode"
+                ? n.data?.done
+                  ? "var(--chart-3)"
+                  : "var(--primary)"
+                : "var(--muted-foreground)"
+            }
+            nodeStrokeColor="var(--border)"
+          />
+        )}
       </ReactFlow>
       <div className="absolute right-3 top-3 z-10 flex gap-2">
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={!canEdit}
-          aria-label="Add node"
-          onClick={() => addNode()}
-        >
-          <Plus />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={!canEdit}
+                aria-label="Add node"
+              >
+                <Plus />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => addNode("graph")}>
+              <StickyNote data-icon="inline-start" />
+              Note
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => addNode("todo")}>
+              <ListTodo data-icon="inline-start" />
+              To-do
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           variant="outline"
           size="icon"
@@ -505,10 +707,22 @@ function GraphEditorInner({
         <Button
           variant="outline"
           size="icon"
+          disabled={!canEdit}
           aria-label="Fit view"
           onClick={() => fitView({ padding: 0.2 })}
         >
           <Maximize2 />
+        </Button>
+        <Button
+          variant={animatedEdges ? "default" : "outline"}
+          size="icon"
+          disabled={!canEdit}
+          aria-label="Animated edges"
+          aria-pressed={animatedEdges}
+          title="Animated edges"
+          onClick={onToggleAnimatedEdges}
+        >
+          <Spline />
         </Button>
       </div>
       {!ready && (

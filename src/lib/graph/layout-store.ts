@@ -27,9 +27,20 @@ export interface GraphViewport {
   zoom: number;
 }
 
+/** Per-node editor metadata that has no representation in the Mermaid
+ * source (node kind, done state). Keyed by node id — ids are stable once a
+ * node is written into the document, so this survives reloads and syncs. */
+export interface GraphNodeMeta {
+  kind?: "graph" | "todo";
+  done?: boolean;
+}
+
 export interface GraphLayout {
   nodes: Record<string, GraphNodeLayout>;
   viewport?: GraphViewport;
+  meta?: Record<string, GraphNodeMeta>;
+  /** Edge animation preference (persisted per graph document). */
+  animatedEdges?: boolean;
 }
 
 type LayoutFile = Record<string, GraphLayout>;
