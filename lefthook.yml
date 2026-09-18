@@ -13,4 +13,6 @@ pre-commit:
 pre-push:
   commands:
     e2e:
-      run: npm run test:e2e
+      # Same parallelism as CI (playwright.config.ts): the suite flakes under
+      # the default half-the-cores workers on a busy machine.
+      run: npm run test:e2e -- --workers=2
