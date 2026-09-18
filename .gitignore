@@ -46,3 +46,6 @@ public/sw.js.map
 
 # server bundle
 /dist/
+
+# local captured notes (/note)
+.agent-notes/
