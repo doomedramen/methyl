@@ -1,6 +1,7 @@
 import { Plugin, bindPluginContext, API_VERSION, type App, type PluginContext, type PluginManifest } from "@/lib/plugins/api";
 import type { PluginStorage } from "@/lib/plugins/storage";
 import { CommandRegistry } from "@/lib/plugins/commands";
+import { EditorExtensionRegistry } from "@/lib/plugins/editor";
 
 export type PluginState = "disabled" | "enabled" | "failed";
 
@@ -39,11 +40,16 @@ export class PluginHost {
   private registrations = new Map<string, Registration>();
   private listeners = new Set<() => void>();
 
+  readonly editorExtensions: EditorExtensionRegistry;
+
   constructor(
     private app: App,
     private storage: PluginStorage,
     private commands: CommandRegistry = new CommandRegistry(),
-  ) {}
+    editorExtensions: EditorExtensionRegistry = new EditorExtensionRegistry(),
+  ) {
+    this.editorExtensions = editorExtensions;
+  }
 
   register(manifest: PluginManifest, PluginClass: new (app: App, manifest: PluginManifest) => Plugin): void {
     this.registrations.set(manifest.id, {
@@ -79,8 +85,12 @@ export class PluginHost {
         disposers.push(this.commands.add(reg.manifest.id, cmd));
         return cmd;
       },
-      registerEditorExtension: () => {},
-      registerCompletionSource: () => {},
+      registerEditorExtension: (ext) => {
+        disposers.push(this.editorExtensions.addExtension(reg.manifest.id, ext));
+      },
+      registerCompletionSource: (source) => {
+        disposers.push(this.editorExtensions.addCompletionSource(reg.manifest.id, source));
+      },
       register: (dispose: () => void) => {
         disposers.push(dispose);
       },

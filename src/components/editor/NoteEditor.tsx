@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
 import type { EditorSession } from "@/lib/editor/session";
 import type { EditorUser } from "@/lib/editor/sync";
+import { usePluginHost } from "@/lib/plugins/react";
+import { reconfigurePluginCompartment } from "@/lib/plugins/editor";
 
 const NAME_KEY = "adhd-name";
 
@@ -27,8 +28,6 @@ export function NoteEditor({
   onPersisted,
   onSaveError,
   readOnly = false,
-  onOpenNote,
-  onNotesChanged,
   /** Incrementing counter; a new value asks for an immediate flush. */
   saveRequest = 0,
 }: {
@@ -46,10 +45,6 @@ export function NoteEditor({
    * editor; only local keystrokes are blocked.
    */
   readOnly?: boolean;
-  /** Cmd/Ctrl-click (or Mod-Enter) a wikilink: open the target note. */
-  onOpenNote?: (documentId: string) => void;
-  /** A wikilink click created a new note — let the caller refresh its rows. */
-  onNotesChanged?: () => void;
   saveRequest?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -57,6 +52,10 @@ export function NoteEditor({
   // Updated when the (async-bootstrapped) editor session creates its flush,
   // so a save request can fire it from outside the session's lifecycle.
   const flushRef = useRef<(() => void) | null>(null);
+  // Wikilink click/open/create and live preview are core plugins (Task 10)
+  // driven off `app.workspace`; this component only needs the shared
+  // EditorExtensionRegistry to seed and live-reconfigure the compartment.
+  const pluginHost = usePluginHost();
 
   // Reply to the app-level "save now" request (Cmd/Ctrl+S in VaultApp).
   // If nothing is dirty the session's flush no-ops, which is fine — VaultApp
@@ -85,9 +84,8 @@ export function NoteEditor({
       import("@/lib/editor/session"),
       import("@/lib/editor/sync"),
       import("@/lib/editor/extensions"),
-      import("@/lib/vault/wikilink"),
     ])
-      .then(async ([stateMod, viewMod, sessionMod, syncMod, extMod, wikilinkMod]) => {
+      .then(async ([stateMod, viewMod, sessionMod, syncMod, extMod]) => {
         if (disposed) return;
 
         const { EditorState, Compartment } = stateMod;
@@ -100,14 +98,6 @@ export function NoteEditor({
           getContentTextFromDoc,
         } = syncMod;
         const { adhdEditorExtensions, editorBaseTheme } = extMod;
-        const { resolveWikilink, listWikilinkCandidates } = wikilinkMod;
-
-        /** Parent tree node of the currently open note, for "create in this folder". */
-        const currentParentTreeId = () => {
-          const node = engine.tree.findByDocumentId(documentId);
-          if (!node) return undefined;
-          return engine.tree.tree.getNodeByID(node.treeId)?.parent()?.id;
-        };
 
         const undoManager = createUndoManager(handle.doc);
         const ephemeral = createCursorEphemeral();
@@ -140,27 +130,7 @@ export function NoteEditor({
                 user,
                 undoManager,
                 pluginCompartment,
-                wikilinks: {
-                  resolveWikilink: (target) => resolveWikilink(engine.tree, target, documentId),
-                  getCandidates: () => listWikilinkCandidates(engine.tree),
-                  onOpenWikilink: (id) => onOpenNote?.(id),
-                  onCreateWikilink: (target) => {
-                    if (!onOpenNote) return;
-                    // A read-only tab doesn't hold the writer lock (§12), so
-                    // it must not create notes behind the writer tab's back.
-                    if (readOnly) {
-                      toast.error("This vault is open for editing in another tab.");
-                      return;
-                    }
-                    const name = target.toLowerCase().endsWith(".md") ? target : `${target}.md`;
-                    const created = engine.createDocument(currentParentTreeId(), name, "");
-                    void engine.persistTreeIncremental();
-                    void engine.persistDocumentIncremental(created.id);
-                    onNotesChanged?.();
-                    toast.success(`Created "${target}"`);
-                    onOpenNote(created.id);
-                  },
-                },
+                initialPluginExtension: pluginHost.editorExtensions.buildExtension(),
               }),
               editorBaseTheme(),
               EditorState.readOnly.of(readOnly),
@@ -210,10 +180,18 @@ export function NoteEditor({
         document.addEventListener("visibilitychange", onHidden);
         window.addEventListener("beforeunload", flush);
 
+        // Live-swap plugin extensions (e.g. a plugin toggled in PluginsDialog)
+        // without recreating the view, preserving cursor/undo (spec §3).
+        const unsubscribePluginExtensions = pluginHost.editorExtensions.subscribe(() => {
+          if (disposed || !view) return;
+          reconfigurePluginCompartment(view, pluginCompartment, pluginHost.editorExtensions.buildExtension());
+        });
+
         cleanupRef.current = () => {
           if (verifyTimer) clearTimeout(verifyTimer);
           document.removeEventListener("visibilitychange", onHidden);
           window.removeEventListener("beforeunload", flush);
+          unsubscribePluginExtensions();
           const v = view;
           sessionPromise = session.dispose(true).then(() => v?.destroy());
         };
@@ -230,7 +208,7 @@ export function NoteEditor({
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [engine, documentId, readOnly]);
+  }, [engine, documentId, readOnly, pluginHost]);
 
   return <div ref={hostRef} className="cm-host h-full w-full overflow-auto" />;
 }

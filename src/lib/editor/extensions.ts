@@ -1,4 +1,4 @@
-import { Compartment, Prec, type Extension } from "@codemirror/state";
+import { type Compartment, type Extension } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -18,10 +18,6 @@ import {
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
-import { livePreview, type LivePreviewOptions } from "@/lib/editor/live-preview";
-import { wikilinkCompletionSource } from "@/lib/editor/wikilink-autocomplete";
-import type { WikilinkCandidate } from "@/lib/vault/wikilink";
 import { type LoroDoc, type LoroText, type EphemeralStore, type UndoManager } from "loro-crdt";
 import {
   LoroEphemeralPlugin,
@@ -45,27 +41,16 @@ export function adhdEditorExtensions(opts: {
   ephemeral: EphemeralStore;
   user: EditorUser;
   undoManager: UndoManager;
-  /** Wikilink resolution + click/keyboard-open/create wiring (§ wikilinks). */
-  wikilinks?: LivePreviewOptions & { getCandidates?: () => WikilinkCandidate[] };
   /** Owned by the caller (one per mounted EditorView) so plugin extensions
    *  can be swapped live via `reconfigurePluginCompartment` (spec §3). */
   pluginCompartment: Compartment;
+  /** Initial contents of `pluginCompartment` — normally
+   *  `editorExtensionRegistry.buildExtension()` (live preview, wikilink
+   *  completion, and any other registered plugin extensions). */
+  initialPluginExtension: Extension;
 }): Extension {
-  const { doc, ephemeral, user, undoManager, wikilinks, pluginCompartment } = opts;
+  const { doc, ephemeral, user, undoManager, pluginCompartment, initialPluginExtension } = opts;
   const getText: (d: LoroDoc) => LoroText = getContentTextFromDoc;
-
-  // Temporary scaffolding kept until core-live-preview/core-wikilinks plugins
-  // (plan Task 9/10) move this logic into plugins and callers start passing
-  // registry.buildExtension() instead.
-  const defaultPluginExtension: Extension = [
-    autocompletion({
-      override: wikilinks?.getCandidates
-        ? [wikilinkCompletionSource(wikilinks.getCandidates)]
-        : undefined,
-    }),
-    Prec.highest(keymap.of(completionKeymap)),
-    livePreview(wikilinks),
-  ];
 
   return [
     highlightSpecialChars(),
@@ -78,7 +63,7 @@ export function adhdEditorExtensions(opts: {
     amoledDark,
     amoledMono,
     syntaxHighlighting(defaultHighlightStyle),
-    pluginCompartment.of(defaultPluginExtension),
+    pluginCompartment.of(initialPluginExtension),
     keymap.of([
       // Markdown-aware Enter/Backspace (continue lists, dedent markup) takes
       // precedence over the generic defaults below.

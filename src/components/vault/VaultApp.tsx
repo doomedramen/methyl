@@ -54,6 +54,7 @@ import { useTheme } from "next-themes";
 import { Laptop, Puzzle } from "lucide-react";
 import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
+import { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikilink";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -164,6 +165,10 @@ function VaultPluginBridge({
   onCreateGraph,
   onCreateFolder,
   onManagePlugins,
+  activeNote,
+  onOpenNote,
+  onNotesChanged,
+  readOnly,
   children,
 }: {
   engine: VaultEngine | null;
@@ -172,6 +177,12 @@ function VaultPluginBridge({
   onCreateFolder: () => void;
   /** Opens `PluginsDialog` (Task 11); a no-op until that dialog exists. */
   onManagePlugins?: () => void;
+  /** The single open note (this app shows one editor pane at a time). */
+  activeNote: NoteContext | null;
+  onOpenNote: (id: string) => void;
+  onNotesChanged: () => void;
+  /** This tab doesn't hold the writer lock (§12) — block wikilink note creation. */
+  readOnly: boolean;
   children: ReactNode;
 }) {
   const { toggleSidebar } = useSidebar();
@@ -197,8 +208,8 @@ function VaultPluginBridge({
         },
       },
       workspace: {
-        getActiveNote: (): NoteContext | null => null,
-        openNote: () => {},
+        getActiveNote: (): NoteContext | null => activeNote,
+        openNote: (id: string) => onOpenNote(id),
         toggleSidebar: () => toggleSidebar(),
         openDialog: (name: string) => {
           if (name === "sync") {
@@ -209,6 +220,29 @@ function VaultPluginBridge({
             onManagePlugins?.();
             return;
           }
+        },
+        resolveWikilink: (target: string) =>
+          engine ? resolveWikilink(engine.tree, target, activeNote?.documentId ?? "") : undefined,
+        getWikilinkCandidates: () => (engine ? listWikilinkCandidates(engine.tree) : []),
+        createWikilinkTarget: (target: string) => {
+          if (!engine) return;
+          if (readOnly) {
+            toast.error("This vault is open for editing in another tab.");
+            return;
+          }
+          const parentTreeId = (() => {
+            if (!activeNote) return undefined;
+            const node = engine.tree.findByDocumentId(activeNote.documentId);
+            if (!node) return undefined;
+            return engine.tree.tree.getNodeByID(node.treeId)?.parent()?.id;
+          })();
+          const name = target.toLowerCase().endsWith(".md") ? target : `${target}.md`;
+          const created = engine.createDocument(parentTreeId, name, "");
+          void engine.persistTreeIncremental();
+          void engine.persistDocumentIncremental(created.id);
+          onNotesChanged();
+          toast.success(`Created "${target}"`);
+          onOpenNote(created.id);
         },
       },
       vault: {
@@ -228,7 +262,21 @@ function VaultPluginBridge({
       },
       notify,
     }),
-    [commandRegistry, notify, onCreateFolder, onCreateGraph, onCreateNote, onManagePlugins, setSyncDialogOpen, toggleSidebar],
+    [
+      activeNote,
+      commandRegistry,
+      engine,
+      notify,
+      onCreateFolder,
+      onCreateGraph,
+      onCreateNote,
+      onManagePlugins,
+      onNotesChanged,
+      onOpenNote,
+      readOnly,
+      setSyncDialogOpen,
+      toggleSidebar,
+    ],
   );
 
   useEffect(() => {
@@ -680,6 +728,10 @@ export function VaultApp() {
 
   const activeNote = notes.find((n) => n.id === activeId);
   const activeTitle = activeNote?.title ?? (engine ? null : "Loading…");
+  const pluginActiveNote: NoteContext | null = activeId
+    ? { documentId: activeId, isGraph: activeNote?.isGraph ?? false }
+    : null;
+  const isWriterTab = Boolean(engine?.releaseWriterLock);
 
   const onRemoteSyncChange = useCallback(() => {
     if (engine) refreshNotes(engine);
@@ -693,6 +745,10 @@ export function VaultApp() {
       onCreateNote={onCreateNote}
       onCreateGraph={onCreateGraph}
       onCreateFolder={() => setNewFolderOpen(true)}
+      activeNote={pluginActiveNote}
+      onOpenNote={setActiveId}
+      onNotesChanged={() => engine && refreshNotes(engine)}
+      readOnly={!isWriterTab}
     >
       <AppSidebar
         rows={rows}
@@ -821,8 +877,6 @@ export function VaultApp() {
                 }
                 onPersisted={onPersisted}
                 onSaveError={onSaveError}
-                onOpenNote={setActiveId}
-                onNotesChanged={() => refreshNotes(engine)}
                 saveRequest={saveRequest}
               />
             )
