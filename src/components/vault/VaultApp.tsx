@@ -31,6 +31,8 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { NoteEditor } from "@/components/editor/NoteEditor";
+import { GraphEditor } from "@/components/graph/GraphEditor";
+import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
 import { AppSidebar, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
 import { CommandMenu } from "./CommandMenu";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -58,25 +60,28 @@ const SAVED_VISIBLE_MS = 2000;
  * or deleted freely without the note vanishing or being relabeled out from
  * under the user; only a rename (which renames the file) changes the title.
  */
-function toRow(node: VaultTreeNode, tree: VaultTree): SidebarRow {
+function toRow(node: VaultTreeNode, tree: VaultTree, engine: VaultEngine): SidebarRow {
   if (node.kind === "directory") {
     return {
       treeId: node.treeId,
       kind: "directory",
       name: node.name,
-      children: tree.children(node.treeId).map((child) => toRow(child, tree)),
+      children: tree.children(node.treeId).map((child) => toRow(child, tree, engine)),
     };
   }
+  const doc = node.documentId ? engine.getDocument(node.documentId) : undefined;
+  const isGraph = doc ? detectGraphDocument(doc.getMarkdown()) !== null : false;
   return {
     treeId: node.treeId,
     kind: "markdown",
     id: node.documentId ?? node.treeId,
     title: node.name.replace(/\.md$/i, ""),
+    isGraph,
   };
 }
 
-function buildRootRows(tree: VaultTree): SidebarRow[] {
-  return tree.roots().map((node) => toRow(node, tree));
+function buildRootRows(tree: VaultTree, engine: VaultEngine): SidebarRow[] {
+  return tree.roots().map((node) => toRow(node, tree, engine));
 }
 
 function flattenNotes(rows: SidebarRow[]): NoteRow[] {
@@ -109,7 +114,7 @@ export function VaultApp() {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
 
   const refreshNotes = useCallback((eng: VaultEngine) => {
-    setRows(buildRootRows(eng.tree));
+    setRows(buildRootRows(eng.tree, eng));
   }, []);
 
   // The open note lives in the URL as `/<vaultId>/<vault path>` (e.g.
@@ -242,6 +247,18 @@ export function VaultApp() {
     [engine, refreshNotes],
   );
 
+  const onCreateGraph = useCallback(
+    (parentTreeId?: TreeID) => {
+      if (!engine || !requireWriter()) return;
+      const doc = engine.createDocument(parentTreeId, "Untitled Graph.md", emptyGraphMarkdown());
+      setActiveId(doc.id);
+      void engine.persistTreeIncremental();
+      void engine.persistDocumentIncremental(doc.id);
+      refreshNotes(engine);
+    },
+    [engine, refreshNotes],
+  );
+
   const onCreateFolder = useCallback(
     (parentTreeId: TreeID | undefined, name: string) => {
       if (!engine || !requireWriter()) return;
@@ -356,6 +373,7 @@ export function VaultApp() {
         activeId={activeId}
         engine={engine}
         onCreate={onCreateNote}
+        onCreateGraph={onCreateGraph}
         onCreateFolder={onCreateFolder}
         onSelect={setActiveId}
         onRenameNote={onRenameNote}
@@ -443,21 +461,36 @@ export function VaultApp() {
           ) : !engine ? (
             <VaultLoading />
           ) : activeId ? (
-            <NoteEditor
-              engine={engine}
-              documentId={activeId}
-              readOnly={!engine.releaseWriterLock}
-              onDirtyChange={(dirty) =>
-                setSaving((prev) =>
-                  // Keep the error visible until a verified save clears it.
-                  prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
-                )
-              }
-              onPersisted={onPersisted}
-              onSaveError={onSaveError}
-              onOpenNote={setActiveId}
-              onNotesChanged={() => refreshNotes(engine)}
-            />
+            activeNote?.isGraph ? (
+              <GraphEditor
+                engine={engine}
+                documentId={activeId}
+                readOnly={!engine.releaseWriterLock}
+                onDirtyChange={(dirty) =>
+                  setSaving((prev) =>
+                    prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
+                  )
+                }
+                onPersisted={onPersisted}
+                onSaveError={onSaveError}
+              />
+            ) : (
+              <NoteEditor
+                engine={engine}
+                documentId={activeId}
+                readOnly={!engine.releaseWriterLock}
+                onDirtyChange={(dirty) =>
+                  setSaving((prev) =>
+                    // Keep the error visible until a verified save clears it.
+                    prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
+                  )
+                }
+                onPersisted={onPersisted}
+                onSaveError={onSaveError}
+                onOpenNote={setActiveId}
+                onNotesChanged={() => refreshNotes(engine)}
+              />
+            )
           ) : (
             <VaultEmpty onCreate={onCreateNote} />
           )}
@@ -471,6 +504,7 @@ export function VaultApp() {
           notes={notes}
           onSelectNote={setActiveId}
           onCreateNote={() => onCreateNote()}
+          onCreateGraph={() => onCreateGraph()}
           onCreateFolder={() => setNewFolderOpen(true)}
         />
       )}

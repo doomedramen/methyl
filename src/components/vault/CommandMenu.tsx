@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useTheme } from "next-themes";
-import { FileText, FolderPlus, Laptop, Moon, PanelLeft, Plus, RefreshCw, Sun } from "lucide-react";
+import { FileText, FolderPlus, Laptop, Moon, PanelLeft, Plus, RefreshCw, Sun, Workflow } from "lucide-react";
 import { useSync } from "@/lib/browser/sync-context";
 import {
   Command,
@@ -23,6 +23,7 @@ interface CommandMenuProps {
   notes: NoteRow[];
   onSelectNote: (id: string) => void;
   onCreateNote: () => void;
+  onCreateGraph: () => void;
   onCreateFolder: () => void;
 }
 
@@ -32,6 +33,7 @@ export function CommandMenu({
   notes,
   onSelectNote,
   onCreateNote,
+  onCreateGraph,
   onCreateFolder,
 }: CommandMenuProps) {
   const { setTheme } = useTheme();
@@ -68,7 +70,11 @@ export function CommandMenu({
               keywords={[note.title]}
               onSelect={() => run(() => onSelectNote(note.id))}
             >
-              <FileText data-icon="inline-start" />
+              {note.isGraph ? (
+                <Workflow data-icon="inline-start" />
+              ) : (
+                <FileText data-icon="inline-start" />
+              )}
               {note.title}
             </CommandItem>
           ))}
@@ -78,6 +84,10 @@ export function CommandMenu({
           <CommandItem value="New note" onSelect={() => run(onCreateNote)}>
             <Plus data-icon="inline-start" />
             New note
+          </CommandItem>
+          <CommandItem value="New graph" onSelect={() => run(onCreateGraph)}>
+            <Workflow data-icon="inline-start" />
+            New graph
           </CommandItem>
           <CommandItem value="New folder" onSelect={() => run(onCreateFolder)}>
             <FolderPlus data-icon="inline-start" />

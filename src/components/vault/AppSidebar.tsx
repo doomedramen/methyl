@@ -15,6 +15,7 @@ import {
   Plus,
   Search,
   Trash2,
+  Workflow,
 } from "lucide-react";
 import {
   DndContext,
@@ -86,6 +87,9 @@ export interface NoteRow {
   kind: "markdown";
   id: string;
   title: string;
+  /** Body is a single mermaid flowchart block (SPEC §37) — shown with a
+   *  distinct icon and opened in the graph editor rather than as text. */
+  isGraph: boolean;
 }
 
 export type SidebarRow = FolderRow | NoteRow;
@@ -105,6 +109,7 @@ interface AppSidebarProps {
   /** Passed through to the footer status popover for the diagnostics copy action. */
   engine: VaultEngine | null;
   onCreate: (parentTreeId?: TreeID) => void;
+  onCreateGraph: (parentTreeId?: TreeID) => void;
   onCreateFolder: (parentTreeId: TreeID | undefined, name: string) => void;
   onSelect: (id: string) => void;
   onRenameNote: (id: string, title: string) => void;
@@ -216,6 +221,7 @@ export function AppSidebar({
   activeId,
   engine,
   onCreate,
+  onCreateGraph,
   onCreateFolder,
   onSelect,
   onRenameNote,
@@ -453,6 +459,22 @@ export function AppSidebar({
             />
             <TooltipContent>New note</TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onCreateGraph()}
+                  aria-label="New graph"
+                  className="size-9 text-muted-foreground md:size-8"
+                >
+                  <Workflow />
+                </Button>
+              }
+            />
+            <TooltipContent>New graph</TooltipContent>
+          </Tooltip>
         </div>
       </SidebarHeader>
 
@@ -521,6 +543,8 @@ export function AppSidebar({
                     <div className="flex items-center gap-2 rounded-md border bg-sidebar px-2 py-1.5 text-sm shadow-md">
                       {draggedRow.kind === "directory" ? (
                         <Folder className="size-4 shrink-0" />
+                      ) : draggedRow.isGraph ? (
+                        <Workflow className="size-4 shrink-0" />
                       ) : (
                         <FileText className="size-4 shrink-0" />
                       )}
@@ -743,7 +767,11 @@ function Row({
                 onClick={() => onPick(note.id)}
                 className={ROW_BUTTON}
               >
-                <FileText className="text-muted-foreground" />
+                {note.isGraph ? (
+                  <Workflow className="text-muted-foreground" />
+                ) : (
+                  <FileText className="text-muted-foreground" />
+                )}
                 <span>{note.title}</span>
               </SidebarMenuButton>
               <DropdownMenu>
