@@ -50,6 +50,10 @@ import { PluginHostProvider } from "@/lib/plugins/react";
 import type { App, NoteContext } from "@/lib/plugins/api";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSync } from "@/lib/browser/sync-context";
+import { useTheme } from "next-themes";
+import { Laptop, Puzzle } from "lucide-react";
+import { APP_THEMES } from "@/lib/themes";
+import { BUNDLED_PLUGINS } from "@/plugins";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -159,16 +163,20 @@ function VaultPluginBridge({
   onCreateNote,
   onCreateGraph,
   onCreateFolder,
+  onManagePlugins,
   children,
 }: {
   engine: VaultEngine | null;
   onCreateNote: () => Promise<string> | void;
   onCreateGraph: () => Promise<string> | void;
   onCreateFolder: () => void;
+  /** Opens `PluginsDialog` (Task 11); a no-op until that dialog exists. */
+  onManagePlugins?: () => void;
   children: ReactNode;
 }) {
   const { toggleSidebar } = useSidebar();
   const { setDialogOpen: setSyncDialogOpen } = useSync();
+  const { setTheme } = useTheme();
 
   const commandRegistry = useMemo(() => new CommandRegistry(), []);
   const fallbackHost = useMemo(() => new PluginHost(makeNoopApp(), new InMemoryPluginStorage()), []);
@@ -197,6 +205,10 @@ function VaultPluginBridge({
             setSyncDialogOpen(true);
             return;
           }
+          if (name === "plugins") {
+            onManagePlugins?.();
+            return;
+          }
         },
       },
       vault: {
@@ -216,13 +228,14 @@ function VaultPluginBridge({
       },
       notify,
     }),
-    [commandRegistry, notify, onCreateFolder, onCreateGraph, onCreateNote, setSyncDialogOpen, toggleSidebar],
+    [commandRegistry, notify, onCreateFolder, onCreateGraph, onCreateNote, onManagePlugins, setSyncDialogOpen, toggleSidebar],
   );
 
   useEffect(() => {
     if (!engine) return;
     let cancelled = false;
-    const newHost = new PluginHost(app, vaultPluginStorage(engine));
+    const newHost = new PluginHost(app, vaultPluginStorage(engine), commandRegistry);
+    for (const [manifest, PluginClass] of BUNDLED_PLUGINS) newHost.register(manifest, PluginClass);
     void newHost.enableFromStorage().then(() => {
       if (!cancelled) setHost(newHost);
     });
@@ -231,6 +244,36 @@ function VaultPluginBridge({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
+
+  // Theme switching and "Plugins: Manage" need `next-themes`/dialog state
+  // that `src/plugins/**` may not import (ESLint restriction, Task 12), so
+  // they're registered here directly against the shared registry under the
+  // `core-commands` plugin id rather than inside `CoreCommandsPlugin`.
+  useEffect(() => {
+    const disposers = [
+      commandRegistry.add("core-commands", {
+        id: "manage-plugins",
+        name: "Plugins: Manage",
+        icon: Puzzle,
+        callback: () => onManagePlugins?.(),
+      }),
+      ...APP_THEMES.map(({ id, label, icon }) =>
+        commandRegistry.add("core-commands", {
+          id: `theme-${id}`,
+          name: `Theme: ${label}`,
+          icon,
+          callback: () => setTheme(id),
+        }),
+      ),
+      commandRegistry.add("core-commands", {
+        id: "theme-system",
+        name: "Theme: System",
+        icon: Laptop,
+        callback: () => setTheme("system"),
+      }),
+    ];
+    return () => disposers.forEach((dispose) => dispose());
+  }, [commandRegistry, onManagePlugins, setTheme]);
 
   return (
     <PluginHostProvider host={host ?? fallbackHost} commands={commandRegistry} app={app} activeNote={null}>
@@ -795,9 +838,6 @@ export function VaultApp() {
           onOpenChange={setCommandOpen}
           notes={notes}
           onSelectNote={setActiveId}
-          onCreateNote={() => onCreateNote()}
-          onCreateGraph={() => onCreateGraph()}
-          onCreateFolder={() => setNewFolderOpen(true)}
         />
       )}
     </VaultPluginBridge>

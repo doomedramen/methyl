@@ -1,5 +1,6 @@
 import { Plugin, bindPluginContext, API_VERSION, type App, type PluginContext, type PluginManifest } from "@/lib/plugins/api";
 import type { PluginStorage } from "@/lib/plugins/storage";
+import { CommandRegistry } from "@/lib/plugins/commands";
 
 export type PluginState = "disabled" | "enabled" | "failed";
 
@@ -41,6 +42,7 @@ export class PluginHost {
   constructor(
     private app: App,
     private storage: PluginStorage,
+    private commands: CommandRegistry = new CommandRegistry(),
   ) {}
 
   register(manifest: PluginManifest, PluginClass: new (app: App, manifest: PluginManifest) => Plugin): void {
@@ -73,7 +75,10 @@ export class PluginHost {
     // wholesale once those registries exist, still via `bindPluginContext`,
     // never by patching properties onto `instance`.
     const ctx: PluginContext = {
-      addCommand: (cmd) => cmd,
+      addCommand: (cmd) => {
+        disposers.push(this.commands.add(reg.manifest.id, cmd));
+        return cmd;
+      },
       registerEditorExtension: () => {},
       registerCompletionSource: () => {},
       register: (dispose: () => void) => {

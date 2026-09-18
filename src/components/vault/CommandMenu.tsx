@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useTheme } from "next-themes";
-import { FileText, FolderPlus, Laptop, PanelLeft, Plus, RefreshCw, Workflow } from "lucide-react";
-import { APP_THEMES } from "@/lib/themes";
-import { useSync } from "@/lib/browser/sync-context";
+import { FileText, Workflow } from "lucide-react";
 import {
   Command,
   CommandDialog,
@@ -14,8 +11,10 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
+  CommandShortcut,
 } from "@/components/ui/command";
-import { useSidebar } from "@/components/ui/sidebar";
+import { useApp, useCommands } from "@/lib/plugins/react";
+import { formatHotkey } from "@/lib/plugins/hotkeys";
 import type { NoteRow } from "./AppSidebar";
 
 interface CommandMenuProps {
@@ -23,23 +22,12 @@ interface CommandMenuProps {
   onOpenChange: (open: boolean) => void;
   notes: NoteRow[];
   onSelectNote: (id: string) => void;
-  onCreateNote: () => void;
-  onCreateGraph: () => void;
-  onCreateFolder: () => void;
 }
 
-export function CommandMenu({
-  open,
-  onOpenChange,
-  notes,
-  onSelectNote,
-  onCreateNote,
-  onCreateGraph,
-  onCreateFolder,
-}: CommandMenuProps) {
-  const { setTheme } = useTheme();
-  const { toggleSidebar } = useSidebar();
-  const { setDialogOpen: setSyncDialogOpen } = useSync();
+export function CommandMenu({ open, onOpenChange, notes, onSelectNote }: CommandMenuProps) {
+  const app = useApp();
+  const commands = useCommands();
+  const platform = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "mac" : "other";
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -82,43 +70,18 @@ export function CommandMenu({
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="Actions">
-          <CommandItem value="New note" onSelect={() => run(onCreateNote)}>
-            <Plus data-icon="inline-start" />
-            New note
-          </CommandItem>
-          <CommandItem value="New graph" onSelect={() => run(onCreateGraph)}>
-            <Workflow data-icon="inline-start" />
-            New graph
-          </CommandItem>
-          <CommandItem value="New folder" onSelect={() => run(onCreateFolder)}>
-            <FolderPlus data-icon="inline-start" />
-            New folder
-          </CommandItem>
-          <CommandItem
-            value="Toggle sidebar"
-            onSelect={() => run(toggleSidebar)}
-          >
-            <PanelLeft data-icon="inline-start" />
-            Toggle sidebar
-          </CommandItem>
-          <CommandItem
-            value="Sync settings"
-            keywords={["server", "connect", "device"]}
-            onSelect={() => run(() => setSyncDialogOpen(true))}
-          >
-            <RefreshCw data-icon="inline-start" />
-            Sync settings
-          </CommandItem>
-          {APP_THEMES.map(({ id, label, icon: Icon }) => (
-            <CommandItem key={id} value={`Theme: ${label}`} onSelect={() => run(() => setTheme(id))}>
-              <Icon data-icon="inline-start" />
-              Theme: {label}
+          {commands.map((cmd) => (
+            <CommandItem
+              key={cmd.fullId}
+              value={cmd.name}
+              keywords={cmd.keywords}
+              onSelect={() => run(() => app.commands.execute(cmd.fullId))}
+            >
+              {cmd.icon ? <cmd.icon data-icon="inline-start" /> : null}
+              {cmd.name}
+              {cmd.hotkeys?.[0] ? <CommandShortcut>{formatHotkey(cmd.hotkeys[0], platform)}</CommandShortcut> : null}
             </CommandItem>
           ))}
-          <CommandItem value="Theme: System" onSelect={() => run(() => setTheme("system"))}>
-            <Laptop data-icon="inline-start" />
-            Theme: System
-          </CommandItem>
         </CommandGroup>
       </CommandList>
       </Command>
