@@ -56,6 +56,7 @@ import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
 import type { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikilink";
 import { PluginsDialog } from "@/components/plugins/PluginsDialog";
+import type { EditorView } from "@codemirror/view";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -220,16 +221,25 @@ function VaultPluginBridge({
     else toast(msg);
   }, []);
 
+  // The single mounted NoteEditor's CodeMirror view, if any — set via
+  // app.workspace.setActiveEditorView (called by NoteEditor on mount/
+  // unmount) so `Command.editorCallback` commands have something to act on.
+  const activeViewRef = useRef<EditorView | null>(null);
+
   const app: App = useMemo<App>(
     () => ({
       commands: {
-        list: () => commandRegistry.list(null),
+        list: () => commandRegistry.list(activeNote),
         execute: (fullId) => {
-          void commandRegistry.execute(fullId, null, null, notify);
+          void commandRegistry.execute(fullId, activeNote, activeViewRef.current, notify);
         },
       },
       workspace: {
         getActiveNote: (): NoteContext | null => activeNote,
+        getActiveEditorView: () => activeViewRef.current,
+        setActiveEditorView: (view: EditorView | null) => {
+          activeViewRef.current = view;
+        },
         openNote: (id: string) => onOpenNote(id),
         toggleSidebar: () => toggleSidebar(),
         openDialog: (name: string) => {
@@ -354,7 +364,7 @@ function VaultPluginBridge({
   }, [commandRegistry, onManagePlugins, setTheme]);
 
   return (
-    <PluginHostProvider host={host ?? fallbackHost} commands={commandRegistry} app={app} activeNote={null}>
+    <PluginHostProvider host={host ?? fallbackHost} commands={commandRegistry} app={app} activeNote={activeNote}>
       {children}
     </PluginHostProvider>
   );

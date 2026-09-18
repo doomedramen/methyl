@@ -52,6 +52,15 @@ export interface App {
     resolveWikilink?(target: string): string | undefined;
     createWikilinkTarget?(target: string): void;
     getWikilinkCandidates?(): WikilinkCandidate[];
+    /**
+     * The mounted CodeMirror view for the active note, if any. Internal
+     * wiring detail (not part of the documented plugin surface): it's how
+     * `app.commands.execute` reaches a live `EditorView` for `Command`s with
+     * an `editorCallback`. `setActiveEditorView` is called by `NoteEditor`
+     * on mount/unmount; plugins should treat both as implementation detail.
+     */
+    getActiveEditorView?(): EditorView | null;
+    setActiveEditorView?(view: EditorView | null): void;
   };
   vault: {
     createNote(): Promise<string>;

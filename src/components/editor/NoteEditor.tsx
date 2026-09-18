@@ -5,7 +5,7 @@ import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
 import type { EditorSession } from "@/lib/editor/session";
 import type { EditorUser } from "@/lib/editor/sync";
-import { usePluginHost } from "@/lib/plugins/react";
+import { useApp, usePluginHost } from "@/lib/plugins/react";
 import { reconfigurePluginCompartment } from "@/lib/plugins/editor";
 
 const NAME_KEY = "adhd-name";
@@ -56,6 +56,7 @@ export function NoteEditor({
   // driven off `app.workspace`; this component only needs the shared
   // EditorExtensionRegistry to seed and live-reconfigure the compartment.
   const pluginHost = usePluginHost();
+  const app = useApp();
 
   // Reply to the app-level "save now" request (Cmd/Ctrl+S in VaultApp).
   // If nothing is dirty the session's flush no-ops, which is fine — VaultApp
@@ -172,6 +173,10 @@ export function NoteEditor({
           view.dispatch({ selection: view.state.selection });
         });
 
+        // Exposes this view to app.commands.execute for Command.editorCallback
+        // commands (word-count's "Show", any future editor-scoped command).
+        app.workspace.setActiveEditorView?.(view);
+
         const flush = () => void session.flush();
         flushRef.current = flush;
         const onHidden = () => {
@@ -192,6 +197,7 @@ export function NoteEditor({
           document.removeEventListener("visibilitychange", onHidden);
           window.removeEventListener("beforeunload", flush);
           unsubscribePluginExtensions();
+          app.workspace.setActiveEditorView?.(null);
           const v = view;
           sessionPromise = session.dispose(true).then(() => v?.destroy());
         };
@@ -208,7 +214,7 @@ export function NoteEditor({
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [engine, documentId, readOnly, pluginHost]);
+  }, [engine, documentId, readOnly, pluginHost, app]);
 
   return <div ref={hostRef} className="cm-host h-full w-full overflow-auto" />;
 }

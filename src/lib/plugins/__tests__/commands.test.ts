@@ -53,6 +53,25 @@ describe("CommandRegistry", () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("kaboom"), "error");
   });
 
+  it("execute passes the given editorView and activeNote through to editorCallback", async () => {
+    const registry = new CommandRegistry();
+    const cb = vi.fn();
+    registry.add("p", { id: "edit", name: "Edit", editorCallback: cb });
+    const fakeView = { fake: "editor-view" } as unknown as import("@codemirror/view").EditorView;
+    const note = { documentId: "d1", isGraph: false };
+    await registry.execute("p:edit", note, fakeView, vi.fn());
+    expect(cb).toHaveBeenCalledWith(fakeView, note);
+  });
+
+  it("execute no-ops an editorCallback command when there is no editorView, even with an active note", async () => {
+    const registry = new CommandRegistry();
+    const cb = vi.fn();
+    registry.add("p", { id: "edit", name: "Edit", editorCallback: cb });
+    const note = { documentId: "d1", isGraph: false };
+    await registry.execute("p:edit", note, null, vi.fn());
+    expect(cb).not.toHaveBeenCalled();
+  });
+
   it("a() disposer removes the command", () => {
     const registry = new CommandRegistry();
     const dispose = registry.add("p", { id: "a", name: "A", callback: () => {} });
