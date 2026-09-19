@@ -4,7 +4,10 @@ pre-commit:
   parallel: true
   commands:
     test:
-      run: npm test
+      # The sync-host watcher test races temp-vault teardown at the default
+      # one-worker-per-file setting. Keep commits parallel, but bound Vitest
+      # workers so the full suite is deterministic on developer machines.
+      run: npm test -- --maxWorkers=4
     typecheck:
       run: npx tsc --noEmit
 
