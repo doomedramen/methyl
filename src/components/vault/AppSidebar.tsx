@@ -580,10 +580,7 @@ export function AppSidebar({
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter
-        className="flex-row items-center justify-between gap-2"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
+      <SidebarFooter className="flex-row items-center justify-between gap-2">
         <PwaStatus engine={engine} />
       </SidebarFooter>
 

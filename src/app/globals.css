@@ -308,14 +308,6 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* viewport-fit=cover (layout.tsx) lets content draw under the
-       notch/home-indicator; these keep it from sitting under them
-       instead. Top lives here (not on the header) so the access banner
-       and loading screens above/instead of the header clear the iOS
-       status bar too; the sidebar footer owns the bottom inset. */
-    padding-top: env(safe-area-inset-top);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
   }
   html {
     @apply font-sans;
