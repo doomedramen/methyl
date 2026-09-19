@@ -78,7 +78,6 @@ import {
   resourceKey,
   type WorkspaceStore,
   type WorkspaceTab,
-  type WorkspaceResource,
   WorkspaceStore as WorkspaceStateStore,
 } from "@/lib/workspace/store";
 import { findActiveTab, WorkspaceView } from "./WorkspaceView";
@@ -581,6 +580,19 @@ export function VaultApp() {
     [workspaceStore],
   );
 
+  const pruneWorkspace = useCallback(
+    (eng: VaultEngine) => {
+      workspaceStore?.prune([
+        ...eng.tree.documentIds().map((documentId) => ({ kind: "document" as const, documentId })),
+        ...eng.tree
+          .allNodes()
+          .filter((node) => node.kind === "binary")
+          .map((node) => ({ kind: "asset" as const, treeId: String(node.treeId) })),
+      ]);
+    },
+    [workspaceStore],
+  );
+
   const refreshNotes = useCallback((eng: VaultEngine) => {
     setRows(buildRootRows(eng.tree, eng));
   }, []);
@@ -639,21 +651,14 @@ export function VaultApp() {
   useEffect(() => {
     if (!engine || !workspaceStore || !notePathRef.current) return;
     refreshNotes(engine);
-    const validResources: WorkspaceResource[] = [
-      ...engine.tree.documentIds().map((documentId) => ({ kind: "document" as const, documentId })),
-      ...engine.tree
-        .allNodes()
-        .filter((node) => node.kind === "binary")
-        .map((node) => ({ kind: "asset" as const, treeId: String(node.treeId) })),
-    ];
-    workspaceStore.prune(validResources);
+    pruneWorkspace(engine);
     const wanted = notePathRef.current.notePathFromLocation(window.location.pathname, engine.vaultId);
     if (wanted) {
       const found = notePathRef.current.docIdForPath(engine.tree, wanted);
       if (found) workspaceStore.replaceFromDeepLink({ kind: "document", documentId: found });
     }
     urlRestored.current = true;
-  }, [engine, refreshNotes, workspaceStore]);
+  }, [engine, pruneWorkspace, refreshNotes, workspaceStore]);
 
   // Re-render when this tab is promoted to writer in place (§12) — the
   // engine object reference doesn't change (see becomeWriter in
@@ -981,6 +986,37 @@ export function VaultApp() {
     [activeId, engine, refreshNotes, requireWriter, rows, workspaceStore],
   );
 
+  const onRenameAsset = useCallback(
+    async (treeId: TreeID, name: string) => {
+      if (!engine || !requireWriter()) return;
+      try {
+        await engine.renameAttachment(treeId, name);
+        refreshNotes(engine);
+        toast.success("Attachment renamed");
+      } catch (e) {
+        console.error(e);
+        toast.error("Couldn't rename attachment");
+      }
+    },
+    [engine, refreshNotes, requireWriter],
+  );
+
+  const onDeleteAsset = useCallback(
+    async (treeId: TreeID) => {
+      if (!engine || !requireWriter()) return;
+      try {
+        await engine.deleteAttachment(treeId);
+        refreshNotes(engine);
+        pruneWorkspace(engine);
+        toast.success("Attachment deleted");
+      } catch (e) {
+        console.error(e);
+        toast.error("Couldn't delete attachment");
+      }
+    },
+    [engine, pruneWorkspace, refreshNotes, requireWriter],
+  );
+
   const onMove = useCallback(
     async ({ treeId, newParent, index }: { treeId: TreeID; newParent: TreeID | undefined; index: number }) => {
       if (!engine || !requireWriter()) return;
@@ -1139,6 +1175,8 @@ export function VaultApp() {
         onDeleteNote={onDeleteNote}
         onRenameFolder={onRenameFolder}
         onDeleteFolder={onDeleteFolder}
+        onRenameAsset={onRenameAsset}
+        onDeleteAsset={onDeleteAsset}
         onMove={onMove}
         onOpenCommandMenu={() => setCommandOpen(true)}
         notes={notes}

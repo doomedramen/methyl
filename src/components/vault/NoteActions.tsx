@@ -195,6 +195,99 @@ export function RenameFolderDialog({
   );
 }
 
+export function RenameAssetDialog({
+  open,
+  onOpenChange,
+  currentName,
+  onRename,
+}: RenameFolderDialogProps) {
+  const [value, setValue] = useState(currentName);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setValue(currentName);
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            const trimmed = value.trim();
+            if (!trimmed) return;
+            onRename(trimmed);
+            onOpenChange(false);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Rename attachment</DialogTitle>
+          </DialogHeader>
+          <Field className="mt-4">
+            <FieldLabel htmlFor="rename-attachment-name">Name</FieldLabel>
+            <FieldContent>
+              <Input
+                id="rename-attachment-name"
+                autoFocus
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+              />
+            </FieldContent>
+          </Field>
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!value.trim()}>
+              <Pencil data-icon="inline-start" />
+              Rename
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function DeleteAssetAlert({
+  open,
+  onOpenChange,
+  assetName,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  assetName: string;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete &ldquo;{assetName}&rdquo;?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the attachment and its ordinary file from the vault.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              onConfirm();
+              onOpenChange(false);
+            }}
+          >
+            <Trash2 data-icon="inline-start" />
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 interface NewFolderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;

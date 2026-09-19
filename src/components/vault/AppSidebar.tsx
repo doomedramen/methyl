@@ -76,6 +76,8 @@ import {
   DeleteNoteAlert,
   RenameFolderDialog,
   DeleteFolderAlert,
+  RenameAssetDialog,
+  DeleteAssetAlert,
   NewFolderDialog,
 } from "./NoteActions";
 import {
@@ -136,6 +138,8 @@ interface AppSidebarProps {
   onDeleteNote: (id: string) => void;
   onRenameFolder: (treeId: TreeID, name: string) => void;
   onDeleteFolder: (treeId: TreeID) => void;
+  onRenameAsset: (treeId: TreeID, name: string) => void;
+  onDeleteAsset: (treeId: TreeID) => void;
   onMove: (target: MoveTarget) => void;
   onOpenCommandMenu: () => void;
   notes: NoteRow[];
@@ -336,6 +340,8 @@ export function AppSidebar({
   onDeleteNote,
   onRenameFolder,
   onDeleteFolder,
+  onRenameAsset,
+  onDeleteAsset,
   onMove,
   onOpenCommandMenu,
   notes,
@@ -349,6 +355,8 @@ export function AppSidebar({
   const [deleteTarget, setDeleteTarget] = useState<NoteRow | null>(null);
   const [renameFolderTarget, setRenameFolderTarget] = useState<FolderRow | null>(null);
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<FolderRow | null>(null);
+  const [renameAssetTarget, setRenameAssetTarget] = useState<BinaryRow | null>(null);
+  const [deleteAssetTarget, setDeleteAssetTarget] = useState<BinaryRow | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<TreeID | undefined>(undefined);
 
   const requestNewFolder = useCallback(
@@ -861,6 +869,8 @@ export function AppSidebar({
                         onDeleteNoteRequest={setDeleteTarget}
                         onRenameFolderRequest={setRenameFolderTarget}
                         onDeleteFolderRequest={setDeleteFolderTarget}
+                        onRenameAssetRequest={setRenameAssetTarget}
+                        onDeleteAssetRequest={setDeleteAssetTarget}
                       />
                     ),
                   )}
@@ -953,6 +963,22 @@ export function AppSidebar({
           onConfirm={() => onDeleteFolder(deleteFolderTarget.treeId)}
         />
       )}
+      {renameAssetTarget && (
+        <RenameAssetDialog
+          open={Boolean(renameAssetTarget)}
+          onOpenChange={(open) => !open && setRenameAssetTarget(null)}
+          currentName={renameAssetTarget.title}
+          onRename={(name) => onRenameAsset(renameAssetTarget.treeId, name)}
+        />
+      )}
+      {deleteAssetTarget && (
+        <DeleteAssetAlert
+          open={Boolean(deleteAssetTarget)}
+          onOpenChange={(open) => !open && setDeleteAssetTarget(null)}
+          assetName={deleteAssetTarget.title}
+          onConfirm={() => onDeleteAsset(deleteAssetTarget.treeId)}
+        />
+      )}
       <NewFolderDialog
         open={newFolderOpen}
         onOpenChange={onNewFolderOpenChange}
@@ -979,6 +1005,8 @@ interface RowProps {
   onDeleteNoteRequest: (row: NoteRow) => void;
   onRenameFolderRequest: (row: FolderRow) => void;
   onDeleteFolderRequest: (row: FolderRow) => void;
+  onRenameAssetRequest: (row: BinaryRow) => void;
+  onDeleteAssetRequest: (row: BinaryRow) => void;
 }
 
 function Row({
@@ -998,6 +1026,8 @@ function Row({
   onDeleteNoteRequest,
   onRenameFolderRequest,
   onDeleteFolderRequest,
+  onRenameAssetRequest,
+  onDeleteAssetRequest,
 }: RowProps) {
   const { row, depth } = flat;
   const { attributes, listeners, setNodeRef: setDragRef } = useDraggable({
@@ -1131,28 +1161,68 @@ function Row({
     const asset = row;
     return (
       <SidebarMenuItem className="group/menu-item relative">
+        <ContextMenu>
+          <ContextMenuTrigger
+            render={
+              <div
+                ref={setRefs}
+                {...attributes}
+                {...listeners}
+                data-sidebar-drag-row="true"
+                style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
+                className={cn("relative rounded-md", (isDragging || isDimmed) && "opacity-35")}
+              >
+                {depth > 0 && <IndentGuide depth={depth} />}
+                {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
+                <SidebarMenuButton
+                  isActive={activeResourceKey === `asset:${String(asset.treeId)}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => onPickAsset(asset.treeId)}
+                  className={ROW_BUTTON}
+                  title={asset.path}
+                >
+                  <Paperclip className="text-muted-foreground" />
+                  <span>{asset.title}</span>
+                </SidebarMenuButton>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <SidebarMenuAction
+                        showOnHover
+                        onPointerDown={(event) => event.stopPropagation()}
+                        className="top-1/2! -translate-y-1/2"
+                        aria-label={`Actions for ${asset.title}`}
+                      >
+                        <MoreHorizontal />
+                      </SidebarMenuAction>
+                    }
+                  />
+                  <DropdownMenuContent align="start" side="right">
+                    <DropdownMenuItem onClick={() => onRenameAssetRequest(asset)}>
+                      <Pencil data-icon="inline-start" />
+                      Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuItem variant="destructive" onClick={() => onDeleteAssetRequest(asset)}>
+                      <Trash2 data-icon="inline-start" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            }
+          />
+          <ContextMenuContent>
+            <ContextMenuItem onClick={() => onRenameAssetRequest(asset)}>
+              <Pencil data-icon="inline-start" />
+              Rename
+            </ContextMenuItem>
+            <ContextMenuItem variant="destructive" onClick={() => onDeleteAssetRequest(asset)}>
+              <Trash2 data-icon="inline-start" />
+              Delete
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
         {showBefore && <DropLine position="before" depth={placement?.depth ?? depth} />}
-        <div
-          ref={setRefs}
-          {...attributes}
-          {...listeners}
-          data-sidebar-drag-row="true"
-          style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
-          className={cn("relative rounded-md", (isDragging || isDimmed) && "opacity-35")}
-        >
-          {depth > 0 && <IndentGuide depth={depth} />}
-          {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
-          <SidebarMenuButton
-            isActive={activeResourceKey === `asset:${String(asset.treeId)}`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onPickAsset(asset.treeId)}
-            className={ROW_BUTTON}
-            title={asset.path}
-          >
-            <Paperclip className="text-muted-foreground" />
-            <span>{asset.title}</span>
-          </SidebarMenuButton>
-        </div>
         {showAfter && <DropLine position="after" depth={placement?.depth ?? depth} />}
       </SidebarMenuItem>
     );

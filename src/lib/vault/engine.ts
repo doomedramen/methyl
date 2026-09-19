@@ -426,6 +426,15 @@ export class VaultEngine {
     await this.persistTree();
   }
 
+  /** Rename a binary node and move its ordinary bytes to the new path. */
+  async renameAttachment(treeId: TreeID, newName: string): Promise<void> {
+    const node = this.tree.getNode(treeId);
+    if (!node || node.kind !== "binary") throw new Error(`Binary asset not found: ${treeId}`);
+    this.tree.rename(treeId, newName);
+    await this.rematerializeSubtree(treeId);
+    await this.persistTreeIncremental();
+  }
+
   /** Adopt ordinary files dropped into Attachments/ by an external actor. */
   async ingestExternalAssets(): Promise<AssetIngestReport> {
     const tracked = new Set(

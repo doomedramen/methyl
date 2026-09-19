@@ -128,7 +128,7 @@ describe("computeLivePreviewSpecs", () => {
 
   it("recognizes Obsidian image embeds and resolves their cached URL", () => {
     const doc = "![A photo](Attachments/photo.png)\n\n![[Attachments/diagram.svg]]";
-    const specs = computeLivePreviewSpecs(doc, cursorAt(0), {
+    const specs = computeLivePreviewSpecs(doc, cursorAt(doc.indexOf("![[") - 1), {
       resolveAttachment: (target) => `blob:${target}`,
     });
     const embeds = specs.filter((spec) => spec.kind === "attachment");
@@ -144,6 +144,15 @@ describe("computeLivePreviewSpecs", () => {
     const specs = computeLivePreviewSpecs("```md\n![[Attachments/photo.png]]\n```", cursorAt(0), {
       resolveAttachment: () => "blob:photo",
     });
+    expect(specs.some((spec) => spec.kind === "attachment")).toBe(false);
+  });
+
+  it("reveals image source Markdown while its range is selected", () => {
+    const markdown = "![diagram](Attachments/diagram.png)";
+    const specs = computeLivePreviewSpecs(markdown, [{ from: 0, to: markdown.length }], {
+      resolveAttachment: () => "blob:diagram",
+    });
+
     expect(specs.some((spec) => spec.kind === "attachment")).toBe(false);
   });
 });

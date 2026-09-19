@@ -384,6 +384,10 @@ export function computeLivePreviewSpecs(
 
   // ---- Attachments / images ----------------------------------------------
   for (const range of collectAttachmentRanges(doc, codeRanges)) {
+    // Keep the portable Markdown source visible while the caret or a
+    // selection touches it, matching the editor's treatment of other
+    // syntax decorations.
+    if (touches(selection, range.from, range.to)) continue;
     specs.push({
       kind: "attachment",
       from: range.from,
