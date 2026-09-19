@@ -886,7 +886,7 @@ export function VaultApp() {
       <SidebarInset className="flex min-w-0 flex-1 flex-col">
         <VaultAccessBanner engine={engine} />
         <header className="app-titlebar wco-drag flex min-h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
-          <SidebarTrigger className="wco-no-drag size-10 md:size-8" />
+          <SidebarTrigger className="wco-no-drag size-11 md:size-8" />
           <Separator orientation="vertical" className="h-5" />
           <Breadcrumb className="min-w-0">
             <BreadcrumbList className="flex-nowrap">

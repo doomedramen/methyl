@@ -126,7 +126,11 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
     <Popover>
       <PopoverTrigger
         render={
-          <Button variant="ghost" size="sm" className="justify-start gap-2 text-muted-foreground">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-h-11 justify-start gap-2 text-muted-foreground md:min-h-0"
+          >
             <OfflineIcon state={pwa.offline} />
             {syncLabel ?? offline.trigger}
           </Button>

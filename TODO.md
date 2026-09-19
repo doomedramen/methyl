@@ -66,8 +66,11 @@ limits) live there, not here — only their *deviations* are listed below.
 
 ## Quality
 
-- [ ] **Mobile is untested** since the sidebar, editor and drag-and-drop changed —
-      including press-and-hold dragging and the sheet sidebar.
+- [ ] **Real-device mobile QA remains.** Chromium iPhone emulation now covers
+      375px portrait, landscape, touch targets, editor overflow, sheet dismissal,
+      reduced motion, and the iOS-style edge cases; a physical iOS/Android pass
+      is still needed for keyboards, safe-area insets, press-and-hold dragging,
+      and browser storage limits.
 - [ ] **No accessibility pass:** keyboard-only navigation, screen readers, focus
       order, and a keyboard path for moving notes between folders.
 - [ ] **Offline verified only in Chrome**, by stopping the server; not on iOS

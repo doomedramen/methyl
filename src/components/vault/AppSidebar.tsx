@@ -16,6 +16,7 @@ import {
   Search,
   Trash2,
   Workflow,
+  X,
 } from "lucide-react";
 import {
   DndContext,
@@ -441,6 +442,15 @@ export function AppSidebar({
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            className="size-11 md:hidden"
+            onClick={() => setOpenMobile(false)}
+            aria-label="Close sidebar"
+          >
+            <X />
+          </Button>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -452,7 +462,7 @@ export function AppSidebar({
                     onNewFolderOpenChange(true);
                   }}
                   aria-label="New folder"
-                  className="size-9 text-muted-foreground md:size-8"
+                  className="size-11 text-muted-foreground md:size-8"
                   disabled={!canWrite}
                 >
                   <FolderPlus />
@@ -474,7 +484,7 @@ export function AppSidebar({
         <SidebarGroup>
           <Button
             variant="ghost"
-            className="mb-1 h-9 w-full justify-start gap-2 bg-sidebar-accent/40 px-2 font-normal text-muted-foreground hover:bg-sidebar-accent md:h-8"
+            className="mb-1 h-11 w-full justify-start gap-2 bg-sidebar-accent/40 px-2 font-normal text-muted-foreground hover:bg-sidebar-accent md:h-8"
             onClick={onOpenCommandMenu}
           >
             <Search className="text-muted-foreground" />
@@ -808,7 +818,7 @@ function Row({
 }
 
 /** Row height: comfortable touch target on mobile, compact on desktop. */
-const ROW_BUTTON = "h-9 md:h-8";
+const ROW_BUTTON = "h-11 md:h-8";
 
 function DropLine({ position }: { position: "before" | "after" }) {
   return (
