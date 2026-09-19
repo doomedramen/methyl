@@ -1,10 +1,10 @@
 # Methyl logo options
 
-Four original, hand-authored SVG concepts. No Lucide paths, external fonts, embedded bitmaps, scripts, or external resources. These are design proposals, not a trademark clearance or a replacement for the current app icon.
+Four original, hand-authored SVG concepts. No Lucide paths, external fonts, embedded bitmaps, scripts, or external resources. Capsule was selected for the app identity. The remaining concepts are retained as explorations.
 
-## Recommendation
+## Selected direction
 
-**Fold** is the strongest direction: a compact paper-inspired M, with a silhouette that works without the wordmark. **Open leaves** is the more literal alternative.
+The user selected **Capsule**. The app uses the amber mark, a brighter dark-browser variant, and white-on-amber installed-app icons.
 
 [Open the comparison sheet](comparison.svg).
 
@@ -50,4 +50,4 @@ Trade-off: Strongest medical reading. Choose this only if that association is in
 - Monochrome files use dark ink; set the root `color` to white for a reversed mark. App variants already provide a white mark on a coloured tile.
 - Wordmarks on the comparison sheet use system typography for context; they are not outlined final wordmark artwork.
 - Keep at least 8 viewBox units of clear space around the standalone mark when placing it beside other content.
-- The existing `public/icon.svg`, app manifests and production branding are unchanged. Select a direction before creating the final favicon/PWA icon family.
+- Production SVGs live at `public/icon.svg` and `public/icon-dark.svg`. Previous artwork is preserved byte-for-byte as `public/icon_old.svg` and `public/icon-dark_old.svg`. Regenerate installed-app PNGs with `node scripts/gen-icons.mjs`.

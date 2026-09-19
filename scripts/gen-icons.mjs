@@ -15,7 +15,7 @@ const iconsDir = join(root, "public", "icons");
 mkdirSync(iconsDir, { recursive: true });
 
 const svg = readFileSync(join(root, "public", "icon.svg"), "utf8");
-const BG = "#0f1115";
+const BG = "#C77B25";
 
 /**
  * @param {number} size output PNG size (square)
@@ -30,15 +30,15 @@ function pageHtml(size, { scale = 1, opaque = false } = {}) {
     html,body{margin:0;padding:0;width:${size}px;height:${size}px;
       background:${opaque ? BG : "transparent"};}
     .wrap{width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;}
-    svg{width:${iconSize}px;height:${iconSize}px;color:#f88901;}
+    svg{width:${iconSize}px;height:${iconSize}px;color:#ffffff;}
   </style></head><body><div class="wrap">${svg}</div></body></html>`;
 }
 
 const targets = [
-  { file: "icon-192.png", size: 192, opts: { scale: 0.7, opaque: true } },
-  { file: "icon-512.png", size: 512, opts: { scale: 0.7, opaque: true } },
+  { file: "icon-192.png", size: 192, opts: { scale: 0.8, opaque: true } },
+  { file: "icon-512.png", size: 512, opts: { scale: 0.8, opaque: true } },
   { file: "maskable-512.png", size: 512, opts: { scale: 0.8, opaque: true } },
-  { file: "apple-touch-icon.png", size: 180, opts: { scale: 0.7, opaque: true } },
+  { file: "apple-touch-icon.png", size: 180, opts: { scale: 0.8, opaque: true } },
 ];
 
 const browser = await chromium.launch();
