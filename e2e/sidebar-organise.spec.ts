@@ -97,7 +97,10 @@ async function createNote(page: Page, title: string, parent?: string) {
   if (parent) {
     const folderRow = rowByName(page, parent);
     await folderRow.locator(`button[aria-label="Actions for ${parent}"]`).click();
-    await page.getByRole("menuitem", { name: "New note" }).click();
+    await page
+      .getByRole("menu", { name: `Actions for ${parent}` })
+      .getByRole("menuitem", { name: "New note" })
+      .click();
   } else {
     await sidebar(page).getByRole("button", { name: "Add" }).click();
     await page.getByRole("menuitem", { name: "New note" }).click();
@@ -109,7 +112,10 @@ async function createNote(page: Page, title: string, parent?: string) {
   }).first();
   const currentName = (await untitled.locator("span").filter({ hasText: /^Untitled/ }).first().textContent())!.trim();
   await untitled.locator(`button[aria-label="Actions for ${currentName}"]`).click();
-  await page.getByRole("menuitem", { name: "Rename" }).click();
+  await page
+    .getByRole("menu", { name: `Actions for ${currentName}` })
+    .getByRole("menuitem", { name: "Rename" })
+    .click();
   const input = page.locator("#rename-note-title");
   await input.fill(title);
   await page.getByRole("button", { name: "Rename" }).click();
