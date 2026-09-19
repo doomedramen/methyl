@@ -341,13 +341,10 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
     await host.sync();
     await waitFor(() => existsSync(join(tmp, "disk-edit.md")));
 
-    // Baseline change-log position: recordRoomSave's store.recordChange for
-    // this room happens synchronously right before the live-room-cache
-    // patch (patchCachedRoomIfLoaded) in the same call — waiting for a new
-    // "doc" change row for this room id is therefore a deterministic
-    // signal that the patch has already run too, unlike polling doc text
-    // (which can observe the engine mutated slightly before/independently
-    // of console-logged progress and isn't a reliable ordering guarantee).
+    // Baseline change-log position: recordRoomSave patches the live room
+    // cache before recording the change row — waiting for a new "doc" row
+    // therefore proves the cached snapshot is current too, unlike polling
+    // doc text (which can observe the engine mutate independently).
     const roomId = `doc:${doc.id}`;
     const baselineSeq = Math.max(0, ...diskServer.store.getChangesAfter(0).changes.map((c) => c.seq));
 

@@ -105,8 +105,11 @@ export class SearchIndex {
   }
 
   remove(id: string): void {
+    // MiniSearch.discard throws when the document is absent. A document room
+    // can arrive before its tree node, so index removal must be idempotent
+    // while the server mirror waits for the tree save to catch up.
+    if (this.index.has(id)) this.index.discard(id);
     this.docs.delete(id);
-    this.index.discard(id);
   }
 
   /** Replace the in-memory index without writing it to disk. */

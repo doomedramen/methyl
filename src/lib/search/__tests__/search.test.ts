@@ -75,6 +75,11 @@ describe("SearchIndex", () => {
     expect(idx.all()[0].title).toBe("Updated title");
   });
 
+  it("remove is idempotent for documents not yet indexed", () => {
+    expect(() => idx.remove("arrived-before-tree")).not.toThrow();
+    expect(idx.size).toBe(0);
+  });
+
   it("remove + persist/load round trip", async () => {
     const a = mkDoc(NOTE_A, "Inbox/Garage.md");
     const b = mkDoc(NOTE_B, "Recipes.md");
