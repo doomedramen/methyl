@@ -7,8 +7,8 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
  * Loro remove-then-reinsert index overshoot on downward moves) are only
  * visible when dnd-kit's pointer-based hit-testing runs against real
  * measured DOM rects. jsdom has no layout, so unit tests can't see them
- * (see src/components/vault/__tests__/AppSidebar.dnd.test.ts, which only
- * covers the pure computeDropMode()/index-math helpers).
+ * (see src/components/vault/__tests__/sidebar-dnd.test.ts for the pure
+ * placement resolver coverage).
  *
  * Each test gets a brand-new, isolated Playwright BrowserContext (the
  * default `page` fixture), which is a fresh browser storage partition —
@@ -43,7 +43,12 @@ async function walkVaultFiles(page: Page): Promise<string[]> {
   return page.evaluate(async () => {
     const out: string[] = [];
     async function walk(dir: FileSystemDirectoryHandle, prefix: string) {
-      for await (const [name, handle] of (dir as any).entries()) {
+      const entries = (
+        dir as unknown as {
+          entries: () => AsyncIterableIterator<[string, FileSystemHandle]>;
+        }
+      ).entries();
+      for await (const [name, handle] of entries) {
         if (prefix === "" && (name === ".adhd" || name === ".trash")) continue;
         const path = prefix ? `${prefix}/${name}` : name;
         if (handle.kind === "directory") {
@@ -152,23 +157,35 @@ async function dragRow(
   await dragBetween(page, from, to, targetY);
 }
 
-async function dragRowAfterFolder(page: Page, fromName: string, folderName: string) {
+async function dragRowAfterFolder(page: Page, fromName: string, folderName: string, horizontalOffset = 0) {
   const from = rowByName(page, fromName);
   const dropZone = page.locator(
     `[data-sidebar-drop-zone="after-folder"][data-sidebar-drop-folder="${folderName}"]`,
   );
   await expect(dropZone).toHaveCount(1);
   const dropZoneBox = (await dropZone.boundingBox())!;
-  await dragBetween(page, from, dropZone, dropZoneBox.y + dropZoneBox.height / 2);
+  await dragBetween(
+    page,
+    from,
+    dropZone,
+    dropZoneBox.y + dropZoneBox.height / 2,
+    dropZoneBox.x + dropZoneBox.width / 2 + horizontalOffset,
+  );
 }
 
-async function dragBetween(page: Page, from: Locator, to: Locator, targetY: number) {
+async function dragBetween(
+  page: Page,
+  from: Locator,
+  to: Locator,
+  targetY: number,
+  targetXOverride?: number,
+) {
   const fromBox = (await from.boundingBox())!;
   const toBox = (await to.boundingBox())!;
 
   const startX = fromBox.x + fromBox.width / 2;
   const startY = fromBox.y + fromBox.height / 2;
-  const targetX = toBox.x + toBox.width / 2;
+  const targetX = targetXOverride ?? toBox.x + toBox.width / 2;
 
   await page.mouse.move(startX, startY);
   await page.mouse.down();
@@ -199,6 +216,28 @@ async function dragBetween(page: Page, from: Locator, to: Locator, targetY: numb
       timeout: 2_000,
     })
     .toBe(0);
+}
+
+/** Same real pointer path as dragBetween, but leaves the pointer held so the
+ * preview can be inspected before the commit. */
+async function dragToHold(page: Page, from: Locator, to: Locator, targetY: number) {
+  const fromBox = (await from.boundingBox())!;
+  const toBox = (await to.boundingBox())!;
+  const startX = fromBox.x + fromBox.width / 2;
+  const startY = fromBox.y + fromBox.height / 2;
+  const targetX = toBox.x + toBox.width / 2;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX, startY + 15, { steps: 3 });
+  for (let i = 1; i <= 8; i += 1) {
+    const x = startX + ((targetX - startX) * i) / 8;
+    const y = startY + 15 + ((targetY - startY - 15) * i) / 8;
+    await page.mouse.move(x, y, { steps: 2 });
+    await page.waitForTimeout(20);
+  }
+  await page.mouse.move(targetX, targetY, { steps: 2 });
+  await page.waitForTimeout(100);
 }
 
 // --------------------------------------------------------------------------
@@ -233,6 +272,73 @@ test("drag a note into a folder nests it and moves the file", async ({ page }) =
   const files = await listVaultFiles(page);
   expect(files).toContain("Folder One/Note A.md");
   expect(files).not.toContain("Note A.md");
+});
+
+test("a drop over a middle folder child stays inside that folder", async ({ page }) => {
+  await createFolder(page, "People");
+  await createNote(page, "Hana", "People");
+  await createNote(page, "Work", "People");
+  await createNote(page, "Later", "People");
+  await createNote(page, "Garage");
+
+  await dragRow(page, "Garage", "Work", "after");
+
+  await expect
+    .poll(async () => rowIndentPx(rowByName(page, "Garage")))
+    .toBeGreaterThan(await rowIndentPx(rowByName(page, "People")));
+  expect(await listVaultFiles(page)).toContain("People/Garage.md");
+  expect(await listVaultFiles(page)).not.toContain("Garage.md");
+});
+
+test("uses one shared boundary after an expanded folder", async ({ page }) => {
+  await createFolder(page, "People");
+  await createNote(page, "Hana", "People");
+  await createNote(page, "Garage");
+
+  const target = rowByName(page, "Garage");
+  const targetBox = (await target.boundingBox())!;
+  await dragToHold(page, rowByName(page, "Hana"), target, targetBox.y + targetBox.height * 0.1);
+
+  await expect(page.locator('[data-sidebar-placement-label="true"]')).toHaveText(
+    "At vault root · after People",
+  );
+  await expect(page.locator('[data-sidebar-drop-line="true"]')).toHaveCount(1);
+  await expect(page.locator('[data-sidebar-drop-line="true"][data-sidebar-drop-depth="0"]')).toBeVisible();
+
+  await page.mouse.up();
+  const peopleIndent = await rowIndentPx(rowByName(page, "People"));
+  await expect
+    .poll(async () => rowIndentPx(rowByName(page, "Hana")))
+    .toBe(peopleIndent);
+  expect(await listVaultFiles(page)).toContain("Hana.md");
+  expect(await listVaultFiles(page)).not.toContain("People/Hana.md");
+});
+
+test("drag preview exposes the projected depth and full destination path", async ({ page }) => {
+  await createFolder(page, "People");
+  await createFolder(page, "Projects");
+  await dragRow(page, "Projects", "People", "inside");
+  await createNote(page, "Garage");
+
+  const target = rowByName(page, "Projects");
+  const targetBox = (await target.boundingBox())!;
+  await dragToHold(page, rowByName(page, "Garage"), target, targetBox.y + targetBox.height / 2);
+
+  const preview = page.locator('[data-sidebar-drag-preview="true"]');
+  await expect(preview).toBeVisible();
+  await expect(preview.locator('[data-sidebar-placement-label="true"]')).toHaveText(
+    "In People / Projects · at end",
+  );
+  await expect(preview).toHaveAttribute("data-sidebar-placement-depth", "2");
+  await expect(page.locator('[data-sidebar-drop-line="true"]')).toHaveCount(1);
+  await expect(page.locator('[data-sidebar-drop-line="true"][data-sidebar-drop-depth="2"]')).toBeVisible();
+  await expect(target.locator('[data-sidebar-drop-parent="true"]')).toBeVisible();
+
+  await page.mouse.up();
+  await expect
+    .poll(async () => rowIndentPx(rowByName(page, "Garage")))
+    .toBeGreaterThan(await rowIndentPx(target));
+  expect(await listVaultFiles(page)).toContain("People/Projects/Garage.md");
 });
 
 test("dragging a note from above a folder to directly below it lands immediately after (regression for the index-overshoot bug)", async ({
@@ -288,6 +394,19 @@ test("moves a note out of an expanded folder to just below its parent", async ({
   );
 });
 
+test("horizontal movement changes depth at the folder boundary", async ({ page }) => {
+  await createNote(page, "Garage");
+  await createFolder(page, "People");
+  await createNote(page, "Hana", "People");
+
+  await dragRowAfterFolder(page, "Garage", "People", 25);
+
+  const garage = rowByName(page, "Garage");
+  const people = rowByName(page, "People");
+  expect(await rowIndentPx(garage)).toBeGreaterThan(await rowIndentPx(people));
+  expect(await listVaultFiles(page)).toContain("People/Garage.md");
+});
+
 test("dragging a note out of a folder to the row below it leaves the folder (regression for the same overshoot bug)", async ({
   page,
 }) => {
@@ -329,9 +448,26 @@ test("reorder two notes within the same folder, both directions", async ({ page 
   // Move B above A.
   await dragRow(page, "Note B", "Note A", "before");
   await expect(rowsIn()).toHaveText(["Note B", "Note A"]);
+  await expect
+    .poll(async () => rowIndentPx(rowByName(page, "Note B")))
+    .toBeGreaterThan(await rowIndentPx(rowByName(page, "Folder One")));
 
   // Move B back below A.
-  await dragRow(page, "Note B", "Note A", "after");
+  const noteATarget = rowByName(page, "Note A");
+  const noteATargetBox = (await noteATarget.boundingBox())!;
+  await dragToHold(
+    page,
+    rowByName(page, "Note B"),
+    noteATarget,
+    noteATargetBox.y + noteATargetBox.height * 0.9,
+  );
+  await expect(page.locator('[data-sidebar-placement-label="true"]')).toHaveText(
+    "In Folder One · after Note A",
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () => page.locator('li[data-slot="sidebar-menu-item"] [style*="opacity: 0"]').count())
+    .toBe(0);
   await expect(rowsIn()).toHaveText(["Note A", "Note B"]);
 
   const files = await listVaultFiles(page);
@@ -355,11 +491,54 @@ test("refuses dropping a folder into its own descendant", async ({ page }) => {
   // Now try to drag Parent Folder into its own descendant, Child Folder.
   await dragRow(page, "Parent Folder", "Child Folder", "inside");
 
-  await expect(page.getByText("Can't move a folder into its own descendant")).toBeVisible();
+  await expect(page.getByText("Cannot move into own folder")).toBeVisible();
 
   // Tree unchanged: Parent Folder still at root, Child Folder still nested.
   const parentIndentAfter = await rowIndentPx(rowByName(page, "Parent Folder"));
   const childIndentAfter = await rowIndentPx(rowByName(page, "Child Folder"));
   expect(parentIndentAfter).toBe(parentIndent);
   expect(childIndentAfter).toBe(childIndentBefore);
+});
+
+test("keyboard pickup uses arrow placement and commits the same move", async ({ page }) => {
+  await createNote(page, "Note A");
+  await createNote(page, "Note B");
+
+  const noteB = rowByName(page, "Note B").locator('[data-sidebar-drag-row="true"]');
+  await noteB.focus();
+  await noteB.press("Space");
+  await expect(page.locator('[data-sidebar-drag-preview="true"]')).toBeVisible();
+  await noteB.press("ArrowUp");
+  await expect(page.locator('[data-sidebar-placement-label="true"]')).toContainText(
+    "after welcome",
+  );
+  await noteB.press("Space");
+
+  const rows = page.locator('li[data-slot="sidebar-menu-item"] span').filter({
+    hasText: /^(Note A|Note B)$/,
+  });
+  await expect(rows).toHaveText(["Note B", "Note A"]);
+});
+
+test("keyboard right changes the destination depth", async ({ page }) => {
+  await createNote(page, "Garage");
+  await createFolder(page, "People");
+
+  const garage = rowByName(page, "Garage").locator('[data-sidebar-drag-row="true"]');
+  await garage.focus();
+  await garage.press("Space");
+  await garage.press("ArrowDown");
+  await garage.press("ArrowRight");
+  await expect(page.locator('[data-sidebar-placement-label="true"]')).toContainText(
+    "In People · at end",
+  );
+  await expect(page.locator('[data-sidebar-drag-preview="true"]')).toHaveAttribute(
+    "data-sidebar-placement-depth",
+    "1",
+  );
+  await garage.press("Space");
+
+  await expect
+    .poll(async () => rowIndentPx(rowByName(page, "Garage")))
+    .toBeGreaterThan(await rowIndentPx(rowByName(page, "People")));
 });

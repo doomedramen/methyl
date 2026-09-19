@@ -24,16 +24,18 @@ import {
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
-  closestCenter,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
-  type DragEndEvent,
+  defaultKeyboardCoordinateGetter,
+  type KeyboardCoordinateGetter,
+  type CollisionDetection,
   type DragMoveEvent,
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -75,6 +77,15 @@ import {
   DeleteFolderAlert,
   NewFolderDialog,
 } from "./NoteActions";
+import {
+  countDescendants,
+  formatPlacementLabel,
+  getRowName,
+  revalidateSidebarPlacement,
+  resolveSidebarPlacement,
+  type SidebarPlacement,
+  type VisibleDndRow,
+} from "./sidebar-dnd";
 
 export interface FolderRow {
   treeId: TreeID;
@@ -94,9 +105,6 @@ export interface NoteRow {
 }
 
 export type SidebarRow = FolderRow | NoteRow;
-
-/** Where a drop lands relative to the hovered row. */
-type DropMode = "before" | "after" | "inside";
 
 export interface MoveTarget {
   treeId: TreeID;
@@ -173,6 +181,17 @@ type FlatEntry = FlatRow | EmptyFlatRow | FolderAfterFlatRow;
 
 const AFTER_DROP_PREFIX = "after-folder:";
 
+const sidebarKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
+  if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+    event.preventDefault();
+    return {
+      ...args.currentCoordinates,
+      x: args.currentCoordinates.x + (event.code === "ArrowRight" ? 17.6 : -17.6),
+    };
+  }
+  return sortableKeyboardCoordinates(event, args) ?? defaultKeyboardCoordinateGetter(event, args);
+};
+
 function afterDropId(treeId: TreeID): string {
   return `${AFTER_DROP_PREFIX}${treeId}`;
 }
@@ -181,6 +200,62 @@ function folderIdFromAfterDropId(id: unknown): TreeID | undefined {
   return typeof id === "string" && id.startsWith(AFTER_DROP_PREFIX)
     ? (id.slice(AFTER_DROP_PREFIX.length) as TreeID)
     : undefined;
+}
+
+/**
+ * Dnd-kit's closest-centre strategy is a poor fit for a tree: the centre of
+ * a dragged row can remain closest to a folder heading even after the pointer
+ * has crossed the folder's visible subtree. Use the pointer's vertical
+ * position instead, with the explicit after-subtree markers winning when the
+ * pointer is near one.
+ */
+const sidebarCollisionDetection: CollisionDetection = ({
+  collisionRect,
+  droppableRects,
+  droppableContainers,
+  pointerCoordinates,
+}) => {
+  const pointerY = pointerCoordinates?.y ?? collisionRect.top + collisionRect.height / 2;
+  const pointerInsideRow = droppableContainers.some((container) => {
+    const isAfterBoundary =
+      typeof container.id === "string" && container.id.startsWith(AFTER_DROP_PREFIX);
+    const rect = droppableRects.get(container.id);
+    return !isAfterBoundary && Boolean(rect && pointerY >= rect.top && pointerY <= rect.bottom);
+  });
+  return droppableContainers
+    .flatMap((container) => {
+      const rect = droppableRects.get(container.id);
+      if (!rect) return [];
+      const isAfterBoundary = typeof container.id === "string" && container.id.startsWith(AFTER_DROP_PREFIX);
+      const distance =
+        pointerY < rect.top ? rect.top - pointerY : pointerY > rect.bottom ? pointerY - rect.bottom : 0;
+      const boundaryDistance = Math.abs(pointerY - (rect.top + rect.height / 2));
+      const value =
+        isAfterBoundary && !pointerInsideRow && boundaryDistance <= 14
+          ? -1000 + boundaryDistance
+          : distance;
+      return [{ id: container.id, data: { droppableContainer: container, value } }];
+    })
+    .sort((a, b) => {
+      const valueDifference = (a.data?.value ?? 0) - (b.data?.value ?? 0);
+      if (valueDifference !== 0) return valueDifference;
+      const aIsAfter = typeof a.id === "string" && a.id.startsWith(AFTER_DROP_PREFIX);
+      const bIsAfter = typeof b.id === "string" && b.id.startsWith(AFTER_DROP_PREFIX);
+      return Number(aIsAfter) - Number(bIsAfter);
+    });
+};
+
+function eventClientPoint(event: Event): { x: number; y: number } | undefined {
+  const pointerEvent = event as MouseEvent;
+  if (typeof pointerEvent.clientX === "number" && typeof pointerEvent.clientY === "number") {
+    return { x: pointerEvent.clientX, y: pointerEvent.clientY };
+  }
+  const touchEvent = event as TouchEvent;
+  if (touchEvent.changedTouches) {
+    const touch = touchEvent.changedTouches[0];
+    if (touch) return { x: touch.clientX, y: touch.clientY };
+  }
+  return undefined;
 }
 
 function flatten(
@@ -213,19 +288,7 @@ function flatten(
   });
 }
 
-/** Pure hit-testing for drop position within a hovered row.
- *  `relative` is the dragged item's center as a fraction of the hovered
- *  row's height (0 = top edge, 1 = bottom edge). Directory rows get a wide
- *  middle "inside" band (50%) so dropping into a folder is easy; note rows
- *  only ever split before/after. */
-export function computeDropMode(relative: number, isDirectory: boolean): DropMode {
-  if (isDirectory) {
-    if (relative < 0.25) return "before";
-    if (relative > 0.75) return "after";
-    return "inside";
-  }
-  return relative < 0.5 ? "before" : "after";
-}
+export { computeDropMode } from "./sidebar-dnd";
 
 function findRow(rows: SidebarRow[], treeId: TreeID): SidebarRow | undefined {
   for (const row of rows) {
@@ -264,7 +327,7 @@ export function AppSidebar({
   newFolderOpen,
   onNewFolderOpenChange,
 }: AppSidebarProps) {
-  const { setOpenMobile } = useSidebar();
+  const { setOpenMobile, isMobile, openMobile } = useSidebar();
   const [renameTarget, setRenameTarget] = useState<NoteRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<NoteRow | null>(null);
   const [renameFolderTarget, setRenameFolderTarget] = useState<FolderRow | null>(null);
@@ -308,6 +371,20 @@ export function AppSidebar({
     return map;
   }, [flat]);
 
+  const visibleDndRows = useMemo<VisibleDndRow[]>(
+    () =>
+      flat
+        .filter((entry): entry is FlatRow => entry.type === "row")
+        .map((entry) => ({
+          treeId: entry.row.treeId,
+          depth: entry.depth,
+          parentTreeId: entry.parentTreeId,
+          siblingIndex: entry.siblingIndex,
+          kind: entry.row.kind,
+        })),
+    [flat],
+  );
+
   const pick = (id: string) => {
     onSelect(id);
     setOpenMobile(false);
@@ -315,10 +392,22 @@ export function AppSidebar({
 
   // --- drag and drop -----------------------------------------------------
   const [activeDragId, setActiveDragId] = useState<TreeID | null>(null);
-  const [overId, setOverId] = useState<TreeID | null>(null);
-  const [dropMode, setDropMode] = useState<DropMode | null>(null);
+  const activeDragIdRef = useRef<TreeID | null>(null);
+  const [placement, setPlacement] = useState<SidebarPlacement | null>(null);
+  const placementRef = useRef<SidebarPlacement | null>(null);
+  const [dragAnnouncement, setDragAnnouncement] = useState("");
   const autoExpandTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoExpandTarget = useRef<TreeID | null>(null);
+  const dragOrigin = useRef<{ baseX: number; grabOffsetX: number; indentPx: number } | null>(null);
+  const keyboardDirection = useRef<"up" | "down" | null>(null);
+  const keyboardTarget = useRef<TreeID | null>(null);
+  const sidebarContentRef = useRef<HTMLDivElement | null>(null);
+  const latestPointerY = useRef<number | null>(null);
+  const autoScrollFrame = useRef<number | null>(null);
+  const latestDragEvent = useRef<DragOverEvent | DragMoveEvent | null>(null);
+  const updateDropTargetRef = useRef<((event: DragOverEvent | DragMoveEvent) => void) | null>(null);
+  const keyboardPointerX = useRef<number | null>(null);
+  const keyboardPlacementRef = useRef<SidebarPlacement | null>(null);
 
   const sensors = useSensors(
     // Mouse: activate on a short drag distance so plain clicks (open note,
@@ -329,7 +418,7 @@ export function AppSidebar({
     useSensor(TouchSensor, {
       activationConstraint: { delay: 200, tolerance: 8 },
     }),
-    useSensor(KeyboardSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sidebarKeyboardCoordinates }),
   );
 
   const clearAutoExpand = () => {
@@ -340,8 +429,75 @@ export function AppSidebar({
     autoExpandTarget.current = null;
   };
 
+  const stopAutoScroll = () => {
+    if (autoScrollFrame.current !== null) {
+      window.cancelAnimationFrame(autoScrollFrame.current);
+      autoScrollFrame.current = null;
+    }
+  };
+
+  const autoScrollSidebar = () => {
+    if (!dragOrigin.current || latestPointerY.current === null) return;
+    const content = sidebarContentRef.current;
+    if (!content) return;
+    const rect = content.getBoundingClientRect();
+    const edge = Math.min(72, rect.height * 0.18);
+    const distanceFromTop = latestPointerY.current - rect.top;
+    const distanceFromBottom = rect.bottom - latestPointerY.current;
+    let delta = 0;
+    if (distanceFromTop >= 0 && distanceFromTop < edge) {
+      delta = -Math.ceil((edge - distanceFromTop) / 5);
+    } else if (distanceFromBottom >= 0 && distanceFromBottom < edge) {
+      delta = Math.ceil((edge - distanceFromBottom) / 5);
+    }
+    if (delta !== 0) {
+      content.scrollTop += delta;
+      const event = latestDragEvent.current;
+      if (event) updateDropTargetRef.current?.(event);
+    }
+    autoScrollFrame.current = window.requestAnimationFrame(autoScrollSidebar);
+  };
+
+  const startAutoScroll = () => {
+    if (autoScrollFrame.current === null) {
+      autoScrollFrame.current = window.requestAnimationFrame(autoScrollSidebar);
+    }
+  };
+
+  const clearPlacement = () => {
+    placementRef.current = null;
+    setPlacement(null);
+    setDragAnnouncement("");
+  };
+
   const handleDragStart = (event: DragStartEvent) => {
-    setActiveDragId(event.active.id as TreeID);
+    const activeId = event.active.id as TreeID;
+    const activeFlat = flatById.get(activeId);
+    const initialRect = event.active.rect.current.initial;
+    const indentPx =
+      typeof document === "undefined"
+        ? 17.6
+        : (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) * 1.1;
+    const point = eventClientPoint(event.activatorEvent);
+    const baseX = initialRect?.left ?? 0;
+    const contentLeft = baseX + (activeFlat?.depth ?? 0) * indentPx;
+    dragOrigin.current = {
+      baseX,
+      indentPx,
+      grabOffsetX: point ? point.x - contentLeft : 0,
+    };
+    keyboardPointerX.current = point?.x ?? contentLeft;
+    latestPointerY.current = point?.y ?? initialRect?.top ?? null;
+    activeDragIdRef.current = activeId;
+    setActiveDragId(activeId);
+    placementRef.current = null;
+    keyboardPlacementRef.current = null;
+    setPlacement(null);
+    latestDragEvent.current = null;
+    keyboardDirection.current = null;
+    keyboardTarget.current = null;
+    setDragAnnouncement(`Picked up ${getRowName(activeFlat?.row)}.`);
+    startAutoScroll();
   };
 
   /**
@@ -353,42 +509,74 @@ export function AppSidebar({
    * run this.
    */
   const updateDropTarget = (event: DragOverEvent | DragMoveEvent) => {
+    latestDragEvent.current = event;
     const { active, over } = event;
-    if (!over) {
-      setOverId(null);
-      setDropMode(null);
-      clearAutoExpand();
-      return;
-    }
-    const afterFolderId = folderIdFromAfterDropId(over.id);
-    const overTreeId = afterFolderId ?? (over.id as TreeID);
-    if (overTreeId === active.id) {
-      setOverId(null);
-      setDropMode(null);
-      clearAutoExpand();
-      return;
-    }
-    const overFlat = flatById.get(overTreeId);
-    if (!overFlat) return;
-
-    const overRect = afterFolderId ? null : over.rect;
+    const activeFlat = flatById.get(active.id as TreeID);
     const activeTranslated = active.rect.current.translated;
-    let mode: DropMode = "after";
-    if (overRect && activeTranslated) {
-      const activeCenterY = activeTranslated.top + activeTranslated.height / 2;
-      const relative = (activeCenterY - overRect.top) / overRect.height;
-      mode = computeDropMode(relative, overFlat.row.kind === "directory");
+    const origin = dragOrigin.current;
+    const initialPoint = eventClientPoint(event.activatorEvent);
+    const pointer = initialPoint
+      ? { x: initialPoint.x + event.delta.x, y: initialPoint.y + event.delta.y }
+      : activeTranslated && origin
+        ? {
+            x: activeTranslated.left + (activeFlat?.depth ?? 0) * origin.indentPx + origin.grabOffsetX,
+            y: activeTranslated.top + activeTranslated.height / 2,
+          }
+        : undefined;
+    latestPointerY.current = pointer?.y ?? null;
+    startAutoScroll();
+    const keyboardTargetId =
+      keyboardTarget.current ??
+      (keyboardDirection.current ? placementRef.current?.targetTreeId : undefined);
+    if (!over && !keyboardTargetId) {
+      clearPlacement();
+      clearAutoExpand();
+      return;
     }
+    const afterFolderId = keyboardTargetId ? undefined : folderIdFromAfterDropId(over?.id);
+    const overTreeId = keyboardTargetId ?? afterFolderId ?? (over?.id as TreeID);
+    const overFlat = flatById.get(overTreeId);
+    if (!overFlat || !origin) return;
 
-    setOverId(overTreeId);
-    setDropMode(mode);
+    const relative = keyboardDirection.current
+      ? keyboardDirection.current === "up"
+        ? 0.1
+        : 0.9
+      : pointer && over && over.rect.height > 0
+        ? (pointer.y - over.rect.top) / over.rect.height
+        : 0.5;
+    const nextPlacement = resolveSidebarPlacement({
+      rows,
+      visibleRows: visibleDndRows,
+      activeId: active.id as TreeID,
+      targetTreeId: overTreeId,
+      relativeY: relative,
+      targetIsAfterBoundary: Boolean(afterFolderId),
+      pointerX: keyboardTargetId ? keyboardPointerX.current ?? pointer?.x : pointer?.x,
+      baseX: origin.baseX,
+      grabOffsetX: origin.grabOffsetX,
+      indentPx: origin.indentPx,
+    });
+    placementRef.current = nextPlacement;
+    if (keyboardTargetId) keyboardPlacementRef.current = nextPlacement;
+    setPlacement(nextPlacement);
+    const activeName = getRowName(activeFlat?.row);
+    setDragAnnouncement(`${activeName}. ${formatPlacementLabel(rows, nextPlacement, active.id as TreeID)}.`);
 
-    if (mode === "inside" && overFlat.row.kind === "directory" && collapsed.has(overTreeId)) {
+    if (
+      nextPlacement.mode === "inside" &&
+      overFlat.row.kind === "directory" &&
+      collapsed.has(overTreeId)
+    ) {
       if (autoExpandTarget.current !== overTreeId) {
         clearAutoExpand();
         autoExpandTarget.current = overTreeId;
         autoExpandTimer.current = setTimeout(() => {
           expand(overTreeId);
+          const latestEvent = latestDragEvent.current;
+          if (latestEvent) {
+            window.requestAnimationFrame(() => updateDropTargetRef.current?.(latestEvent));
+          }
         }, 600);
       }
     } else {
@@ -398,63 +586,90 @@ export function AppSidebar({
 
   const handleDragOver = (event: DragOverEvent) => updateDropTarget(event);
   const handleDragMove = (event: DragMoveEvent) => updateDropTarget(event);
+  useEffect(() => {
+    updateDropTargetRef.current = updateDropTarget;
+  }, [updateDropTarget]);
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const applyKeyboardPlacement = (targetTreeId: TreeID, direction: "up" | "down") => {
+    const activeId = activeDragIdRef.current;
+    const origin = dragOrigin.current;
+    const targetFlat = flatById.get(targetTreeId);
+    if (!activeId || !origin || !targetFlat) return;
+    const nextPlacement = resolveSidebarPlacement({
+      rows,
+      visibleRows: visibleDndRows,
+      activeId,
+      targetTreeId,
+      relativeY: direction === "up" ? 0.1 : 0.9,
+      pointerX: keyboardPointerX.current ?? origin.baseX,
+      baseX: origin.baseX,
+      grabOffsetX: origin.grabOffsetX,
+      indentPx: origin.indentPx,
+    });
+    placementRef.current = nextPlacement;
+    keyboardPlacementRef.current = nextPlacement;
+    setPlacement(nextPlacement);
+    setDragAnnouncement(
+      `${getRowName(flatById.get(activeId)?.row)}. ${formatPlacementLabel(rows, nextPlacement, activeId)}.`,
+    );
+  };
+
+  const handleDragEnd = () => {
     clearAutoExpand();
-    const draggedId = activeDragId;
+    stopAutoScroll();
+    const draggedId = activeDragIdRef.current ?? activeDragId;
+    const currentPlacement = keyboardPlacementRef.current ?? placementRef.current;
     setActiveDragId(null);
-    const currentOverId = overId;
-    const currentMode = dropMode;
-    setOverId(null);
-    setDropMode(null);
-    if (!draggedId || !currentOverId || !currentMode) return;
-    if (draggedId === currentOverId) return;
-
-    const overFlat = flatById.get(currentOverId);
-    if (!overFlat) return;
-
-    // Refuse dropping a folder into its own descendant / itself.
-    const draggedRow = findRow(rows, draggedId);
-    if (draggedRow?.kind === "directory") {
-      const descendant = findRow(draggedRow.children, currentOverId);
-      if (descendant || currentOverId === draggedId) {
-        toast.error("Can't move a folder into its own descendant");
-        return;
+    activeDragIdRef.current = null;
+    dragOrigin.current = null;
+    latestDragEvent.current = null;
+    keyboardPointerX.current = null;
+    keyboardPlacementRef.current = null;
+    keyboardDirection.current = null;
+    keyboardTarget.current = null;
+    latestPointerY.current = null;
+    clearPlacement();
+    if (!draggedId || !currentPlacement) return;
+    if (!currentPlacement.valid) {
+      if (currentPlacement.reason === "descendant") {
+        toast.error("Cannot move into own folder");
       }
+      return;
     }
+    if (currentPlacement.noOp) return;
 
-    let newParent: TreeID | undefined;
-    let index: number;
-    if (currentMode === "inside") {
-      newParent = currentOverId;
-      const target = findRow(rows, currentOverId) as FolderRow;
-      index = target.children.length;
-    } else {
-      newParent = overFlat.parentTreeId;
-      index = overFlat.siblingIndex + (currentMode === "after" ? 1 : 0);
-      // Loro removes the node before re-inserting it, so every later
-      // sibling shifts up by one. Without this, dragging an item DOWN
-      // within its own parent (e.g. from above a folder to just below it)
-      // landed one slot too far.
-      const draggedFlat = flatById.get(draggedId);
-      if (
-        draggedFlat &&
-        draggedFlat.parentTreeId === newParent &&
-        draggedFlat.siblingIndex < index
-      ) {
-        index -= 1;
-      }
-    }
-
-    onMove({ treeId: draggedId, newParent, index });
+    // Revalidate the exact placement against the latest tree. This protects
+    // the commit if a remote sync or a folder expansion changed the tree
+    // while dragging without losing an intentional horizontal depth choice.
+    const revalidated = revalidateSidebarPlacement(rows, draggedId, currentPlacement);
+    if (!revalidated.valid || revalidated.noOp) return;
+    onMove({
+      treeId: draggedId,
+      newParent: revalidated.parentTreeId,
+      index: revalidated.index,
+    });
   };
 
   const handleDragCancel = () => {
     clearAutoExpand();
+    stopAutoScroll();
+    dragOrigin.current = null;
+    latestDragEvent.current = null;
+    keyboardPointerX.current = null;
+    keyboardPlacementRef.current = null;
+    latestPointerY.current = null;
+    keyboardDirection.current = null;
+    keyboardTarget.current = null;
+    activeDragIdRef.current = null;
     setActiveDragId(null);
-    setOverId(null);
-    setDropMode(null);
+    clearPlacement();
   };
+
+  useEffect(() => {
+    if (isMobile && !openMobile && dragOrigin.current) handleDragCancel();
+  }, [isMobile, openMobile]);
+
+  useEffect(() => () => stopAutoScroll(), []);
 
   const draggedRow = activeDragId ? findRow(rows, activeDragId) : undefined;
 
@@ -466,7 +681,7 @@ export function AppSidebar({
   const canWrite = Boolean(engine?.releaseWriterLock);
 
   return (
-    <Sidebar variant="inset">
+    <Sidebar variant="inset" className={activeDragId ? "select-none touch-none" : undefined}>
       <SidebarHeader className="flex-row items-center justify-between gap-2 px-4 pt-6 md:pt-3">
         <div className="flex min-w-0 items-center gap-2">
           <img src="/icon.svg" alt="" className="size-6 shrink-0 rounded-md" />
@@ -511,7 +726,7 @@ export function AppSidebar({
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent ref={sidebarContentRef}>
         <SidebarGroup>
           <Button
             variant="ghost"
@@ -536,14 +751,60 @@ export function AppSidebar({
             ) : (
               <DndContext
                 sensors={sensors}
-                collisionDetection={closestCenter}
+                collisionDetection={sidebarCollisionDetection}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDragMove={handleDragMove}
                 onDragEnd={handleDragEnd}
                 onDragCancel={handleDragCancel}
               >
-                <SidebarMenu className="gap-0.5">
+                <SidebarMenu
+                  className="gap-0.5"
+                  onKeyDownCapture={(event) => {
+                    const currentActiveId = activeDragIdRef.current;
+                    if (!currentActiveId) return;
+                    if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+                      const targetTreeId =
+                        keyboardTarget.current ?? placementRef.current?.targetTreeId;
+                      if (!targetTreeId || !dragOrigin.current) return;
+                      keyboardPointerX.current =
+                        (keyboardPointerX.current ?? dragOrigin.current.baseX) +
+                        (event.code === "ArrowRight"
+                          ? dragOrigin.current.indentPx
+                          : -dragOrigin.current.indentPx);
+                      applyKeyboardPlacement(
+                        targetTreeId,
+                        keyboardDirection.current ?? "down",
+                      );
+                      return;
+                    }
+                    if (event.code !== "ArrowUp" && event.code !== "ArrowDown") return;
+                    const referenceId = keyboardTarget.current ?? currentActiveId;
+                    const referenceIndex = visibleDndRows.findIndex(
+                      (entry) => entry.treeId === referenceId,
+                    );
+                    const step = event.code === "ArrowUp" ? -1 : 1;
+                    const activeFolder = findRow(rows, currentActiveId);
+                    let nextIndex = referenceIndex + step;
+                    while (nextIndex >= 0 && nextIndex < visibleDndRows.length) {
+                      const candidate = visibleDndRows[nextIndex];
+                      const isOwnDescendant =
+                        activeFolder?.kind === "directory" &&
+                        findRow(activeFolder.children, candidate.treeId);
+                      if (candidate.treeId !== currentActiveId && !isOwnDescendant) {
+                        keyboardTarget.current = candidate.treeId;
+                        keyboardDirection.current = event.code === "ArrowUp" ? "up" : "down";
+                        keyboardPointerX.current ??= dragOrigin.current?.baseX ?? 0;
+                        applyKeyboardPlacement(
+                          candidate.treeId,
+                          event.code === "ArrowUp" ? "up" : "down",
+                        );
+                        break;
+                      }
+                      nextIndex += step;
+                    }
+                  }}
+                >
                   {flat.map((f) =>
                     f.type === "empty" ? (
                       <EmptyFolderRow key={f.key} depth={f.depth} />
@@ -553,7 +814,7 @@ export function AppSidebar({
                         folderTreeId={f.folderTreeId}
                         folderName={f.folderName}
                         depth={f.depth}
-                        isOver={overId === f.folderTreeId && dropMode === "after"}
+                        placement={placement}
                       />
                     ) : (
                       <Row
@@ -563,9 +824,16 @@ export function AppSidebar({
                         isCollapsed={f.row.kind === "directory" && collapsed.has(f.row.treeId)}
                         onToggleCollapsed={toggleCollapsed}
                         onPick={pick}
-                        overId={overId}
-                        dropMode={dropMode}
+                        placement={placement}
                         isDragging={activeDragId === f.row.treeId}
+                        isDimmed={Boolean(
+                          activeDragId &&
+                            activeDragId !== f.row.treeId &&
+                            findRow(
+                              (draggedRow?.kind === "directory" ? draggedRow.children : []) ?? [],
+                              f.row.treeId,
+                            ),
+                        )}
                         onCreateNote={onCreate}
                         onCreateFolder={(parent) => {
                           setNewFolderParent(parent);
@@ -581,17 +849,40 @@ export function AppSidebar({
                 </SidebarMenu>
                 <DragOverlay>
                   {draggedRow ? (
-                    <div className="flex items-center gap-2 rounded-md border bg-sidebar px-2 py-1.5 text-sm shadow-md">
-                      {draggedRow.kind === "directory" ? (
-                        <Folder className="size-4 shrink-0" />
-                      ) : draggedRow.isGraph ? (
-                        <Workflow className="size-4 shrink-0" />
-                      ) : (
-                        <FileText className="size-4 shrink-0" />
+                    <div
+                      data-sidebar-drag-preview="true"
+                      data-sidebar-placement-depth={placement?.depth ?? ""}
+                      className={cn(
+                        "flex max-w-[min(22rem,calc(100vw-2rem))] flex-col gap-1 rounded-md border bg-sidebar px-3 py-2 text-sm shadow-lg",
+                        "-translate-y-full motion-reduce:transition-none",
                       )}
-                      <span className="truncate">
-                        {draggedRow.kind === "directory" ? draggedRow.name : draggedRow.title}
-                      </span>
+                      style={{ paddingLeft: `${0.75 + (placement?.depth ?? 0) * 1.1}rem` }}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        {draggedRow.kind === "directory" ? (
+                          <Folder className="size-4 shrink-0" />
+                        ) : draggedRow.isGraph ? (
+                          <Workflow className="size-4 shrink-0" />
+                        ) : (
+                          <FileText className="size-4 shrink-0" />
+                        )}
+                        <span className="truncate font-medium">
+                          {draggedRow.kind === "directory" ? draggedRow.name : draggedRow.title}
+                        </span>
+                        {draggedRow.kind === "directory" && (
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {countDescendants(draggedRow)} descendants
+                          </span>
+                        )}
+                      </div>
+                      {placement && (
+                        <span
+                          data-sidebar-placement-label="true"
+                          className={cn("truncate text-xs", !placement.valid && "text-destructive")}
+                        >
+                          {formatPlacementLabel(rows, placement, activeDragId ?? undefined)}
+                        </span>
+                      )}
                     </div>
                   ) : null}
                 </DragOverlay>
@@ -600,6 +891,10 @@ export function AppSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {dragAnnouncement}
+      </div>
 
       <SidebarFooter className="flex-row items-center justify-between gap-2">
         <PwaStatus engine={engine} />
@@ -653,9 +948,9 @@ interface RowProps {
   isCollapsed: boolean;
   onToggleCollapsed: (treeId: TreeID) => void;
   onPick: (id: string) => void;
-  overId: TreeID | null;
-  dropMode: DropMode | null;
+  placement: SidebarPlacement | null;
   isDragging: boolean;
+  isDimmed: boolean;
   onCreateNote: (parentTreeId?: TreeID) => void;
   onCreateFolder: (parentTreeId?: TreeID) => void;
   onRenameNoteRequest: (row: NoteRow) => void;
@@ -670,9 +965,9 @@ function Row({
   isCollapsed,
   onToggleCollapsed,
   onPick,
-  overId,
-  dropMode,
+  placement,
   isDragging,
+  isDimmed,
   onCreateNote,
   onCreateFolder,
   onRenameNoteRequest,
@@ -686,10 +981,12 @@ function Row({
   });
   const { setNodeRef: setDropRef } = useDroppable({ id: row.treeId });
 
-  const isOver = overId === row.treeId;
-  const showBefore = isOver && dropMode === "before";
-  const showAfter = isOver && dropMode === "after";
-  const showInside = isOver && dropMode === "inside" && row.kind === "directory";
+  const isTarget = placement?.targetTreeId === row.treeId;
+  const showBefore = placement?.valid && isTarget && placement.mode === "before";
+  const showAfter = placement?.valid && isTarget && placement.mode === "after" && row.kind !== "directory";
+  const showInside = placement?.valid && isTarget && placement.mode === "inside" && row.kind === "directory";
+  const isDestinationParent =
+    placement?.valid && placement.parentTreeId === row.treeId && row.kind === "directory";
 
   const indent = { paddingLeft: `${depth * 1.1}rem` };
 
@@ -701,7 +998,6 @@ function Row({
   if (row.kind === "directory") {
     return (
       <SidebarMenuItem className="group/menu-item relative">
-        {showBefore && <DropLine position="before" />}
         <ContextMenu>
           <ContextMenuTrigger
             render={
@@ -709,17 +1005,22 @@ function Row({
                 ref={setRefs}
                 {...attributes}
                 {...listeners}
-                style={indent}
+                data-sidebar-drag-row="true"
+                data-sidebar-drop-parent={isDestinationParent ? "true" : undefined}
+                style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
                 className={cn(
                   "relative rounded-md",
-                  isDragging && "opacity-40",
+                  (isDragging || isDimmed) && "opacity-35",
                   showInside && "bg-sidebar-accent ring-1 ring-sidebar-ring",
+                  isDestinationParent && "bg-sidebar-accent/70 ring-1 ring-sidebar-ring/70",
                 )}
               >
                 {depth > 0 && <IndentGuide depth={depth} />}
+                {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
                 <SidebarMenuButton
                   className={ROW_BUTTON}
                   aria-expanded={!isCollapsed}
+                  onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => onToggleCollapsed(row.treeId)}
                 >
                   <ChevronRight
@@ -734,7 +1035,12 @@ function Row({
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <SidebarMenuAction showOnHover className="top-1/2! -translate-y-1/2" aria-label={`Actions for ${row.name}`}>
+                      <SidebarMenuAction
+                        showOnHover
+                        onPointerDown={(event) => event.stopPropagation()}
+                        className="top-1/2! -translate-y-1/2"
+                        aria-label={`Actions for ${row.name}`}
+                      >
                         <MoreHorizontal />
                       </SidebarMenuAction>
                     }
@@ -783,7 +1089,8 @@ function Row({
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
-        {showAfter && <DropLine position="after" />}
+        {showBefore && <DropLine position="before" depth={placement?.depth ?? depth} />}
+        {showAfter && <DropLine position="after" depth={placement?.depth ?? depth} />}
       </SidebarMenuItem>
     );
   }
@@ -791,7 +1098,7 @@ function Row({
   const note = row;
   return (
     <SidebarMenuItem className="group/menu-item relative">
-      {showBefore && <DropLine position="before" />}
+      {showBefore && <DropLine position="before" depth={placement?.depth ?? depth} />}
       <ContextMenu>
         <ContextMenuTrigger
           render={
@@ -799,12 +1106,16 @@ function Row({
               ref={setRefs}
               {...attributes}
               {...listeners}
-              style={indent}
-              className={cn("relative rounded-md", isDragging && "opacity-40")}
+              data-sidebar-drag-row="true"
+              data-sidebar-drop-parent={isDestinationParent ? "true" : undefined}
+              style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
+              className={cn("relative rounded-md", (isDragging || isDimmed) && "opacity-35")}
             >
               {depth > 0 && <IndentGuide depth={depth} />}
+              {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
               <SidebarMenuButton
                 isActive={note.id === activeId}
+                onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => onPick(note.id)}
                 className={ROW_BUTTON}
               >
@@ -818,7 +1129,12 @@ function Row({
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <SidebarMenuAction showOnHover className="top-1/2! -translate-y-1/2" aria-label={`Actions for ${note.title}`}>
+                    <SidebarMenuAction
+                      showOnHover
+                      onPointerDown={(event) => event.stopPropagation()}
+                      className="top-1/2! -translate-y-1/2"
+                      aria-label={`Actions for ${note.title}`}
+                    >
                       <MoreHorizontal />
                     </SidebarMenuAction>
                   }
@@ -851,7 +1167,8 @@ function Row({
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      {showAfter && <DropLine position="after" />}
+      {showBefore && <DropLine position="before" depth={placement?.depth ?? depth} />}
+      {showAfter && <DropLine position="after" depth={placement?.depth ?? depth} />}
     </SidebarMenuItem>
   );
 }
@@ -860,14 +1177,18 @@ function FolderAfterDropZone({
   folderTreeId,
   folderName,
   depth,
-  isOver,
+  placement,
 }: {
   folderTreeId: TreeID;
   folderName: string;
   depth: number;
-  isOver: boolean;
+  placement: SidebarPlacement | null;
 }) {
   const { setNodeRef } = useDroppable({ id: afterDropId(folderTreeId) });
+  const isTarget = placement?.targetTreeId === folderTreeId;
+  const showMarker =
+    placement?.valid && isTarget && (placement.mode === "after" || placement.mode === "inside");
+  const markerDepth = placement?.depth ?? depth;
 
   return (
     <li aria-hidden="true" className="relative h-px shrink-0">
@@ -876,11 +1197,12 @@ function FolderAfterDropZone({
         data-sidebar-drop-zone="after-folder"
         data-sidebar-drop-folder={folderName}
         className={cn(
-          "pointer-events-none absolute -top-3 h-6 rounded-sm",
-          isOver && "bg-sidebar-ring/30",
+          "absolute inset-x-2 -top-3 h-6 rounded-sm",
+          isTarget && "bg-sidebar-ring/10",
         )}
-        style={{ left: `calc(0.5rem + ${depth * 1.1}rem)`, width: "6rem" }}
-      />
+      >
+        {showMarker && <DropLine position="boundary" depth={markerDepth} />}
+      </div>
     </li>
   );
 }
@@ -888,15 +1210,31 @@ function FolderAfterDropZone({
 /** Row height: comfortable touch target on mobile, compact on desktop. */
 const ROW_BUTTON = "h-11 md:h-8";
 
-function DropLine({ position }: { position: "before" | "after" }) {
+function DropLine({
+  position,
+  depth,
+}: {
+  position: "before" | "after" | "boundary";
+  depth: number;
+}) {
   return (
     <div
       aria-hidden
-      className={cn(
-        "pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-sidebar-ring",
-        position === "before" ? "-top-px" : "-bottom-px",
-      )}
-    />
+      data-sidebar-drop-line="true"
+      data-sidebar-drop-depth={depth}
+      className="pointer-events-none absolute z-10 h-0.5 rounded-full bg-sidebar-ring"
+      style={{
+        left: `calc(0.5rem + ${depth * 1.1}rem)`,
+        right: "0.5rem",
+        ...(position === "before"
+          ? { top: "-1px" }
+          : position === "after"
+            ? { bottom: "-1px" }
+            : { top: "50%", transform: "translateY(-50%)" }),
+      }}
+    >
+      <span className="absolute -left-1.5 top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-sidebar bg-sidebar-ring" />
+    </div>
   );
 }
 
