@@ -7,9 +7,9 @@ pre-commit:
       # The sync-host watcher test races temp-vault teardown at the default
       # one-worker-per-file setting. Keep commits parallel, but bound Vitest
       # workers so the full suite is deterministic on developer machines.
-      run: npm test -- --maxWorkers=4
+      run: npm run check:unit
     typecheck:
-      run: npx tsc --noEmit
+      run: npm run check:type
 
 # E2E needs a full production build (~minutes), so it gates pushes, not
 # every commit.
@@ -18,4 +18,4 @@ pre-push:
     e2e:
       # Same parallelism as CI (playwright.config.ts): the suite flakes under
       # the default half-the-cores workers on a busy machine.
-      run: npm run test:e2e -- --workers=2
+      run: npm run check:e2e
