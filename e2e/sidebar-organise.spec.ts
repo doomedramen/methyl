@@ -130,19 +130,39 @@ type DropPosition = "before" | "after" | "inside";
  *  dnd-kit's MouseSensor has a 6px activation-distance constraint, so a
  *  single `dragTo()` (which jumps straight to the target) never triggers
  *  the drag at all. */
-async function dragRow(page: Page, fromName: string, toName: string, position: DropPosition) {
+async function dragRow(
+  page: Page,
+  fromName: string,
+  toName: string,
+  position: DropPosition,
+) {
   const from = rowByName(page, fromName);
   const to = rowByName(page, toName);
+  const toBox = (await to.boundingBox())!;
+  let targetY: number;
+  if (position === "before") targetY = toBox.y + toBox.height * 0.1;
+  else if (position === "after") targetY = toBox.y + toBox.height * 0.9;
+  else targetY = toBox.y + toBox.height * 0.5;
+  await dragBetween(page, from, to, targetY);
+}
+
+async function dragRowAfterFolder(page: Page, fromName: string, folderName: string) {
+  const from = rowByName(page, fromName);
+  const dropZone = page.locator(
+    `[data-sidebar-drop-zone="after-folder"][data-sidebar-drop-folder="${folderName}"]`,
+  );
+  await expect(dropZone).toHaveCount(1);
+  const dropZoneBox = (await dropZone.boundingBox())!;
+  await dragBetween(page, from, dropZone, dropZoneBox.y + dropZoneBox.height / 2);
+}
+
+async function dragBetween(page: Page, from: Locator, to: Locator, targetY: number) {
   const fromBox = (await from.boundingBox())!;
   const toBox = (await to.boundingBox())!;
 
   const startX = fromBox.x + fromBox.width / 2;
   const startY = fromBox.y + fromBox.height / 2;
   const targetX = toBox.x + toBox.width / 2;
-  let targetY: number;
-  if (position === "before") targetY = toBox.y + toBox.height * 0.1;
-  else if (position === "after") targetY = toBox.y + toBox.height * 0.9;
-  else targetY = toBox.y + toBox.height * 0.5;
 
   await page.mouse.move(startX, startY);
   await page.mouse.down();
@@ -226,6 +246,40 @@ test("dragging a note from above a folder to directly below it lands immediately
     hasText: /^(Note A|Note B|Folder One)$/,
   });
   await expect(rows).toHaveText(["Folder One", "Note A", "Note B"]);
+});
+
+test("moves a root note below an expanded folder", async ({ page }) => {
+  await createNote(page, "Garage");
+  await createFolder(page, "People");
+  await createNote(page, "Hana", "People");
+
+  await dragRow(page, "Garage", "People", "after");
+
+  const rows = page.locator('li[data-slot="sidebar-menu-item"] span').filter({
+    hasText: /^(Garage|Hana|People)$/,
+  });
+  await expect(rows).toHaveText(["People", "Hana", "Garage"]);
+  expect(await rowIndentPx(rowByName(page, "Garage"))).toBe(
+    await rowIndentPx(rowByName(page, "People")),
+  );
+});
+
+test("moves a note out of an expanded folder to just below its parent", async ({ page }) => {
+  await createFolder(page, "People");
+  await createNote(page, "Hana", "People");
+  await createNote(page, "Garage", "People");
+
+  // Drop on the explicit boundary after the expanded subtree so the note
+  // leaves People instead of being inserted among its children.
+  await dragRowAfterFolder(page, "Garage", "People");
+
+  const rows = page.locator('li[data-slot="sidebar-menu-item"] span').filter({
+    hasText: /^(Garage|Hana|People)$/,
+  });
+  await expect(rows).toHaveText(["People", "Hana", "Garage"]);
+  expect(await rowIndentPx(rowByName(page, "Garage"))).toBe(
+    await rowIndentPx(rowByName(page, "People")),
+  );
 });
 
 test("dragging a note out of a folder to the row below it leaves the folder (regression for the same overshoot bug)", async ({

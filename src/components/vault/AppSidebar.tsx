@@ -162,7 +162,26 @@ interface EmptyFlatRow {
   depth: number;
 }
 
-type FlatEntry = FlatRow | EmptyFlatRow;
+interface FolderAfterFlatRow {
+  type: "after";
+  folderTreeId: TreeID;
+  folderName: string;
+  depth: number;
+}
+
+type FlatEntry = FlatRow | EmptyFlatRow | FolderAfterFlatRow;
+
+const AFTER_DROP_PREFIX = "after-folder:";
+
+function afterDropId(treeId: TreeID): string {
+  return `${AFTER_DROP_PREFIX}${treeId}`;
+}
+
+function folderIdFromAfterDropId(id: unknown): TreeID | undefined {
+  return typeof id === "string" && id.startsWith(AFTER_DROP_PREFIX)
+    ? (id.slice(AFTER_DROP_PREFIX.length) as TreeID)
+    : undefined;
+}
 
 function flatten(
   rows: SidebarRow[],
@@ -179,6 +198,17 @@ function flatten(
       } else {
         flatten(row.children, depth + 1, row.treeId, collapsed, out);
       }
+    }
+    if (row.kind === "directory") {
+      // Keep a drop target after the entire visible subtree. This gives a
+      // dragged child a reliable way to leave its folder, even when the
+      // folder's first child wins row collision detection near its header.
+      out.push({
+        type: "after",
+        folderTreeId: row.treeId,
+        folderName: row.name,
+        depth,
+      });
     }
   });
 }
@@ -330,7 +360,8 @@ export function AppSidebar({
       clearAutoExpand();
       return;
     }
-    const overTreeId = over.id as TreeID;
+    const afterFolderId = folderIdFromAfterDropId(over.id);
+    const overTreeId = afterFolderId ?? (over.id as TreeID);
     if (overTreeId === active.id) {
       setOverId(null);
       setDropMode(null);
@@ -340,7 +371,7 @@ export function AppSidebar({
     const overFlat = flatById.get(overTreeId);
     if (!overFlat) return;
 
-    const overRect = over.rect;
+    const overRect = afterFolderId ? null : over.rect;
     const activeTranslated = active.rect.current.translated;
     let mode: DropMode = "after";
     if (overRect && activeTranslated) {
@@ -516,6 +547,14 @@ export function AppSidebar({
                   {flat.map((f) =>
                     f.type === "empty" ? (
                       <EmptyFolderRow key={f.key} depth={f.depth} />
+                    ) : f.type === "after" ? (
+                      <FolderAfterDropZone
+                        key={afterDropId(f.folderTreeId)}
+                        folderTreeId={f.folderTreeId}
+                        folderName={f.folderName}
+                        depth={f.depth}
+                        isOver={overId === f.folderTreeId && dropMode === "after"}
+                      />
                     ) : (
                       <Row
                         key={f.row.treeId}
@@ -814,6 +853,35 @@ function Row({
       </ContextMenu>
       {showAfter && <DropLine position="after" />}
     </SidebarMenuItem>
+  );
+}
+
+function FolderAfterDropZone({
+  folderTreeId,
+  folderName,
+  depth,
+  isOver,
+}: {
+  folderTreeId: TreeID;
+  folderName: string;
+  depth: number;
+  isOver: boolean;
+}) {
+  const { setNodeRef } = useDroppable({ id: afterDropId(folderTreeId) });
+
+  return (
+    <li aria-hidden="true" className="relative h-px shrink-0">
+      <div
+        ref={setNodeRef}
+        data-sidebar-drop-zone="after-folder"
+        data-sidebar-drop-folder={folderName}
+        className={cn(
+          "pointer-events-none absolute -top-3 h-6 rounded-sm",
+          isOver && "bg-sidebar-ring/30",
+        )}
+        style={{ left: `calc(0.5rem + ${depth * 1.1}rem)`, width: "6rem" }}
+      />
+    </li>
   );
 }
 
