@@ -10,6 +10,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useEdgeSwipeToOpen } from "@/hooks/use-edge-swipe";
+import { useSidebar } from "@/components/ui/sidebar";
 import type { BacklinkEntry } from "@/lib/search/index";
 import type { NoteRow } from "./AppSidebar";
 
@@ -30,7 +32,14 @@ export function BacklinksPanel({
   notes,
   onSelectNote,
 }: BacklinksPanelProps) {
+  const { isMobile, openMobile } = useSidebar();
   const noteById = new Map(notes.map((note) => [note.id, note]));
+
+  useEdgeSwipeToOpen({
+    edge: "right",
+    enabled: isMobile && !open && !openMobile && backlinks.length > 0,
+    onOpen: () => onOpenChange(true),
+  });
 
   const selectNote = (id: string) => {
     onSelectNote(id);
