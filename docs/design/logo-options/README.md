@@ -1,10 +1,10 @@
 # Methyl logo options
 
-Four original, hand-authored SVG concepts. No Lucide paths, external fonts, embedded bitmaps, scripts, or external resources. Capsule was selected for the app identity. The remaining concepts are retained as explorations.
+Four original, hand-authored SVG concepts. No Lucide paths, external fonts, embedded bitmaps, scripts, or external resources. The restored pill-bottle mark is used for the app identity. These concepts remain as explorations.
 
-## Selected direction
+## Current app mark
 
-The user selected **Capsule**. The app uses the amber mark, a brighter dark-browser variant, and white-on-amber installed-app icons.
+The app uses the restored pill-bottle mark in `public/icon.svg`, with matching installed-app icons.
 
 [Open the comparison sheet](comparison.svg).
 

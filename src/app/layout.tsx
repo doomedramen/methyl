@@ -21,7 +21,10 @@ export const metadata: Metadata = {
   description: "Self-hostable, offline-first Markdown vault",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/icons/icon-512.png",
+    icon: [
+      { url: "/icon.svg", media: "(prefers-color-scheme: light)" },
+      { url: "/icon-dark.svg", media: "(prefers-color-scheme: dark)" },
+    ],
     apple: "/icons/apple-touch-icon.png",
   },
   // Keep the default standalone safe-area behavior; do not opt into
