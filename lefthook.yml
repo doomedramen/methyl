@@ -11,11 +11,14 @@ pre-commit:
     typecheck:
       run: npm run check:type
 
-# E2E needs a full production build (~minutes), so it gates pushes, not
-# every commit.
+# Full CI checks and the release image build run before pushes, not every
+# commit. This keeps pre-commit fast while making pushes CI-complete.
 pre-push:
+  parallel: false
   commands:
-    e2e:
-      # Same parallelism as CI (playwright.config.ts): the suite flakes under
-      # the default half-the-cores workers on a busy machine.
-      run: npm run check:e2e
+    ci:
+      # Run every automated CI check before allowing a push.
+      run: npm run check:ci
+    docker:
+      # Match CI's linux/amd64 Dockerfile build. The registry push remains CI-only.
+      run: npm run check:docker

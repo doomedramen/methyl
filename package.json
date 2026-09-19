@@ -13,6 +13,8 @@
     "check:type": "tsc --noEmit",
     "check:unit": "vitest run --maxWorkers=4",
     "check:e2e": "playwright test --workers=2",
+    "check:ci": "npm run check:type && npm run check:unit && npm run check:e2e",
+    "check:docker": "docker buildx build --platform linux/amd64 --load --tag methyl:hook-check .",
     "test": "npm run check:unit",
     "test:watch": "vitest",
     "test:e2e": "npm run check:e2e",
