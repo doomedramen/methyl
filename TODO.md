@@ -25,8 +25,8 @@ limits) live there, not here — only their *deviations* are listed below.
 
 - [x] **Full-text search wired up.** ⌘K searches note titles and Markdown
       content through the MiniSearch index.
-- [ ] **Backlinks.** Wikilink resolution exists (`src/lib/vault/wikilink.ts`); a
-      "what links here" panel does not.
+- [x] **Backlinks.** A "what links here" panel lists notes that link to the
+      active note and opens them on selection.
 - [ ] **Sync isn't live.** Remote changes arrive on the next discovery round
       (~15s), not pushed: `loro-websocket`'s `SimpleServer` has no public API to
       broadcast into an already-joined room. Fixing it means patching the

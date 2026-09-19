@@ -105,3 +105,33 @@ describe("VaultEngine.search", () => {
     expect(reopened.search("comet trail").map((result) => result.id)).toContain(doc.id);
   });
 });
+
+describe("VaultEngine.backlinks", () => {
+  it("tracks notes that link to the active note and survives reopening", async () => {
+    const engine = await newEngine();
+    const target = engine.createDocument(undefined, "Target.md", "# Target\n\nDestination");
+    const source = engine.createDocument(undefined, "Source.md", "See [[Target]] for details.");
+    await engine.persistTree();
+    await engine.materializeDocument(target.id, "Target.md");
+    await engine.materializeDocument(source.id, "Source.md");
+
+    expect(engine.backlinksFor(target.id)).toEqual([
+      expect.objectContaining({ from: source.id, fromTitle: "Source" }),
+    ]);
+
+    source.setText("The link was removed.");
+    await engine.persistDocumentIncremental(source.id);
+    expect(engine.backlinksFor(target.id)).toEqual([]);
+
+    source.setText("See [[Target]] for details again.");
+    await engine.persistDocumentIncremental(source.id);
+
+    const { engine: reopened } = await VaultEngine.open(
+      new NodeVaultTreeStore(tmpDir),
+      new NodeFSStore(tmpDir),
+    );
+    expect(reopened.backlinksFor(target.id)).toEqual([
+      expect.objectContaining({ from: source.id, fromTitle: "Source" }),
+    ]);
+  });
+});

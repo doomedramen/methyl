@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TreeID } from "loro-crdt";
-import { Check, Inbox, Plus, TriangleAlert } from "lucide-react";
+import { Check, Inbox, Link2, Plus, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import type { VaultTree, VaultTreeNode } from "@/lib/vault/tree";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -34,6 +35,7 @@ import { NoteEditor } from "@/components/editor/NoteEditor";
 import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
 import { AppSidebar, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
 import { CreateMenu } from "./CreateMenu";
+import { BacklinksPanel } from "./BacklinksPanel";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
@@ -458,6 +460,7 @@ export function VaultApp() {
   const [saving, setSaving] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
   // Incremented each time the user asks to save (Cmd/Ctrl+S); the active
@@ -835,6 +838,7 @@ export function VaultApp() {
 
   const activeNote = notes.find((n) => n.id === activeId);
   const activeTitle = activeNote?.title ?? (engine ? null : "Loading…");
+  const backlinks = activeId && engine ? engine.backlinksFor(activeId) : [];
   const pluginActiveNote: NoteContext | null = activeId
     ? { documentId: activeId, isGraph: activeNote?.isGraph ?? false }
     : null;
@@ -935,6 +939,35 @@ export function VaultApp() {
                 </Badge>
               )}
             </span>
+            {activeId && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      size="icon-lg"
+                      className="relative !size-11 !min-h-11 !min-w-11"
+                      aria-label="Show backlinks"
+                      aria-expanded={backlinksOpen}
+                      aria-haspopup="dialog"
+                      onClick={() => setBacklinksOpen(true)}
+                    >
+                      <Link2 />
+                      {backlinks.length > 0 && (
+                        <Badge
+                          aria-hidden="true"
+                          variant="secondary"
+                          className="pointer-events-none absolute -top-1 -right-1 min-w-5 px-1"
+                        >
+                          {backlinks.length > 99 ? "99+" : backlinks.length}
+                        </Badge>
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>Show backlinks</TooltipContent>
+              </Tooltip>
+            )}
             <ModeToggle />
             <CreateMenu
               onCreateNote={() => onCreateNote()}
@@ -988,6 +1021,16 @@ export function VaultApp() {
         </main>
       </SidebarInset>
 
+      {engine && activeId && (
+        <BacklinksPanel
+          open={backlinksOpen}
+          onOpenChange={setBacklinksOpen}
+          currentTitle={activeTitle ?? "Current note"}
+          backlinks={backlinks}
+          notes={notes}
+          onSelectNote={setActiveId}
+        />
+      )}
       {engine && (
         <CommandMenu
           open={commandOpen}

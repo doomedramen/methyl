@@ -1,6 +1,5 @@
 import MiniSearch, { type AsPlainObject } from "minisearch";
 import type { DocIndexEntry, ParsedDocument } from "@/lib/core/types";
-import type { VaultFileSystem } from "@/lib/vault/fs";
 import type { PersistedDocStore } from "@/lib/vault/store";
 
 const CACHE_ROOT = ".adhd/cache";
@@ -20,7 +19,7 @@ export const SEARCH_BOOST: Record<string, number> = {
 const SEARCHABLE_FIELDS = Object.keys(SEARCH_BOOST);
 const STORE_FIELDS = ["title", "path", "tags"];
 
-/** Storage needed by the derived search cache. */
+/** Storage needed by the derived indexes. */
 export interface SearchIndexStorage {
   readTextFile(path: string): Promise<string | null>;
   writeTextAtomic(path: string, text: string): Promise<void>;
@@ -154,11 +153,11 @@ export interface BacklinkEntry {
 
 /** Plain serialized maps per §13 — backlinks and small link graph. */
 export class DerivedIndexes {
-  private fs: VaultFileSystem;
+  private fs: SearchIndexStorage;
   private backlinks = new Map<string, BacklinkEntry[]>();
   private graphEdges = new Map<string, string[]>();
 
-  constructor(fs: VaultFileSystem) {
+  constructor(fs: SearchIndexStorage) {
     this.fs = fs;
   }
 
@@ -189,7 +188,9 @@ export class DerivedIndexes {
         if (!target || target === doc.id) continue;
         targets.push(target);
         const existing = this.backlinks.get(target) ?? [];
-        existing.push({ from: doc.id, fromTitle: doc.title });
+        if (!existing.some((entry) => entry.from === doc.id)) {
+          existing.push({ from: doc.id, fromTitle: doc.title });
+        }
         this.backlinks.set(target, existing);
       }
       const internal = doc.links

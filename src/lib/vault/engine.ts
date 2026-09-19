@@ -20,9 +20,11 @@ import {
 } from "@/lib/vault/compact";
 import { recordDiagnostic } from "@/lib/vault/diagnostics";
 import {
+  DerivedIndexes,
   SearchIndex,
   searchIndexStorageFromDocStore,
   toIndexedDocument,
+  type BacklinkEntry,
   type IndexedDocument,
 } from "@/lib/search/index";
 
@@ -79,8 +81,9 @@ export class VaultEngine {
    */
   private materializedPaths = new Map<string, string>();
   private readonly searchIndex: SearchIndex;
+  private readonly derivedIndexes: DerivedIndexes;
   private searchIndexReady = false;
-  private searchPersistChain: Promise<void> = Promise.resolve();
+  private indexPersistChain: Promise<void> = Promise.resolve();
 
   private constructor(
     tree: VaultTree,
@@ -92,7 +95,9 @@ export class VaultEngine {
     this.treeStore = treeStore;
     this.docStore = docStore;
     this.vaultId = vaultId;
-    this.searchIndex = new SearchIndex(searchIndexStorageFromDocStore(docStore));
+    const indexStorage = searchIndexStorageFromDocStore(docStore);
+    this.searchIndex = new SearchIndex(indexStorage);
+    this.derivedIndexes = new DerivedIndexes(indexStorage);
   }
 
   /**
@@ -151,7 +156,7 @@ export class VaultEngine {
     const tree = VaultTree.create();
     const engine = new VaultEngine(tree, treeStore, docStore, vaultId);
     await engine.persistTree();
-    await engine.initializeSearchIndex();
+    await engine.initializeIndexes();
     return engine;
   }
 
@@ -235,7 +240,7 @@ export class VaultEngine {
       });
     }
 
-    await engine.initializeSearchIndex();
+    await engine.initializeIndexes();
 
     return { engine, recovery };
   }
@@ -251,6 +256,11 @@ export class VaultEngine {
   /** Search note titles and Markdown content with MiniSearch ranking. */
   search(query: string, limit = 50): DocIndexEntry[] {
     return this.searchIndex.search(query, limit);
+  }
+
+  /** Return notes that contain a wikilink targeting this document. */
+  backlinksFor(documentId: string): BacklinkEntry[] {
+    return this.derivedIndexes.backlinksFor(documentId);
   }
 
   private indexedDocument(documentId: string): IndexedDocument | null {
@@ -271,20 +281,25 @@ export class VaultEngine {
       .filter((doc): doc is IndexedDocument => doc !== null);
   }
 
-  private async initializeSearchIndex(): Promise<void> {
+  private async initializeIndexes(): Promise<void> {
     // Load first so a corrupt/missing cache follows the same recovery path as
-    // the standalone SearchIndex API; current CRDT content always wins below.
-    await this.searchIndex.load();
-    this.searchIndex.replaceAll(this.allIndexedDocuments());
+    // the standalone index APIs; current CRDT content always wins below.
+    await Promise.all([this.searchIndex.load(), this.derivedIndexes.load()]);
+    const documents = this.allIndexedDocuments();
+    this.searchIndex.replaceAll(documents);
     await this.searchIndex.persist();
+    await this.derivedIndexes.build(documents);
     this.searchIndexReady = true;
   }
 
-  private queueSearchPersist(): Promise<void> {
-    this.searchPersistChain = this.searchPersistChain
-      .then(() => this.searchIndex.persist())
-      .catch((error) => console.error("[search] failed to persist index", error));
-    return this.searchPersistChain;
+  private queueIndexPersist(): Promise<void> {
+    this.indexPersistChain = this.indexPersistChain
+      .then(async () => {
+        await this.searchIndex.persist();
+        await this.derivedIndexes.build(this.allIndexedDocuments());
+      })
+      .catch((error) => console.error("[indexes] failed to persist derived indexes", error));
+    return this.indexPersistChain;
   }
 
   private indexSearchDocument(documentId: string): void {
@@ -293,10 +308,16 @@ export class VaultEngine {
     else this.searchIndex.remove(documentId);
   }
 
-  private async updateSearchDocument(documentId: string): Promise<void> {
+  private async updateIndexesForDocument(documentId: string): Promise<void> {
     if (!this.searchIndexReady) return;
     this.indexSearchDocument(documentId);
-    await this.queueSearchPersist();
+    await this.queueIndexPersist();
+  }
+
+  private async refreshIndexes(): Promise<void> {
+    if (!this.searchIndexReady) return;
+    this.searchIndex.replaceAll(this.allIndexedDocuments());
+    await this.queueIndexPersist();
   }
 
   /**
@@ -362,7 +383,7 @@ export class VaultEngine {
     await this.docStore.compact(documentId, snapBytes, persistedState);
     this.materializedPaths.set(documentId, filePath);
     await this.touchIndexEntry(filePath, documentId, markdown);
-    await this.updateSearchDocument(documentId);
+    await this.updateIndexesForDocument(documentId);
 
     return checkpoint;
   }
@@ -420,7 +441,7 @@ export class VaultEngine {
     }
     this.materializedPaths.set(documentId, newPath);
     await this.touchIndexEntry(newPath, documentId, content);
-    await this.updateSearchDocument(documentId);
+    await this.updateIndexesForDocument(documentId);
   }
 
   /**
@@ -752,6 +773,15 @@ export class VaultEngine {
 
     await this.persistTree();
     await this.saveDocIndex(finalIndex);
+    if (
+      report.edited.length > 0 ||
+      report.moved.length > 0 ||
+      report.copied.length > 0 ||
+      report.created.length > 0 ||
+      report.deleted.length > 0
+    ) {
+      await this.refreshIndexes();
+    }
     return report;
   }
 
@@ -893,7 +923,7 @@ export class VaultEngine {
         updateBytes: 0,
       },
     );
-    await this.updateSearchDocument(documentId);
+    await this.updateIndexesForDocument(documentId);
     return checkpoint;
   }
 
@@ -901,7 +931,7 @@ export class VaultEngine {
   async importDocumentUpdate(documentId: string, data: Uint8Array): Promise<void> {
     const doc = this.ensureDocument(documentId);
     doc.doc.import(data);
-    await this.updateSearchDocument(documentId);
+    await this.updateIndexesForDocument(documentId);
   }
 
   /**
@@ -1041,7 +1071,7 @@ export class VaultEngine {
       await this.materializedRemove(oldPath);
       await this.dropIndexEntry(oldPath);
     }
-    await this.updateSearchDocument(documentId);
+    await this.updateIndexesForDocument(documentId);
     await this.diag("delete-document", { detail: `${documentId} ${oldPath ?? ""}`.trim() });
   }
 
@@ -1134,7 +1164,7 @@ export class VaultEngine {
       await this.materializedRemove(path);
       await this.dropIndexEntry(path);
     }
-    for (const docId of docIds) await this.updateSearchDocument(docId);
+    await this.refreshIndexes();
     await this.diag("delete-folder", {
       counts: { docs: docIds.length },
       detail: `${treeId} ${oldPaths.slice(0, 10).join(",")}`,
