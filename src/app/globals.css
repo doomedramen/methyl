@@ -315,46 +315,14 @@
 }
 
 /*
- * iOS 27 adds a system scroll-edge blur at the top of installed web apps.
- * Safari does not expose a web control for that effect, so give it a small
- * opaque buffer that matches the active theme instead of letting it wash out
- * the first row of app content. Keep this scoped to touch standalone WebKit
- * apps so desktop PWAs and ordinary Safari pages keep their existing layout.
- */
-@supports (-webkit-touch-callout: none) {
-  @media (display-mode: standalone) and (pointer: coarse) {
-    body {
-      padding-block-start: 16px;
-    }
-  }
-}
-
-/*
  * Window Controls Overlay (desktop PWA, display_override in the manifest):
  * when WCO is active the title bar is gone and the browser-drawn window
  * controls float over the top-left/right of the page instead, exposing
  * env(titlebar-area-*). Unset (0) everywhere else. The notch inset is
- * handled on body, so it isn't added here a second time.
+ * handled by the browser's normal standalone safe-area behavior on mobile.
  */
 .app-titlebar {
   padding-top: env(titlebar-area-height, 0px);
-}
-
-/*
- * The body buffer above is the iOS blur protection. This small title-bar shim
- * only aligns the main 44px controls with the sidebar's pt-6 header row; it
- * is not a second safe-area inset. Keep the sidebar's own sheet inset intact.
- */
-@supports (-webkit-touch-callout: none) {
-  @media (display-mode: standalone) and (pointer: coarse) {
-    .app-titlebar {
-      --ios-pwa-header-bridge: 3px;
-      min-height: calc(3.5rem + var(--ios-pwa-header-bridge));
-      padding-top: calc(
-        env(titlebar-area-height, 0px) + var(--ios-pwa-header-bridge)
-      );
-    }
-  }
 }
 
 .app-titlebar.wco-drag {

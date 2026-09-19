@@ -29,8 +29,8 @@ export const metadata: Metadata = {
     ],
     apple: "/icons/apple-touch-icon.png",
   },
-  // No black-translucent / viewport-fit=cover: iOS 26+ blurs anything drawn
-  // under the status bar, so the app stays inside the safe area.
+  // Keep the default standalone safe-area behavior; do not opt into
+  // edge-to-edge rendering with black-translucent or viewport-fit=cover.
   appleWebApp: { capable: true, title: "Methyl" },
 };
 
