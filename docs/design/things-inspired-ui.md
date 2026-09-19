@@ -1,5 +1,7 @@
 # Methyl: a quieter place to think
 
+This records the first design pass. The [interaction quality implementation specification](../specs/2026-09-19-notebook-interaction-quality.md) supersedes its implementation decisions where they differ.
+
 ## Research, 19 September 2026
 
 The reference is Cultured Code's approach to personal software. Methyl remains a Markdown notebook with folders, linked notes, graphs, and offline storage.
