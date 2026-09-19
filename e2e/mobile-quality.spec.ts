@@ -58,6 +58,40 @@ test.describe("mobile quality", () => {
     await expectNoHorizontalOverflow(page);
   });
 
+  test("standalone main header aligns with the mobile sidebar header row", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openApp(page);
+
+    // Chromium cannot activate iOS's -webkit-touch-callout/display-mode
+    // combination, so mirror the standalone rules here to regression-test
+    // the geometry without pretending this is an iOS rendering test.
+    await page.addStyleTag({
+      content: `
+        body { padding-block-start: 16px !important; }
+        .app-titlebar {
+          --ios-pwa-header-bridge: 3px !important;
+          min-height: calc(3.5rem + var(--ios-pwa-header-bridge)) !important;
+          padding-top: var(--ios-pwa-header-bridge) !important;
+        }
+      `,
+    });
+
+    await page.locator('[data-slot="sidebar-trigger"]').click();
+    const sidebar = page.locator('[data-sidebar="sidebar"][data-mobile="true"]');
+    await expect(sidebar).toBeVisible();
+
+    const mainHeaderControl = page.locator('[data-slot="sidebar-trigger"]');
+    const sidebarHeaderControl = sidebar.getByRole("button", { name: "New folder" });
+    const [mainBox, sidebarBox] = await Promise.all([
+      mainHeaderControl.boundingBox(),
+      sidebarHeaderControl.boundingBox(),
+    ]);
+
+    expect(mainBox, "main header control should be visible").not.toBeNull();
+    expect(sidebarBox, "sidebar header control should be visible").not.toBeNull();
+    expect(Math.abs((mainBox?.y ?? 0) - (sidebarBox?.y ?? 0))).toBeLessThanOrEqual(1);
+  });
+
   test("note editing stays within the viewport in portrait and landscape", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 });
     await openApp(page);

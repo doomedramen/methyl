@@ -341,15 +341,14 @@
 }
 
 /*
- * The iOS 27 scroll-edge effect also covers viewport-edge header controls.
- * Keep the buffer inside the main header so its opaque background extends
- * through the affected edge and the controls sit below it. The sidebar has
- * its own lower sheet inset and should not be shifted by this adjustment.
+ * The body buffer above is the iOS blur protection. This small title-bar shim
+ * only aligns the main 44px controls with the sidebar's pt-6 header row; it
+ * is not a second safe-area inset. Keep the sidebar's own sheet inset intact.
  */
 @supports (-webkit-touch-callout: none) {
   @media (display-mode: standalone) and (pointer: coarse) {
     .app-titlebar {
-      --ios-pwa-header-bridge: 12px;
+      --ios-pwa-header-bridge: 3px;
       min-height: calc(3.5rem + var(--ios-pwa-header-bridge));
       padding-top: calc(
         env(titlebar-area-height, 0px) + var(--ios-pwa-header-bridge)
