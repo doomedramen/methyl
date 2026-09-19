@@ -118,6 +118,7 @@ interface AppSidebarProps {
   /** Passed through to the footer status popover for the diagnostics copy action. */
   engine: VaultEngine | null;
   onCreate: (parentTreeId?: TreeID) => void;
+  onCreateFromTemplate: (parentTreeId?: TreeID) => void;
   onCreateGraph: (parentTreeId?: TreeID) => void;
   onCreateFolder: (parentTreeId: TreeID | undefined, name: string) => void;
   onSelect: (id: string) => void;
@@ -315,6 +316,7 @@ export function AppSidebar({
   activeId,
   engine,
   onCreate,
+  onCreateFromTemplate,
   onCreateGraph,
   onCreateFolder,
   onSelect,
@@ -719,6 +721,7 @@ export function AppSidebar({
           </Tooltip>
           <CreateMenu
             onCreateNote={() => onCreate()}
+            onCreateFromTemplate={() => onCreateFromTemplate()}
             onCreateGraph={() => onCreateGraph()}
             disabled={!canWrite}
             className="size-11 text-muted-foreground md:size-8"
@@ -835,6 +838,7 @@ export function AppSidebar({
                             ),
                         )}
                         onCreateNote={onCreate}
+                        onCreateFromTemplate={onCreateFromTemplate}
                         onCreateFolder={(parent) => {
                           setNewFolderParent(parent);
                           onNewFolderOpenChange(true);
@@ -952,6 +956,7 @@ interface RowProps {
   isDragging: boolean;
   isDimmed: boolean;
   onCreateNote: (parentTreeId?: TreeID) => void;
+  onCreateFromTemplate: (parentTreeId?: TreeID) => void;
   onCreateFolder: (parentTreeId?: TreeID) => void;
   onRenameNoteRequest: (row: NoteRow) => void;
   onDeleteNoteRequest: (row: NoteRow) => void;
@@ -969,6 +974,7 @@ function Row({
   isDragging,
   isDimmed,
   onCreateNote,
+  onCreateFromTemplate,
   onCreateFolder,
   onRenameNoteRequest,
   onDeleteNoteRequest,
@@ -1050,6 +1056,10 @@ function Row({
                       <Plus data-icon="inline-start" />
                       New note
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onCreateFromTemplate(row.treeId)}>
+                      <Plus data-icon="inline-start" />
+                      From template
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onCreateFolder(row.treeId)}>
                       <FolderPlus data-icon="inline-start" />
                       New folder
@@ -1074,6 +1084,10 @@ function Row({
             <ContextMenuItem onClick={() => onCreateNote(row.treeId)}>
               <Plus data-icon="inline-start" />
               New note
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onCreateFromTemplate(row.treeId)}>
+              <Plus data-icon="inline-start" />
+              From template
             </ContextMenuItem>
             <ContextMenuItem onClick={() => onCreateFolder(row.treeId)}>
               <FolderPlus data-icon="inline-start" />

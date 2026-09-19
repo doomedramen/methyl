@@ -28,6 +28,11 @@ export interface NoteContext {
   isGraph: boolean;
 }
 
+export interface NoteCreationOptions {
+  name?: string;
+  markdown?: string;
+}
+
 export interface Command {
   id: string;
   name: string;
@@ -63,7 +68,7 @@ export interface App {
     setActiveEditorView?(view: EditorView | null): void;
   };
   vault: {
-    createNote(): Promise<string>;
+    createNote(options?: NoteCreationOptions): Promise<string>;
     createGraph(): Promise<string>;
     createFolder(name: string): Promise<void>;
     read(id: string): Promise<string | null>;

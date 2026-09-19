@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Plus, Workflow } from "lucide-react";
+import { FilePlus, FileText, Plus, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,23 +10,28 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useTemplatesEnabled } from "@/components/plugins/TemplatesDialog";
 
 interface CreateMenuProps {
   onCreateNote: () => void;
+  onCreateFromTemplate?: () => void;
   onCreateGraph: () => void;
   disabled?: boolean;
   className?: string;
   variant?: "default" | "outline" | "secondary" | "ghost" | "destructive" | "link";
 }
 
-/** Shared add control for creating notes and graphs. */
+/** Shared add control for creating notes, template notes, and graphs. */
 export function CreateMenu({
   onCreateNote,
+  onCreateFromTemplate,
   onCreateGraph,
   disabled,
   className,
   variant = "ghost",
 }: CreateMenuProps) {
+  const templatesEnabled = useTemplatesEnabled();
+
   return (
     <DropdownMenu>
       <Tooltip>
@@ -55,6 +60,12 @@ export function CreateMenu({
           <FileText data-icon="inline-start" />
           New note
         </DropdownMenuItem>
+        {templatesEnabled && onCreateFromTemplate ? (
+          <DropdownMenuItem onClick={onCreateFromTemplate}>
+            <FilePlus data-icon="inline-start" />
+            From template
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem onClick={onCreateGraph}>
           <Workflow data-icon="inline-start" />
           New graph

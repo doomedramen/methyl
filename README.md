@@ -127,10 +127,14 @@ default, cross-origin requests are rejected by the browser.
 
 Methyl has a small, Obsidian-inspired plugin system. A plugin registers editor
 extensions, commands (with optional hotkeys) and completion sources against an
-`App` facade — it never touches app internals directly. Four are bundled and
-enabled by default: Core Commands, Core Live Preview, Core Wikilinks, and Word
-Count (adds a "Word count: Show" command, default hotkey <kbd>⌘</kbd>/<kbd>Ctrl</kbd>
-+ <kbd>Alt</kbd> + <kbd>W</kbd>).
+`App` facade — it never touches app internals directly. Five are bundled and
+enabled by default: Core Commands, Core Live Preview, Core Templates, Core
+Wikilinks, and Word Count (adds a "Word count: Show" command, default hotkey
+<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>W</kbd>).
+
+Core Templates lets you define reusable Markdown and choose **From template**
+from any new-note menu. Template definitions are stored in the plugin's vault
+data file.
 
 - **Plugins: Manage** (via <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>, or the
   puzzle-piece icon) opens a dialog listing every bundled plugin with an

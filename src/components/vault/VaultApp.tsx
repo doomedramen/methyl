@@ -49,7 +49,7 @@ import { CommandRegistry } from "@/lib/plugins/commands";
 import { vaultPluginStorage } from "@/lib/plugins/vault-storage";
 import { InMemoryPluginStorage } from "@/lib/plugins/storage";
 import { PluginHostProvider } from "@/lib/plugins/react";
-import type { App, NoteContext } from "@/lib/plugins/api";
+import type { App, NoteContext, NoteCreationOptions } from "@/lib/plugins/api";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSync } from "@/lib/browser/sync-context";
 import { useTheme } from "next-themes";
@@ -58,6 +58,8 @@ import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
 import type { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikilink";
 import { PluginsDialog } from "@/components/plugins/PluginsDialog";
+import { TemplatesDialog, type TemplateDialogMode } from "@/components/plugins/TemplatesDialog";
+import type { Template } from "@/plugins/core-templates";
 import type { EditorView } from "@codemirror/view";
 
 /**
@@ -169,6 +171,8 @@ function VaultPluginBridge({
   onCreateGraph,
   onCreateFolder,
   onManagePlugins,
+  onManageTemplates,
+  onCreateFromTemplate,
   activeNote,
   onOpenNote,
   onNotesChanged,
@@ -176,11 +180,13 @@ function VaultPluginBridge({
   children,
 }: {
   engine: VaultEngine | null;
-  onCreateNote: () => Promise<string> | void;
+  onCreateNote: (options?: NoteCreationOptions) => Promise<string> | string | void;
   onCreateGraph: () => Promise<string> | void;
   onCreateFolder: () => void;
   /** Opens `PluginsDialog` (Task 11); a no-op until that dialog exists. */
   onManagePlugins?: () => void;
+  onManageTemplates?: () => void;
+  onCreateFromTemplate?: () => void;
   /** The single open note (this app shows one editor pane at a time). */
   activeNote: NoteContext | null;
   onOpenNote: (id: string) => void;
@@ -253,6 +259,14 @@ function VaultPluginBridge({
             onManagePlugins?.();
             return;
           }
+          if (name === "templates") {
+            onManageTemplates?.();
+            return;
+          }
+          if (name === "templates:create") {
+            onCreateFromTemplate?.();
+            return;
+          }
         },
         resolveWikilink: (target: string) =>
           engine && wikilinkModRef.current
@@ -282,9 +296,8 @@ function VaultPluginBridge({
         },
       },
       vault: {
-        createNote: async () => {
-          await onCreateNote();
-          return "";
+        createNote: async (options?: NoteCreationOptions) => {
+          return (await onCreateNote(options)) ?? "";
         },
         createGraph: async () => {
           await onCreateGraph();
@@ -307,8 +320,10 @@ function VaultPluginBridge({
       onCreateGraph,
       onCreateNote,
       onManagePlugins,
+      onManageTemplates,
       onNotesChanged,
       onOpenNote,
+      onCreateFromTemplate,
       readOnly,
       setSyncDialogOpen,
       toggleSidebar,
@@ -463,6 +478,8 @@ export function VaultApp() {
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
+  const [templateDialogMode, setTemplateDialogMode] = useState<TemplateDialogMode | null>(null);
+  const [templateParentTreeId, setTemplateParentTreeId] = useState<TreeID | undefined>(undefined);
   // Incremented each time the user asks to save (Cmd/Ctrl+S); the active
   // editor watches it and flushes immediately.
   const [saveRequest, setSaveRequest] = useState(0);
@@ -617,18 +634,36 @@ export function VaultApp() {
   }, [engine]);
 
   const onCreateNote = useCallback(
-    (parentTreeId?: TreeID) => {
-      if (!engine || !requireWriter()) return;
+    (parentTreeId?: TreeID, options: NoteCreationOptions = {}): string => {
+      if (!engine || !requireWriter()) return "";
       // Tree auto-suffixes on a name clash within the folder (Untitled.md
       // -> Untitled 2.md -> ...), so it's always safe to ask for the same
       // base name.
-      const doc = engine.createDocument(parentTreeId, "Untitled.md", "");
+      const doc = engine.createDocument(parentTreeId, options.name ?? "Untitled.md", options.markdown ?? "");
       setActiveId(doc.id);
       void engine.persistTreeIncremental();
       void engine.persistDocumentIncremental(doc.id);
       refreshNotes(engine);
+      return doc.id;
     },
     [engine, refreshNotes],
+  );
+
+  const openTemplates = useCallback((mode: TemplateDialogMode, parentTreeId?: TreeID) => {
+    setTemplateParentTreeId(parentTreeId);
+    setTemplateDialogMode(mode);
+  }, []);
+
+  const onTemplateChosen = useCallback(
+    (template: Template) => {
+      onCreateNote(templateParentTreeId, { markdown: template.content });
+    },
+    [onCreateNote, templateParentTreeId],
+  );
+
+  const createNoteForPlugin = useCallback(
+    (options?: NoteCreationOptions) => onCreateNote(undefined, options),
+    [onCreateNote],
   );
 
   const onCreateGraph = useCallback(
@@ -857,7 +892,7 @@ export function VaultApp() {
     <SidebarProvider className="h-full">
     <VaultPluginBridge
       engine={engine}
-      onCreateNote={onCreateNote}
+      onCreateNote={createNoteForPlugin}
       onCreateGraph={onCreateGraph}
       onCreateFolder={() => setNewFolderOpen(true)}
       activeNote={pluginActiveNote}
@@ -865,12 +900,15 @@ export function VaultApp() {
       onNotesChanged={() => engine && refreshNotes(engine)}
       readOnly={!isWriterTab}
       onManagePlugins={() => setPluginsDialogOpen(true)}
+      onManageTemplates={() => openTemplates("manage")}
+      onCreateFromTemplate={() => openTemplates("create")}
     >
       <AppSidebar
         rows={rows}
         activeId={activeId}
         engine={engine}
         onCreate={onCreateNote}
+        onCreateFromTemplate={(parentTreeId) => openTemplates("create", parentTreeId)}
         onCreateGraph={onCreateGraph}
         onCreateFolder={onCreateFolder}
         onSelect={setActiveId}
@@ -971,6 +1009,7 @@ export function VaultApp() {
             <ModeToggle />
             <CreateMenu
               onCreateNote={() => onCreateNote()}
+              onCreateFromTemplate={() => openTemplates("create")}
               onCreateGraph={() => onCreateGraph()}
               disabled={!engine?.releaseWriterLock}
               variant="outline"
@@ -1041,6 +1080,18 @@ export function VaultApp() {
         />
       )}
       <PluginsDialog open={pluginsDialogOpen} onOpenChange={setPluginsDialogOpen} />
+      <TemplatesDialog
+        open={templateDialogMode !== null}
+        mode={templateDialogMode ?? "create"}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTemplateDialogMode(null);
+            setTemplateParentTreeId(undefined);
+          }
+        }}
+        onCreate={onTemplateChosen}
+        onManage={() => setTemplateDialogMode("manage")}
+      />
     </VaultPluginBridge>
     </SidebarProvider>
     </SyncProvider>
