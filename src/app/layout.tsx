@@ -21,11 +21,7 @@ export const metadata: Metadata = {
   description: "Self-hostable, offline-first Markdown vault",
   manifest: "/manifest.webmanifest",
   icons: {
-    // The capsule uses brighter amber on dark browser chrome.
-    icon: [
-      { url: "/icon.svg", media: "(prefers-color-scheme: light)" },
-      { url: "/icon-dark.svg", media: "(prefers-color-scheme: dark)" },
-    ],
+    icon: "/icons/icon-512.png",
     apple: "/icons/apple-touch-icon.png",
   },
   // Keep the default standalone safe-area behavior; do not opt into

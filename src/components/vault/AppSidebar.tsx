@@ -737,7 +737,7 @@ export function AppSidebar({
     <Sidebar variant="sidebar" className={cn("methyl-sidebar", activeDragId && "select-none touch-none")}>
       <SidebarHeader className="methyl-sidebar-header flex-row items-center justify-between gap-2 px-5 pt-6 md:pt-5">
         <div className="flex min-w-0 items-center gap-2">
-          <img src="/icon.svg" alt="" className="size-6 shrink-0 rounded-md" />
+          <img src="/icons/icon-192.png" alt="" className="size-6 shrink-0 rounded-md" />
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>
         <div className="flex items-center gap-2">
