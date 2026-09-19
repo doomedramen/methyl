@@ -53,8 +53,7 @@ test.describe("mobile quality", () => {
     await expectTouchTarget(sidebar.getByRole("button", { name: "Add" }), "sidebar add");
     await expectTouchTarget(sidebar.getByRole("button", { name: "Search notes" }), "search notes");
 
-    const close = sidebar.getByRole("button", { name: "Close sidebar" });
-    await expectTouchTarget(close, "sidebar close");
+    await expect(sidebar.locator('button[aria-label="Close sidebar"]')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
 

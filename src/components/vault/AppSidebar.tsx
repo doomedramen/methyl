@@ -16,7 +16,6 @@ import {
   Search,
   Trash2,
   Workflow,
-  X,
 } from "lucide-react";
 import {
   DndContext,
@@ -70,6 +69,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PwaStatus } from "@/components/pwa/PwaStatus";
 import { CreateMenu } from "./CreateMenu";
+import type { CreateHandler } from "./create-actions";
 import {
   RenameNoteDialog,
   DeleteNoteAlert,
@@ -117,10 +117,7 @@ interface AppSidebarProps {
   activeId: string | null;
   /** Passed through to the footer status popover for the diagnostics copy action. */
   engine: VaultEngine | null;
-  onCreate: (parentTreeId?: TreeID) => void;
-  onCreateFromTemplate: (parentTreeId?: TreeID) => void;
-  onCreateGraph: (parentTreeId?: TreeID) => void;
-  onCreateFolder: (parentTreeId: TreeID | undefined, name: string) => void;
+  onCreate: CreateHandler;
   onSelect: (id: string) => void;
   onRenameNote: (id: string, title: string) => void;
   onDeleteNote: (id: string) => void;
@@ -316,9 +313,6 @@ export function AppSidebar({
   activeId,
   engine,
   onCreate,
-  onCreateFromTemplate,
-  onCreateGraph,
-  onCreateFolder,
   onSelect,
   onRenameNote,
   onDeleteNote,
@@ -335,6 +329,14 @@ export function AppSidebar({
   const [renameFolderTarget, setRenameFolderTarget] = useState<FolderRow | null>(null);
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<FolderRow | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<TreeID | undefined>(undefined);
+
+  const requestNewFolder = useCallback(
+    (parentTreeId?: TreeID) => {
+      setNewFolderParent(parentTreeId);
+      onNewFolderOpenChange(true);
+    },
+    [onNewFolderOpenChange],
+  );
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   useEffect(() => {
@@ -678,7 +680,7 @@ export function AppSidebar({
   const isEmpty = rows.length === 0;
 
   // Create actions no-op before the vault engine holds the writer lock
-  // (VaultApp's onCreate* guard on a missing engine/lock), so the buttons
+  // (VaultApp's creation handler guards on a missing engine/lock), so the buttons
   // that surface them stay disabled until writing is actually possible.
   const canWrite = Boolean(engine?.releaseWriterLock);
 
@@ -690,25 +692,13 @@ export function AppSidebar({
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon-lg"
-            className="size-11 md:hidden"
-            onClick={() => setOpenMobile(false)}
-            aria-label="Close sidebar"
-          >
-            <X />
-          </Button>
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => {
-                    setNewFolderParent(undefined);
-                    onNewFolderOpenChange(true);
-                  }}
+                  onClick={() => requestNewFolder()}
                   aria-label="New folder"
                   className="size-11 text-muted-foreground md:size-8"
                   disabled={!canWrite}
@@ -720,9 +710,7 @@ export function AppSidebar({
             <TooltipContent>New folder</TooltipContent>
           </Tooltip>
           <CreateMenu
-            onCreateNote={() => onCreate()}
-            onCreateFromTemplate={() => onCreateFromTemplate()}
-            onCreateGraph={() => onCreateGraph()}
+            onCreate={onCreate}
             disabled={!canWrite}
             className="size-11 text-muted-foreground md:size-8"
           />
@@ -837,12 +825,8 @@ export function AppSidebar({
                               f.row.treeId,
                             ),
                         )}
-                        onCreateNote={onCreate}
-                        onCreateFromTemplate={onCreateFromTemplate}
-                        onCreateFolder={(parent) => {
-                          setNewFolderParent(parent);
-                          onNewFolderOpenChange(true);
-                        }}
+                        onCreate={onCreate}
+                        onRequestNewFolder={requestNewFolder}
                         onRenameNoteRequest={setRenameTarget}
                         onDeleteNoteRequest={setDeleteTarget}
                         onRenameFolderRequest={setRenameFolderTarget}
@@ -940,7 +924,7 @@ export function AppSidebar({
       <NewFolderDialog
         open={newFolderOpen}
         onOpenChange={onNewFolderOpenChange}
-        onCreate={(name) => onCreateFolder(newFolderParent, name)}
+        onCreate={(name) => onCreate({ kind: "folder", parentTreeId: newFolderParent, name })}
       />
     </Sidebar>
   );
@@ -955,9 +939,8 @@ interface RowProps {
   placement: SidebarPlacement | null;
   isDragging: boolean;
   isDimmed: boolean;
-  onCreateNote: (parentTreeId?: TreeID) => void;
-  onCreateFromTemplate: (parentTreeId?: TreeID) => void;
-  onCreateFolder: (parentTreeId?: TreeID) => void;
+  onCreate: CreateHandler;
+  onRequestNewFolder: (parentTreeId?: TreeID) => void;
   onRenameNoteRequest: (row: NoteRow) => void;
   onDeleteNoteRequest: (row: NoteRow) => void;
   onRenameFolderRequest: (row: FolderRow) => void;
@@ -973,9 +956,8 @@ function Row({
   placement,
   isDragging,
   isDimmed,
-  onCreateNote,
-  onCreateFromTemplate,
-  onCreateFolder,
+  onCreate,
+  onRequestNewFolder,
   onRenameNoteRequest,
   onDeleteNoteRequest,
   onRenameFolderRequest,
@@ -1052,15 +1034,15 @@ function Row({
                     }
                   />
                   <DropdownMenuContent align="start" side="right">
-                    <DropdownMenuItem onClick={() => onCreateNote(row.treeId)}>
+                    <DropdownMenuItem onClick={() => onCreate({ kind: "note", parentTreeId: row.treeId })}>
                       <Plus data-icon="inline-start" />
                       New note
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onCreateFromTemplate(row.treeId)}>
+                    <DropdownMenuItem onClick={() => onCreate({ kind: "template", parentTreeId: row.treeId })}>
                       <Plus data-icon="inline-start" />
                       From template
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onCreateFolder(row.treeId)}>
+                    <DropdownMenuItem onClick={() => onRequestNewFolder(row.treeId)}>
                       <FolderPlus data-icon="inline-start" />
                       New folder
                     </DropdownMenuItem>
@@ -1081,15 +1063,15 @@ function Row({
             }
           />
           <ContextMenuContent>
-            <ContextMenuItem onClick={() => onCreateNote(row.treeId)}>
+            <ContextMenuItem onClick={() => onCreate({ kind: "note", parentTreeId: row.treeId })}>
               <Plus data-icon="inline-start" />
               New note
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => onCreateFromTemplate(row.treeId)}>
+            <ContextMenuItem onClick={() => onCreate({ kind: "template", parentTreeId: row.treeId })}>
               <Plus data-icon="inline-start" />
               From template
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => onCreateFolder(row.treeId)}>
+            <ContextMenuItem onClick={() => onRequestNewFolder(row.treeId)}>
               <FolderPlus data-icon="inline-start" />
               New folder
             </ContextMenuItem>

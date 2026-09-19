@@ -7,7 +7,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
 
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useEdgeSwipeToOpen } from "@/hooks/use-edge-swipe"
+import { useEdgeSwipeToClose, useEdgeSwipeToOpen } from "@/hooks/use-edge-swipe"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
@@ -98,6 +98,12 @@ function SidebarProvider({
     edge: "left",
     enabled: isMobile && !openMobile,
     onOpen: () => setOpenMobile(true),
+  })
+
+  useEdgeSwipeToClose({
+    edge: "left",
+    enabled: isMobile && openMobile,
+    onClose: () => setOpenMobile(false),
   })
 
   // Adds a keyboard shortcut to toggle the sidebar.

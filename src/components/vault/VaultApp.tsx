@@ -61,6 +61,7 @@ import { PluginsDialog } from "@/components/plugins/PluginsDialog";
 import { TemplatesDialog, type TemplateDialogMode } from "@/components/plugins/TemplatesDialog";
 import type { Template } from "@/plugins/core-templates";
 import type { EditorView } from "@codemirror/view";
+import type { CreateHandler, CreateRequest } from "./create-actions";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -167,12 +168,11 @@ function findFolder(rows: SidebarRow[], treeId: TreeID): FolderRow | undefined {
  */
 function VaultPluginBridge({
   engine,
-  onCreateNote,
-  onCreateGraph,
-  onCreateFolder,
+  onCreate,
+  onOpenNewFolder,
   onManagePlugins,
   onManageTemplates,
-  onCreateFromTemplate,
+  onOpenTemplatePicker,
   activeNote,
   onOpenNote,
   onNotesChanged,
@@ -180,13 +180,12 @@ function VaultPluginBridge({
   children,
 }: {
   engine: VaultEngine | null;
-  onCreateNote: (options?: NoteCreationOptions) => Promise<string> | string | void;
-  onCreateGraph: () => Promise<string> | void;
-  onCreateFolder: () => void;
+  onCreate: CreateHandler;
+  onOpenNewFolder: () => void;
   /** Opens `PluginsDialog` (Task 11); a no-op until that dialog exists. */
   onManagePlugins?: () => void;
   onManageTemplates?: () => void;
-  onCreateFromTemplate?: () => void;
+  onOpenTemplatePicker?: () => void;
   /** The single open note (this app shows one editor pane at a time). */
   activeNote: NoteContext | null;
   onOpenNote: (id: string) => void;
@@ -264,7 +263,7 @@ function VaultPluginBridge({
             return;
           }
           if (name === "templates:create") {
-            onCreateFromTemplate?.();
+            onOpenTemplatePicker?.();
             return;
           }
         },
@@ -297,14 +296,17 @@ function VaultPluginBridge({
       },
       vault: {
         createNote: async (options?: NoteCreationOptions) => {
-          return (await onCreateNote(options)) ?? "";
+          return (await onCreate({ kind: "note", options })) ?? "";
         },
         createGraph: async () => {
-          await onCreateGraph();
-          return "";
+          return (await onCreate({ kind: "graph" })) ?? "";
         },
-        createFolder: async () => {
-          onCreateFolder();
+        createFolder: async (name: string) => {
+          if (!name.trim()) {
+            onOpenNewFolder();
+            return;
+          }
+          await onCreate({ kind: "folder", name });
         },
         read: async () => null,
         list: () => [],
@@ -316,14 +318,13 @@ function VaultPluginBridge({
       commandRegistry,
       engine,
       notify,
-      onCreateFolder,
-      onCreateGraph,
-      onCreateNote,
+      onCreate,
       onManagePlugins,
       onManageTemplates,
       onNotesChanged,
+      onOpenNewFolder,
       onOpenNote,
-      onCreateFromTemplate,
+      onOpenTemplatePicker,
       readOnly,
       setSyncDialogOpen,
       toggleSidebar,
@@ -633,7 +634,7 @@ export function VaultApp() {
     return true;
   }, [engine]);
 
-  const onCreateNote = useCallback(
+  const createNote = useCallback(
     (parentTreeId?: TreeID, options: NoteCreationOptions = {}): string => {
       if (!engine || !requireWriter()) return "";
       // Tree auto-suffixes on a name clash within the folder (Untitled.md
@@ -646,7 +647,7 @@ export function VaultApp() {
       refreshNotes(engine);
       return doc.id;
     },
-    [engine, refreshNotes],
+    [engine, refreshNotes, requireWriter],
   );
 
   const openTemplates = useCallback((mode: TemplateDialogMode, parentTreeId?: TreeID) => {
@@ -656,30 +657,26 @@ export function VaultApp() {
 
   const onTemplateChosen = useCallback(
     (template: Template) => {
-      onCreateNote(templateParentTreeId, { markdown: template.content });
+      createNote(templateParentTreeId, { markdown: template.content });
     },
-    [onCreateNote, templateParentTreeId],
+    [createNote, templateParentTreeId],
   );
 
-  const createNoteForPlugin = useCallback(
-    (options?: NoteCreationOptions) => onCreateNote(undefined, options),
-    [onCreateNote],
-  );
-
-  const onCreateGraph = useCallback(
-    (parentTreeId?: TreeID) => {
-      if (!engine || !requireWriter()) return;
+  const createGraph = useCallback(
+    (parentTreeId?: TreeID): string => {
+      if (!engine || !requireWriter()) return "";
       const doc = engine.createDocument(parentTreeId, "Untitled Graph.md", emptyGraphMarkdown());
       setActiveId(doc.id);
       void engine.persistTreeIncremental();
       void engine.persistDocumentIncremental(doc.id);
       refreshNotes(engine);
+      return doc.id;
     },
-    [engine, refreshNotes],
+    [engine, refreshNotes, requireWriter],
   );
 
-  const onCreateFolder = useCallback(
-    (parentTreeId: TreeID | undefined, name: string) => {
+  const createFolder = useCallback(
+    (parentTreeId: TreeID | undefined, name: string): void => {
       if (!engine || !requireWriter()) return;
       try {
         engine.createFolder(parentTreeId, name);
@@ -691,7 +688,25 @@ export function VaultApp() {
         toast.error("Couldn't create folder");
       }
     },
-    [engine, refreshNotes],
+    [engine, refreshNotes, requireWriter],
+  );
+
+  const onCreate = useCallback<CreateHandler>(
+    (request: CreateRequest): string => {
+      if (request.kind === "template") {
+        openTemplates("create", request.parentTreeId);
+        return "";
+      }
+      if (request.kind === "graph") {
+        return createGraph(request.parentTreeId);
+      }
+      if (request.kind === "folder") {
+        createFolder(request.parentTreeId, request.name);
+        return "";
+      }
+      return createNote(request.parentTreeId, request.options);
+    },
+    [createFolder, createGraph, createNote, openTemplates],
   );
 
   // OS capture entry points (SPEC: shortcuts, share target, file handlers)
@@ -724,11 +739,11 @@ export function VaultApp() {
     // instead of piling onto the one this effect ran in.
     if (action === "new") {
       actionHandled.current = true;
-      queueMicrotask(onCreateNote);
+      queueMicrotask(() => onCreate({ kind: "note" }));
       stripAction();
     } else if (action === "new-graph") {
       actionHandled.current = true;
-      queueMicrotask(onCreateGraph);
+      queueMicrotask(() => onCreate({ kind: "graph" }));
       stripAction();
     } else if (action === "search") {
       actionHandled.current = true;
@@ -759,7 +774,7 @@ export function VaultApp() {
         }
       })();
     }
-  }, [engine, onCreateNote, onCreateGraph, refreshNotes]);
+  }, [engine, onCreate, refreshNotes]);
 
   // File double-clicked/"Open with"-ed on the OS (manifest.webmanifest's
   // `file_handlers`) arrives here instead of `?action`'s query string —
@@ -892,25 +907,21 @@ export function VaultApp() {
     <SidebarProvider className="h-full">
     <VaultPluginBridge
       engine={engine}
-      onCreateNote={createNoteForPlugin}
-      onCreateGraph={onCreateGraph}
-      onCreateFolder={() => setNewFolderOpen(true)}
+      onCreate={onCreate}
+      onOpenNewFolder={() => setNewFolderOpen(true)}
       activeNote={pluginActiveNote}
       onOpenNote={setActiveId}
       onNotesChanged={() => engine && refreshNotes(engine)}
       readOnly={!isWriterTab}
       onManagePlugins={() => setPluginsDialogOpen(true)}
       onManageTemplates={() => openTemplates("manage")}
-      onCreateFromTemplate={() => openTemplates("create")}
+      onOpenTemplatePicker={() => openTemplates("create")}
     >
       <AppSidebar
         rows={rows}
         activeId={activeId}
         engine={engine}
-        onCreate={onCreateNote}
-        onCreateFromTemplate={(parentTreeId) => openTemplates("create", parentTreeId)}
-        onCreateGraph={onCreateGraph}
-        onCreateFolder={onCreateFolder}
+        onCreate={onCreate}
         onSelect={setActiveId}
         onRenameNote={onRenameNote}
         onDeleteNote={onDeleteNote}
@@ -1008,9 +1019,7 @@ export function VaultApp() {
             )}
             <ModeToggle />
             <CreateMenu
-              onCreateNote={() => onCreateNote()}
-              onCreateFromTemplate={() => openTemplates("create")}
-              onCreateGraph={() => onCreateGraph()}
+              onCreate={onCreate}
               disabled={!engine?.releaseWriterLock}
               variant="outline"
               className="size-11 md:size-9"
@@ -1055,7 +1064,7 @@ export function VaultApp() {
               />
             )
           ) : (
-            <VaultEmpty onCreate={onCreateNote} disabled={!engine?.releaseWriterLock} />
+            <VaultEmpty onCreate={() => onCreate({ kind: "note" })} disabled={!engine?.releaseWriterLock} />
           )}
         </main>
       </SidebarInset>

@@ -38,6 +38,34 @@ test("swiping inward from the left edge opens the mobile sidebar", async ({ page
   await expect(sidebar).toBeVisible();
 });
 
+test("swiping left on the mobile sidebar closes it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.locator('[data-slot="sidebar-trigger"]').click();
+
+  const sidebar = page.locator('[data-sidebar="sidebar"][data-mobile="true"]');
+  await expect(sidebar).toBeVisible();
+  await sidebar.evaluate((element) => {
+    const dispatch = (type: string, clientX: number) => {
+      element.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          clientX,
+          clientY: 420,
+          isPrimary: true,
+          pointerId: 1,
+          pointerType: "touch",
+        }),
+      );
+    };
+    dispatch("pointerdown", 140);
+    dispatch("pointermove", 72);
+    dispatch("pointerup", 72);
+  });
+
+  await expect(sidebar).not.toBeVisible();
+});
+
 test("swiping inward from the right edge opens a populated side sheet", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

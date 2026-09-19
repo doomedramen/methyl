@@ -11,11 +11,10 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useTemplatesEnabled } from "@/components/plugins/TemplatesDialog";
+import type { CreateHandler } from "./create-actions";
 
 interface CreateMenuProps {
-  onCreateNote: () => void;
-  onCreateFromTemplate?: () => void;
-  onCreateGraph: () => void;
+  onCreate: CreateHandler;
   disabled?: boolean;
   className?: string;
   variant?: "default" | "outline" | "secondary" | "ghost" | "destructive" | "link";
@@ -23,9 +22,7 @@ interface CreateMenuProps {
 
 /** Shared add control for creating notes, template notes, and graphs. */
 export function CreateMenu({
-  onCreateNote,
-  onCreateFromTemplate,
-  onCreateGraph,
+  onCreate,
   disabled,
   className,
   variant = "ghost",
@@ -56,17 +53,17 @@ export function CreateMenu({
         <TooltipContent>Add</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={onCreateNote}>
+        <DropdownMenuItem onClick={() => onCreate({ kind: "note" })}>
           <FileText data-icon="inline-start" />
           New note
         </DropdownMenuItem>
-        {templatesEnabled && onCreateFromTemplate ? (
-          <DropdownMenuItem onClick={onCreateFromTemplate}>
+        {templatesEnabled ? (
+          <DropdownMenuItem onClick={() => onCreate({ kind: "template" })}>
             <FilePlus data-icon="inline-start" />
             From template
           </DropdownMenuItem>
         ) : null}
-        <DropdownMenuItem onClick={onCreateGraph}>
+        <DropdownMenuItem onClick={() => onCreate({ kind: "graph" })}>
           <Workflow data-icon="inline-start" />
           New graph
         </DropdownMenuItem>
