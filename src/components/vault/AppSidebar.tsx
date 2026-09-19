@@ -429,6 +429,7 @@ export function AppSidebar({
 
   // --- drag and drop -----------------------------------------------------
   const [activeDragId, setActiveDragId] = useState<TreeID | null>(null);
+  const [dndContextKey, setDndContextKey] = useState(0);
   const activeDragIdRef = useRef<TreeID | null>(null);
   const [placement, setPlacement] = useState<SidebarPlacement | null>(null);
   const placementRef = useRef<SidebarPlacement | null>(null);
@@ -687,6 +688,20 @@ export function AppSidebar({
     });
   };
 
+  // KeyboardSensor installs its document listener asynchronously. Under load,
+  // the second Space can reach the row while that listener is between mounts.
+  // Give the sensor a chance to finish normally, then recover the visible
+  // placement and reset the context if it did not.
+  const scheduleKeyboardDropFallback = () => {
+    const expectedActiveId = activeDragIdRef.current;
+    if (!expectedActiveId) return;
+    window.setTimeout(() => {
+      if (activeDragIdRef.current !== expectedActiveId) return;
+      handleDragEnd();
+      setDndContextKey((key) => key + 1);
+    }, 50);
+  };
+
   const handleDragCancel = () => {
     clearAutoExpand();
     stopAutoScroll();
@@ -775,6 +790,7 @@ export function AppSidebar({
               </Empty>
             ) : (
               <DndContext
+                key={dndContextKey}
                 sensors={sensors}
                 collisionDetection={sidebarCollisionDetection}
                 onDragStart={handleDragStart}
@@ -788,6 +804,10 @@ export function AppSidebar({
                   onKeyDownCapture={(event) => {
                     const currentActiveId = activeDragIdRef.current;
                     if (!currentActiveId) return;
+                    if (event.code === "Space" && !event.repeat) {
+                      scheduleKeyboardDropFallback();
+                      return;
+                    }
                     if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
                       const targetTreeId =
                         keyboardTarget.current ?? placementRef.current?.targetTreeId;
