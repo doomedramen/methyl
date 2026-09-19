@@ -4,11 +4,13 @@ import { Document, CONTENT_KEY } from "@/lib/core/document";
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type {
   DirtyRoom,
+  DocIndexEntry,
   MaterializationCheckpoint,
   PersistedDocState,
 } from "@/lib/core/types";
 import { sha256Text } from "@/lib/core/hash";
 import { extractIdFromMarkdown, stripIdComment } from "@/lib/core/doc-id";
+import { parseMarkdown } from "@/lib/core/markdown";
 import { reconcileVault, type DocIndex, type FileSnapshot } from "@/lib/core/doc-index";
 import { mergeExternalEdit } from "@/lib/core/merge";
 import {
@@ -17,6 +19,12 @@ import {
   type CompactionRules,
 } from "@/lib/vault/compact";
 import { recordDiagnostic } from "@/lib/vault/diagnostics";
+import {
+  SearchIndex,
+  searchIndexStorageFromDocStore,
+  toIndexedDocument,
+  type IndexedDocument,
+} from "@/lib/search/index";
 
 /** Result of one `ingestExternalChanges()` pass, grouped by what happened. */
 export interface IngestReport {
@@ -70,6 +78,9 @@ export class VaultEngine {
    * materialize/rename/move/delete call.
    */
   private materializedPaths = new Map<string, string>();
+  private readonly searchIndex: SearchIndex;
+  private searchIndexReady = false;
+  private searchPersistChain: Promise<void> = Promise.resolve();
 
   private constructor(
     tree: VaultTree,
@@ -81,6 +92,7 @@ export class VaultEngine {
     this.treeStore = treeStore;
     this.docStore = docStore;
     this.vaultId = vaultId;
+    this.searchIndex = new SearchIndex(searchIndexStorageFromDocStore(docStore));
   }
 
   /**
@@ -139,6 +151,7 @@ export class VaultEngine {
     const tree = VaultTree.create();
     const engine = new VaultEngine(tree, treeStore, docStore, vaultId);
     await engine.persistTree();
+    await engine.initializeSearchIndex();
     return engine;
   }
 
@@ -222,6 +235,8 @@ export class VaultEngine {
       });
     }
 
+    await engine.initializeSearchIndex();
+
     return { engine, recovery };
   }
 
@@ -231,6 +246,57 @@ export class VaultEngine {
 
   listDocuments(): Document[] {
     return Array.from(this.documents.values());
+  }
+
+  /** Search note titles and Markdown content with MiniSearch ranking. */
+  search(query: string, limit = 50): DocIndexEntry[] {
+    return this.searchIndex.search(query, limit);
+  }
+
+  private indexedDocument(documentId: string): IndexedDocument | null {
+    const node = this.tree.findByDocumentId(documentId);
+    const doc = this.documents.get(documentId);
+    if (!node || node.kind !== "markdown" || !node.documentId || !doc) return null;
+    const path = buildPathFromNode(this.tree, node);
+    if (!path) return null;
+    doc.doc.commit();
+    return toIndexedDocument(parseMarkdown(doc.getMarkdown(), path), path, documentId);
+  }
+
+  private allIndexedDocuments(): IndexedDocument[] {
+    return this.tree
+      .allNodes()
+      .filter((node) => node.kind === "markdown" && Boolean(node.documentId))
+      .map((node) => this.indexedDocument(node.documentId!))
+      .filter((doc): doc is IndexedDocument => doc !== null);
+  }
+
+  private async initializeSearchIndex(): Promise<void> {
+    // Load first so a corrupt/missing cache follows the same recovery path as
+    // the standalone SearchIndex API; current CRDT content always wins below.
+    await this.searchIndex.load();
+    this.searchIndex.replaceAll(this.allIndexedDocuments());
+    await this.searchIndex.persist();
+    this.searchIndexReady = true;
+  }
+
+  private queueSearchPersist(): Promise<void> {
+    this.searchPersistChain = this.searchPersistChain
+      .then(() => this.searchIndex.persist())
+      .catch((error) => console.error("[search] failed to persist index", error));
+    return this.searchPersistChain;
+  }
+
+  private indexSearchDocument(documentId: string): void {
+    const indexed = this.indexedDocument(documentId);
+    if (indexed) this.searchIndex.add(indexed);
+    else this.searchIndex.remove(documentId);
+  }
+
+  private async updateSearchDocument(documentId: string): Promise<void> {
+    if (!this.searchIndexReady) return;
+    this.indexSearchDocument(documentId);
+    await this.queueSearchPersist();
   }
 
   /**
@@ -249,6 +315,7 @@ export class VaultEngine {
     const doc = Document.fromMarkdown(docId, markdown);
     this.tree.addMarkdownDocument(parentTreeId, name, docId);
     this.documents.set(docId, doc);
+    if (this.searchIndexReady) this.indexSearchDocument(docId);
     return doc;
   }
 
@@ -295,6 +362,7 @@ export class VaultEngine {
     await this.docStore.compact(documentId, snapBytes, persistedState);
     this.materializedPaths.set(documentId, filePath);
     await this.touchIndexEntry(filePath, documentId, markdown);
+    await this.updateSearchDocument(documentId);
 
     return checkpoint;
   }
@@ -352,6 +420,7 @@ export class VaultEngine {
     }
     this.materializedPaths.set(documentId, newPath);
     await this.touchIndexEntry(newPath, documentId, content);
+    await this.updateSearchDocument(documentId);
   }
 
   /**
@@ -824,6 +893,7 @@ export class VaultEngine {
         updateBytes: 0,
       },
     );
+    await this.updateSearchDocument(documentId);
     return checkpoint;
   }
 
@@ -831,6 +901,7 @@ export class VaultEngine {
   async importDocumentUpdate(documentId: string, data: Uint8Array): Promise<void> {
     const doc = this.ensureDocument(documentId);
     doc.doc.import(data);
+    await this.updateSearchDocument(documentId);
   }
 
   /**
@@ -970,6 +1041,7 @@ export class VaultEngine {
       await this.materializedRemove(oldPath);
       await this.dropIndexEntry(oldPath);
     }
+    await this.updateSearchDocument(documentId);
     await this.diag("delete-document", { detail: `${documentId} ${oldPath ?? ""}`.trim() });
   }
 
@@ -1062,6 +1134,7 @@ export class VaultEngine {
       await this.materializedRemove(path);
       await this.dropIndexEntry(path);
     }
+    for (const docId of docIds) await this.updateSearchDocument(docId);
     await this.diag("delete-folder", {
       counts: { docs: docIds.length },
       detail: `${treeId} ${oldPaths.slice(0, 10).join(",")}`,

@@ -1,6 +1,7 @@
 import MiniSearch, { type AsPlainObject } from "minisearch";
-import type { VaultFileSystem } from "@/lib/vault/fs";
 import type { DocIndexEntry, ParsedDocument } from "@/lib/core/types";
+import type { VaultFileSystem } from "@/lib/vault/fs";
+import type { PersistedDocStore } from "@/lib/vault/store";
 
 const CACHE_ROOT = ".adhd/cache";
 const SEARCH_FILE = `${CACHE_ROOT}/search.json`;
@@ -18,6 +19,30 @@ export const SEARCH_BOOST: Record<string, number> = {
 
 const SEARCHABLE_FIELDS = Object.keys(SEARCH_BOOST);
 const STORE_FIELDS = ["title", "path", "tags"];
+
+/** Storage needed by the derived search cache. */
+export interface SearchIndexStorage {
+  readTextFile(path: string): Promise<string | null>;
+  writeTextAtomic(path: string, text: string): Promise<void>;
+  mkdir(path: string): Promise<void>;
+}
+
+/** Adapt the vault's materialised-file store to the search cache interface. */
+export function searchIndexStorageFromDocStore(
+  docStore: Pick<PersistedDocStore, "readMaterialized" | "writeMaterializedAtomic">,
+): SearchIndexStorage {
+  return {
+    async readTextFile(path) {
+      const bytes = await docStore.readMaterialized(path);
+      return bytes ? new TextDecoder().decode(bytes) : null;
+    },
+    writeTextAtomic(path, text) {
+      return docStore.writeMaterializedAtomic(path, new TextEncoder().encode(text));
+    },
+    // Materialised-file stores create parent directories as part of atomic writes.
+    async mkdir() {},
+  };
+}
 
 /** Document plus link metadata used by the derived backlink/graph indexes. */
 export interface IndexedDocument extends DocIndexEntry {
@@ -42,11 +67,11 @@ function miniSearchOptions() {
  * Tracks documents itself because MiniSearch cannot enumerate stored documents.
  */
 export class SearchIndex {
-  private fs: VaultFileSystem;
+  private fs: SearchIndexStorage;
   private index: MiniSearch;
   private docs = new Map<string, DocIndexEntry>();
 
-  constructor(fs: VaultFileSystem) {
+  constructor(fs: SearchIndexStorage) {
     this.fs = fs;
     this.index = new MiniSearch(miniSearchOptions());
   }
@@ -85,6 +110,13 @@ export class SearchIndex {
     this.index.discard(id);
   }
 
+  /** Replace the in-memory index without writing it to disk. */
+  replaceAll(docs: DocIndexEntry[]): void {
+    this.index = new MiniSearch(miniSearchOptions());
+    this.docs = new Map();
+    for (const doc of docs) this.add(doc);
+  }
+
   search(query: string, limit = 50): DocIndexEntry[] {
     return this.index
       .search(query, { boost: SEARCH_BOOST, fuzzy: 0.2, prefix: true })
@@ -110,9 +142,7 @@ export class SearchIndex {
 
   /** Rebuild the whole index from parsed documents. */
   async rebuild(docs: DocIndexEntry[]): Promise<void> {
-    this.index = new MiniSearch(miniSearchOptions());
-    this.docs = new Map();
-    for (const d of docs) this.add(d);
+    this.replaceAll(docs);
     await this.persist();
   }
 }

@@ -23,8 +23,8 @@ limits) live there, not here — only their *deviations* are listed below.
 
 ## Gaps against what's built
 
-- [ ] **Full-text search isn't wired up.** `src/lib/search/index.ts` (MiniSearch)
-      exists with tests, but ⌘K only matches note titles.
+- [x] **Full-text search wired up.** ⌘K searches note titles and Markdown
+      content through the MiniSearch index.
 - [ ] **Backlinks.** Wikilink resolution exists (`src/lib/vault/wikilink.ts`); a
       "what links here" panel does not.
 - [ ] **Sync isn't live.** Remote changes arrive on the next discovery round

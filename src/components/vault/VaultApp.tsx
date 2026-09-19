@@ -839,6 +839,10 @@ export function VaultApp() {
     ? { documentId: activeId, isGraph: activeNote?.isGraph ?? false }
     : null;
   const isWriterTab = Boolean(engine?.releaseWriterLock);
+  const searchNotes = useCallback(
+    (query: string, limit?: number) => engine?.search(query, limit) ?? [],
+    [engine],
+  );
 
   const onRemoteSyncChange = useCallback(() => {
     if (engine) refreshNotes(engine);
@@ -990,6 +994,7 @@ export function VaultApp() {
           onOpenChange={setCommandOpen}
           notes={notes}
           onSelectNote={setActiveId}
+          searchNotes={searchNotes}
         />
       )}
       <PluginsDialog open={pluginsDialogOpen} onOpenChange={setPluginsDialogOpen} />

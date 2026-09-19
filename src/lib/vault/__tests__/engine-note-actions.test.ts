@@ -80,3 +80,28 @@ describe("VaultEngine.deleteDocument", () => {
     await expect(engine.deleteDocument("not-a-real-id")).rejects.toThrow();
   });
 });
+
+describe("VaultEngine.search", () => {
+  it("indexes body text and keeps the index after reopening", async () => {
+    const engine = await newEngine();
+    const doc = engine.createDocument(
+      undefined,
+      "searchable.md",
+      "# Searchable\n\nThe body contains a phosphorescent meadow.",
+    );
+    await engine.persistTree();
+    await engine.materializeDocument(doc.id, "searchable.md");
+
+    expect(engine.search("phosphorescent meadow").map((result) => result.id)).toContain(doc.id);
+
+    doc.getText(CONTENT_KEY).insert(doc.getText(CONTENT_KEY).length, "\n\nA new comet trail.");
+    await engine.persistDocumentIncremental(doc.id);
+    expect(engine.search("comet trail").map((result) => result.id)).toContain(doc.id);
+
+    const { engine: reopened } = await VaultEngine.open(
+      new NodeVaultTreeStore(tmpDir),
+      new NodeFSStore(tmpDir),
+    );
+    expect(reopened.search("comet trail").map((result) => result.id)).toContain(doc.id);
+  });
+});
