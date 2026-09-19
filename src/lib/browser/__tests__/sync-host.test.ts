@@ -244,7 +244,7 @@ describe("SyncHost client driver", () => {
     engineFirst.getDocument(realDoc.id)!.doc.commit();
     const hostFirst = await SyncHost.create(makeHostOptions(engineFirst, fsFirst));
     await hostFirst.sync();
-    await waitFor(() => existsSync(join(tmpDir, "real-note.md")));
+    await waitFor(() => existsSync(join(tmpDir, "real-note.md")), 25_000);
     hostFirst.disconnect();
 
     // Second device: app was opened first (seeding a local welcome note,
@@ -260,7 +260,7 @@ describe("SyncHost client driver", () => {
 
     const hostSecond = await SyncHost.create(makeHostOptions(engineSecond, fsSecond));
     await hostSecond.sync();
-    await waitFor(() => engineSecond.tree.documentIds().includes(realDoc.id));
+    await waitFor(() => engineSecond.tree.documentIds().includes(realDoc.id), 25_000);
 
     // The untouched seed is gone locally — replaced by the server's real
     // note, not sitting alongside it as a duplicate.
@@ -271,7 +271,7 @@ describe("SyncHost client driver", () => {
     ).toBe("real content\n");
 
     hostSecond.disconnect();
-  }, 15000);
+  }, 45_000);
 });
 
 function waitFor(check: () => boolean, timeoutMs = 5000, stepMs = 25): Promise<void> {

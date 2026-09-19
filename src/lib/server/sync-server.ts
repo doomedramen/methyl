@@ -221,8 +221,11 @@ function recordRoomSave(
   // ("%LOR"), and this doesn't otherwise need it: this server persists
   // Loro rooms only, so bind the CrdtType.Loro literal directly.
   store.upsertRoom(roomId, CrdtType.Loro, Buffer.from(data), Buffer.from(vvBytes), newServerSeq);
-  store.recordChange(seq, roomId, type === "tree" ? "tree" : "doc");
   if (liveServer) patchCachedRoomIfLoaded(liveServer, roomId, data);
+  // Publish discovery only after the live cache is current. Otherwise a
+  // reconnecting client can observe the change row, rejoin the room, and
+  // still receive the pre-ingest snapshot.
+  store.recordChange(seq, roomId, type === "tree" ? "tree" : "doc");
 }
 
 export function createSyncServer(options: SyncServerOptions) {
