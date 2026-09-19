@@ -339,6 +339,25 @@
 .app-titlebar {
   padding-top: env(titlebar-area-height, 0px);
 }
+
+/*
+ * The iOS 27 scroll-edge effect also covers viewport-edge header controls.
+ * Keep the buffer inside the main header so its opaque background extends
+ * through the affected edge and the controls sit below it. The sidebar has
+ * its own lower sheet inset and should not be shifted by this adjustment.
+ */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) and (pointer: coarse) {
+    .app-titlebar {
+      --ios-pwa-header-bridge: 24px;
+      min-height: calc(3.5rem + var(--ios-pwa-header-bridge));
+      padding-top: calc(
+        env(titlebar-area-height, 0px) + var(--ios-pwa-header-bridge)
+      );
+    }
+  }
+}
+
 .app-titlebar.wco-drag {
   -webkit-app-region: drag;
   app-region: drag;
