@@ -73,7 +73,7 @@ export function NoteEditor({
     flushRef.current?.();
   }, [saveRequest]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
@@ -126,7 +126,6 @@ export function NoteEditor({
           },
           onPersistError: () => onSaveError?.(),
         });
-        let sessionPromise: Promise<void> = Promise.resolve();
         view = new EditorView({
           parent: host,
           state: EditorState.create({
@@ -206,9 +205,14 @@ export function NoteEditor({
           unsubscribePluginExtensions();
           appRef.current.workspace.setActiveEditorView?.(null);
           const v = view;
-          sessionPromise = session.dispose(true).then(() => v?.destroy());
+          view = null;
+          // Layout-effect cleanup runs before React removes this component's
+          // host. Detach CodeMirror before that happens; waiting for the
+          // session flush would leave EditorView.destroy() running against a
+          // DOM subtree React already owns and may have removed.
+          v?.destroy();
+          void session.dispose(true);
         };
-        void sessionPromise;
       })
       .catch((err) => {
         console.error("Editor init failed", err);

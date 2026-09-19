@@ -84,6 +84,34 @@ describe("NoteEditor stability across re-renders", () => {
     const editorAfter = container.querySelector(".cm-editor");
     expect(editorAfter).toBe(editorBefore);
   });
+
+  it("destroys CodeMirror before React removes its host", async () => {
+    const engine = await makeEngine();
+    const doc = engine.createDocument(undefined, "note.md", "hello world");
+    const removedWhileMounted: boolean[] = [];
+    const originalRemove = Element.prototype.remove;
+
+    Element.prototype.remove = function remove(this: Element) {
+      if (this.classList.contains("cm-editor")) {
+        removedWhileMounted.push(this.isConnected);
+      }
+      originalRemove.call(this);
+    };
+
+    try {
+      const { container, unmount } = render(
+        <Harness app={makeApp()} engine={engine} documentId={doc.id} />,
+      );
+
+      await waitFor(() => expect(container.querySelector(".cm-editor")).toBeTruthy());
+      unmount();
+
+      await waitFor(() => expect(removedWhileMounted).toHaveLength(1));
+      expect(removedWhileMounted).toEqual([true]);
+    } finally {
+      Element.prototype.remove = originalRemove;
+    }
+  });
 });
 
 describe("forwardingApp identity stability", () => {
