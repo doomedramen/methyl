@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
-import { connect as netConnect } from "net";
+import { connect as netConnect, type Socket } from "net";
 import { join } from "path";
 import next from "next";
 import { createSyncServer, createHttpApi } from "@/lib/server/sync-server";
@@ -75,6 +75,28 @@ async function main() {
   const handle = app.getRequestHandler();
   await app.prepare();
 
+  // Next installs a catch-all upgrade listener lazily from getRequestHandler.
+  // In production Methyl owns the only WebSocket endpoint, so retain the
+  // Methyl proxy listener and remove Next's competing route handler after it
+  // is registered. Otherwise a browser WebSocket is closed before the Loro
+  // handshake reaches the internal server.
+  function handleUpgrade(req: IncomingMessage, clientSocket: Socket, head: Buffer): void {
+    const upstream = netConnect(INTERNAL_WS_PORT, "127.0.0.1", () => {
+      const rawHeaders: string[] = [];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        rawHeaders.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+      }
+      const requestLine = `${req.method} ${req.url} HTTP/1.1\r\n${rawHeaders.join("\r\n")}\r\n\r\n`;
+      upstream.write(requestLine);
+      if (head && head.length > 0) upstream.write(head);
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+
+    upstream.on("error", () => clientSocket.destroy());
+    clientSocket.on("error", () => upstream.destroy());
+  }
+
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", "http://localhost");
 
@@ -98,25 +120,18 @@ async function main() {
     }
 
     void handle(req, res);
+    for (const listener of server.listeners("upgrade")) {
+      if (listener !== handleUpgrade) {
+        server.removeListener(
+          "upgrade",
+          listener as Parameters<Server["removeListener"]>[1],
+        );
+      }
+    }
   });
 
   // Proxy WebSocket upgrades to the internal loro-websocket SimpleServer.
-  server.on("upgrade", (req: IncomingMessage, clientSocket, head) => {
-    const upstream = netConnect(INTERNAL_WS_PORT, "127.0.0.1", () => {
-      const rawHeaders: string[] = [];
-      for (let i = 0; i < req.rawHeaders.length; i += 2) {
-        rawHeaders.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
-      }
-      const requestLine = `${req.method} ${req.url} HTTP/1.1\r\n${rawHeaders.join("\r\n")}\r\n\r\n`;
-      upstream.write(requestLine);
-      if (head && head.length > 0) upstream.write(head);
-      upstream.pipe(clientSocket);
-      clientSocket.pipe(upstream);
-    });
-
-    upstream.on("error", () => clientSocket.destroy());
-    clientSocket.on("error", () => upstream.destroy());
-  });
+  server.on("upgrade", handleUpgrade);
 
   await new Promise<void>((resolve) => server.listen(PORT, HOST, resolve));
   console.log(`[methyl] listening on http://${HOST}:${PORT} (vault: ${VAULT_PATH})`);

@@ -104,6 +104,11 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
         docCount: engine?.tree.documentIds().length ?? null,
         materializedMarkdownCount: mdCount,
         storageQuota: pwa.quota,
+        sync: {
+          serverUrl: sync.config?.serverUrl ?? null,
+          status: sync.status.kind,
+          error: sync.status.kind === "error" ? sync.status.message : null,
+        },
         generatedAt: new Date().toISOString(),
       };
       const payload = JSON.stringify({ summary, diagnostics: entries }, null, 2);
@@ -113,7 +118,7 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
       console.warn("[PwaStatus] failed to copy diagnostics", err);
       toast.error("Couldn't copy diagnostics. Try again.");
     }
-  }, [engine, pwa.quota]);
+  }, [engine, pwa.quota, sync.config, sync.status]);
 
   const used = pwa.quota?.usage;
   const total = pwa.quota?.quota;

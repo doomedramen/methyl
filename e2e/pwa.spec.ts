@@ -41,3 +41,28 @@ test("?action=new creates and opens a note, then strips the query param", async 
   // VaultApp.tsx's URL-mirroring effect).
   await expect(page).not.toHaveURL(/action=new/);
 });
+
+test("sync WebSocket upgrades are available on the app origin", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(() =>
+    new Promise<"open" | "error">((resolve) => {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${location.host}`);
+      const timer = window.setTimeout(() => {
+        socket.close();
+        resolve("error");
+      }, 5_000);
+      socket.onopen = () => {
+        window.clearTimeout(timer);
+        socket.close();
+        resolve("open");
+      };
+      socket.onerror = () => {
+        window.clearTimeout(timer);
+        resolve("error");
+      };
+    }),
+  );
+
+  expect(result).toBe("open");
+});

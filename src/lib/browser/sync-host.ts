@@ -54,6 +54,8 @@ export class SyncHost {
         vaultId: options.vaultId,
         maxConcurrentDocs: options.maxConcurrentDocs,
         maxConcurrentBinaries: options.maxConcurrentBinaries,
+        beforeConnect: () =>
+          maybeDropUntouchedSeed(this.fs, this.engine, () => this.serverHasContent()),
       },
       journal,
       this.hooks(),
@@ -72,13 +74,6 @@ export class SyncHost {
 
   /** Run one §34 reconnect round: sync, then persist every touched doc/tree so the OPFS store and the on-screen editor (via loro-codemirror's doc.subscribe) both reflect remote changes. */
   async sync(): Promise<SyncReport> {
-    // Before this vault's first-ever merge with a peer: if it's still
-    // nothing but the untouched onboarding seed note, drop it (unless the
-    // server is itself empty) — otherwise every fresh device's own
-    // independently-created seed survives the merge as a duplicate
-    // sibling. No-ops after the first call (see maybeDropUntouchedSeed).
-    await maybeDropUntouchedSeed(this.fs, this.engine, () => this.serverHasContent());
-
     const report = await this.coordinator.sync();
     await this.persistJournal();
 

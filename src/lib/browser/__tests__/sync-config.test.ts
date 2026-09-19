@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // The vitest environment is plain Node ("environment: node" in
 // vitest.config.ts, so the CRDT/WASM-heavy tests elsewhere stay fast) —
@@ -27,12 +27,36 @@ import {
   saveSyncConfig,
   clearSyncConfig,
   deriveSyncUrls,
+  testSyncConnection,
 } from "@/lib/browser/sync-config";
 import { shouldSeedWelcomeNote } from "@/lib/browser/vault";
+
+class TestWebSocket {
+  static outcome: "open" | "error" = "open";
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+
+  constructor(_url: string) {
+    queueMicrotask(() => {
+      if (TestWebSocket.outcome === "open") this.onopen?.();
+      else this.onerror?.();
+    });
+  }
+
+  close(): void {
+    this.onclose?.();
+  }
+}
 
 describe("sync config store", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    TestWebSocket.outcome = "open";
   });
 
   it("returns null when nothing is saved", () => {
@@ -75,6 +99,34 @@ describe("sync config store", () => {
       httpUrl: "http://localhost:8090",
       wsUrl: "ws://localhost:8090",
     });
+  });
+
+  it("checks the WebSocket transport, not only the HTTP API", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200 })));
+    TestWebSocket.outcome = "error";
+    vi.stubGlobal("WebSocket", TestWebSocket);
+
+    const result = await testSyncConnection({
+      serverUrl: "https://adhd.example.com",
+      authToken: "secret-token",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      error: expect.stringContaining("WebSocket could not connect"),
+    });
+  });
+
+  it("accepts a server when both HTTP and WebSocket transports work", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200 })));
+    vi.stubGlobal("WebSocket", TestWebSocket);
+
+    await expect(
+      testSyncConnection({
+        serverUrl: "https://adhd.example.com",
+        authToken: "secret-token",
+      }),
+    ).resolves.toEqual({ ok: true });
   });
 });
 

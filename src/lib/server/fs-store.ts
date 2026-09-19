@@ -21,6 +21,7 @@ import {
  */
 class NodePersistBackend {
   readonly root: string;
+  private readonly locks = new Map<string, Promise<void>>();
 
   constructor(root: string) {
     this.root = root;
@@ -30,57 +31,70 @@ class NodePersistBackend {
     await fs.mkdir(path, { recursive: true });
   }
 
+  private withLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(key) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    this.locks.set(key, current.then(() => undefined, () => undefined));
+    return current;
+  }
+
   async loadSnapshot(dir: string): Promise<Uint8Array | null> {
-    await cleanupInterrupted(ops, dir);
-    const file = join(dir, "snapshot.loro");
-    try {
-      return new Uint8Array(await fs.readFile(file));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw err;
-    }
+    return this.withLock(dir, async () => {
+      await cleanupInterrupted(ops, dir);
+      const file = join(dir, "snapshot.loro");
+      try {
+        return new Uint8Array(await fs.readFile(file));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw err;
+      }
+    });
   }
 
   async loadUpdates(dir: string): Promise<Uint8Array[]> {
-    await cleanupInterrupted(ops, dir);
-    const updatesDir = join(dir, "updates");
-    let files: string[];
-    try {
-      files = (await fs.readdir(updatesDir))
-        .filter((f) => SEGMENT_RE.test(f))
-        .sort();
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw err;
-    }
-    const out: Uint8Array[] = [];
-    for (const f of files) {
-      out.push(await fs.readFile(join(updatesDir, f)).then((b) => new Uint8Array(b)));
-    }
-    return out;
+    return this.withLock(dir, async () => {
+      await cleanupInterrupted(ops, dir);
+      const updatesDir = join(dir, "updates");
+      let files: string[];
+      try {
+        files = (await fs.readdir(updatesDir))
+          .filter((f) => SEGMENT_RE.test(f))
+          .sort();
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw err;
+      }
+      const out: Uint8Array[] = [];
+      for (const f of files) {
+        out.push(await fs.readFile(join(updatesDir, f)).then((b) => new Uint8Array(b)));
+      }
+      return out;
+    });
   }
 
   async appendUpdate(dir: string, update: Uint8Array): Promise<void> {
-    await this.ensureDir(join(dir, "updates"));
-    let files: string[];
-    try {
-      files = (await fs.readdir(join(dir, "updates"))).filter((f) =>
-        SEGMENT_RE.test(f),
+    await this.withLock(dir, async () => {
+      await this.ensureDir(join(dir, "updates"));
+      let files: string[];
+      try {
+        files = (await fs.readdir(join(dir, "updates"))).filter((f) =>
+          SEGMENT_RE.test(f),
+        );
+      } catch {
+        files = [];
+      }
+      const next = nextSegmentNumber(files);
+      await fs.writeFile(
+        join(dir, "updates", segmentName(next)),
+        update,
       );
-    } catch {
-      files = [];
-    }
-    const next = nextSegmentNumber(files);
-    await fs.writeFile(
-      join(dir, "updates", segmentName(next)),
-      update,
-    );
-    await this.bumpState(dir, 1, update.length);
+      await this.bumpState(dir, 1, update.length);
+    });
   }
 
   /** Bump compaction counters in state.json after an append (§10). */
   private async bumpState(dir: string, segments: number, bytes: number): Promise<void> {
-    const state = await this.readStateJson<
+    const state = await this.readStateJsonUnlocked<
       { segments: number; updateBytes: number; lastUpdateAt?: number }
       & Record<string, unknown>
     >(dir);
@@ -100,11 +114,13 @@ class NodePersistBackend {
     snapshot: Uint8Array,
     stateJson: string,
   ): Promise<void> {
-    await this.ensureDir(dir);
-    await atomicCompact(ops, dir, snapshot, stateJson);
+    await this.withLock(dir, async () => {
+      await this.ensureDir(dir);
+      await atomicCompact(ops, dir, snapshot, stateJson);
+    });
   }
 
-  async readStateJson<T>(dir: string): Promise<T | null> {
+  private async readStateJsonUnlocked<T>(dir: string): Promise<T | null> {
     await cleanupInterrupted(ops, dir);
     const file = join(dir, "state.json");
     try {
@@ -114,6 +130,10 @@ class NodePersistBackend {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
     }
+  }
+
+  async readStateJson<T>(dir: string): Promise<T | null> {
+    return this.withLock(dir, () => this.readStateJsonUnlocked<T>(dir));
   }
 
   async listDocDirs(): Promise<string[]> {
@@ -131,19 +151,24 @@ class NodePersistBackend {
   }
 
   async readMaterialized(path: string): Promise<Uint8Array | null> {
-    try {
-      return new Uint8Array(await fs.readFile(join(this.root, path)));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw err;
-    }
+    const full = join(this.root, path);
+    return this.withLock(full, async () => {
+      try {
+        return new Uint8Array(await fs.readFile(full));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw err;
+      }
+    });
   }
 
   async writeMaterializedAtomic(path: string, bytes: Uint8Array): Promise<void> {
     const full = join(this.root, path);
-    await this.ensureDir(dirname(full));
-    await fs.writeFile(full + ".tmp", bytes);
-    await fs.rename(full + ".tmp", full);
+    await this.withLock(full, async () => {
+      await this.ensureDir(dirname(full));
+      await fs.writeFile(full + ".tmp", bytes);
+      await fs.rename(full + ".tmp", full);
+    });
   }
 
   async listMaterializedPaths(): Promise<string[]> {
@@ -172,19 +197,21 @@ class NodePersistBackend {
 
   async removeMaterialized(path: string): Promise<void> {
     const full = join(this.root, path);
-    await fs.rm(full, { force: true });
-    // Best-effort: prune now-empty parent directories, never past the vault root.
-    let dir = dirname(full);
-    while (dir.length > this.root.length && dir.startsWith(this.root)) {
-      try {
-        const entries = await fs.readdir(dir);
-        if (entries.length > 0) break;
-        await fs.rmdir(dir);
-        dir = dirname(dir);
-      } catch {
-        break;
+    await this.withLock(full, async () => {
+      await fs.rm(full, { force: true });
+      // Best-effort: prune now-empty parent directories, never past the vault root.
+      let dir = dirname(full);
+      while (dir.length > this.root.length && dir.startsWith(this.root)) {
+        try {
+          const entries = await fs.readdir(dir);
+          if (entries.length > 0) break;
+          await fs.rmdir(dir);
+          dir = dirname(dir);
+        } catch {
+          break;
+        }
       }
-    }
+    });
   }
 }
 

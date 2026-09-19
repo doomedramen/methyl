@@ -71,6 +71,22 @@ function durableCovers(roomId: string, target: LoroDoc): Promise<boolean> {
 }
 
 describe("SyncCoordinator §34", () => {
+  it("fails a dead WebSocket handshake instead of hanging indefinitely", async () => {
+    const coordinator = new SyncCoordinator(
+      {
+        wsUrl: "ws://127.0.0.1:1",
+        httpUrl: `http://127.0.0.1:${httpPort}`,
+        authToken: AUTH,
+        vaultId: VAULT,
+        connectionTimeoutMs: 50,
+      },
+      new DirtyJournal(),
+      makeHooks(new Map()),
+    );
+
+    await expect(coordinator.sync()).rejects.toThrow(/WebSocket/);
+  });
+
   it("syncs docs, confirms durable versions, clears dirty entries", async () => {
     // Local vault: two docs with unpushed edits
     const docs: DocSet = new Map();

@@ -7,6 +7,7 @@ import {
   coversVersion,
   type VersionVector as VV,
 } from "@/lib/sync/journal";
+import { testWebSocketConnection } from "@/lib/sync/websocket";
 
 export interface SyncCoordinatorOptions {
   wsUrl: string;
@@ -15,6 +16,10 @@ export interface SyncCoordinatorOptions {
   vaultId: string;
   maxConcurrentDocs?: number;   // §34: 8 on mobile
   maxConcurrentBinaries?: number; // §34: 2 on mobile
+  /** Bound a dead reverse-proxy/WebSocket handshake instead of hanging forever. */
+  connectionTimeoutMs?: number;
+  /** Run after transport preflight and before any local seed is removed. */
+  beforeConnect?: () => Promise<void>;
 }
 
 export interface SyncReport {
@@ -52,6 +57,25 @@ function bounded(limit: number): [acquire: () => Promise<void>, release: () => v
   ];
 }
 
+function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /* ── base64 → VersionVector ─────────────────────────────────────── */
 
 function vvFromBase64(b64: string): VV {
@@ -63,7 +87,7 @@ function vvFromBase64(b64: string): VV {
 
 export class SyncCoordinator {
   private readonly opts: Required<Pick<SyncCoordinatorOptions,
-    "maxConcurrentDocs" | "maxConcurrentBinaries" >> & SyncCoordinatorOptions;
+    "maxConcurrentDocs" | "maxConcurrentBinaries" | "connectionTimeoutMs" >> & SyncCoordinatorOptions;
   private readonly journal: DirtyJournal;
   private readonly hooks: SyncHooks;
   private client: LoroWebsocketClient | null = null;
@@ -78,6 +102,7 @@ export class SyncCoordinator {
       ...options,
       maxConcurrentDocs: options.maxConcurrentDocs ?? 8,
       maxConcurrentBinaries: options.maxConcurrentBinaries ?? 2,
+      connectionTimeoutMs: options.connectionTimeoutMs ?? 10_000,
     };
     this.journal = journal;
     this.hooks = hooks;
@@ -107,77 +132,89 @@ export class SyncCoordinator {
 
     // 2-4: connect WS
     console.log("coord: connecting");
+    await testWebSocketConnection(wsUrl, this.opts.connectionTimeoutMs);
+    await this.opts.beforeConnect?.();
     const client = new LoroWebsocketClient({ url: wsUrl, disablePing: true } as LoroWebsocketClientOptions);
-    await client.connect();
     this.client = client;
-    console.log("coord: connected");
+    let treeRoom: { waitForReachingServerVersion(): Promise<void>; leave(): void } | null = null;
+    try {
+      await withTimeout(client.connect(), "WebSocket connection", this.opts.connectionTimeoutMs);
+      console.log("coord: connected");
 
-    // 5-6: join vault tree room, wait for server version
-    const treeDoc = this.hooks.getTreeDoc();
-    const treeAdaptor = new LoroAdaptor(treeDoc);
-    console.log("coord: joining tree room vault:" + vaultId);
-    const treeRoom = await client.join({
-      roomId: `vault:${vaultId}`,
-      crdtAdaptor: treeAdaptor,
-      auth: new TextEncoder().encode(authToken),
-    });
-    console.log("coord: tree room joined, waiting server version");
-    await treeRoom.waitForReachingServerVersion();
-    console.log("coord: tree synced");
+      // 5-6: join vault tree room, wait for server version
+      const treeDoc = this.hooks.getTreeDoc();
+      const treeAdaptor = new LoroAdaptor(treeDoc);
+      console.log("coord: joining tree room vault:" + vaultId);
+      treeRoom = await withTimeout(
+        client.join({
+          roomId: `vault:${vaultId}`,
+          crdtAdaptor: treeAdaptor,
+          auth: new TextEncoder().encode(authToken),
+        }),
+        "Vault room join",
+        this.opts.connectionTimeoutMs,
+      );
+      console.log("coord: tree room joined, waiting server version");
+      await withTimeout(
+        treeRoom.waitForReachingServerVersion(),
+        "Vault tree sync",
+        this.opts.connectionTimeoutMs,
+      );
+      console.log("coord: tree synced");
 
-    // 7: discovery poll
-    const lastSeq = this.journal.getLastServerSeq();
-    console.log("coord: discovery after", lastSeq);
-    const changesRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
-    const { changes: serverChanges } = await changesRes.json() as {
-      reset?: boolean;
-      changes: Array<{ objectId: string; seq: number }>;
-    };
-    console.log("coord: changes", serverChanges.length);
+      // 7: discovery poll
+      const lastSeq = this.journal.getLastServerSeq();
+      console.log("coord: discovery after", lastSeq);
+      const changesRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
+      const { changes: serverChanges } = await changesRes.json() as {
+        reset?: boolean;
+        changes: Array<{ objectId: string; seq: number }>;
+      };
+      console.log("coord: changes", serverChanges.length);
 
-    // 8: build work set
-    const knownSynced = new Set(this.hooks.getSyncedRoomIds());
-    console.log("coord: getSyncedRoomIds", knownSynced.size);
-    const missingBinaries = await this.hooks.getMissingBinaryIds();
-    console.log("coord: missing binaries", missingBinaries.length);
-    console.log("coord: tree ids...", this.hooks.getTreeDocumentRoomIds().length);
-    const { documents, binaries } = buildWorkSet({
-      localDirty: this.journal.dirty().map((e) => e.roomId),
-      serverChanged: serverChanges.map((c) => c.objectId),
-      treeDocumentIds: this.hooks.getTreeDocumentRoomIds(),
-      knownSynced,
-      missingBinaries,
-    });
-    console.log("coord: work set", documents.length, binaries.length);
+      // 8: build work set
+      const knownSynced = new Set(this.hooks.getSyncedRoomIds());
+      console.log("coord: getSyncedRoomIds", knownSynced.size);
+      const missingBinaries = await this.hooks.getMissingBinaryIds();
+      console.log("coord: missing binaries", missingBinaries.length);
+      console.log("coord: tree ids...", this.hooks.getTreeDocumentRoomIds().length);
+      const { documents, binaries } = buildWorkSet({
+        localDirty: this.journal.dirty().map((e) => e.roomId),
+        serverChanged: serverChanges.map((c) => c.objectId),
+        treeDocumentIds: this.hooks.getTreeDocumentRoomIds(),
+        knownSynced,
+        missingBinaries,
+      });
+      console.log("coord: work set", documents.length, binaries.length);
 
-    // 9: sync doc rooms
-    const touchedRoomIds: string[] = [];
-    const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds);
+      // 9: sync doc rooms
+      const touchedRoomIds: string[] = [];
+      const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds);
 
-    // 10: sync binaries
-    const binariesSynced = await this.syncBinaries(binaries, httpUrl, hdr);
+      // 10: sync binaries
+      const binariesSynced = await this.syncBinaries(binaries, httpUrl, hdr);
 
-    // 11-12: durable confirm + clear
-    const dirtyCleared = await this.confirmDurables(httpUrl, hdr);
+      // 11-12: durable confirm + clear
+      const dirtyCleared = await this.confirmDurables(httpUrl, hdr);
 
-    // 13: advance lastServerSeq. Re-poll after sync: rooms we synced (and
-    // the tree) have produced new change-log rows, so reflect them now so
-    // the next discovery poll skips everything already durably sent.
-    const afterRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
-    const { changes: afterChanges } = await afterRes.json() as {
-      changes: Array<{ objectId: string; seq: number }>;
-    };
-    if (afterChanges.length > 0) {
-      const maxSeq = Math.max(...afterChanges.map((c) => c.seq));
-      this.journal.setServerSeq(maxSeq);
+      // 13: advance lastServerSeq. Re-poll after sync: rooms we synced (and
+      // the tree) have produced new change-log rows, so reflect them now so
+      // the next discovery poll skips everything already durably sent.
+      const afterRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
+      const { changes: afterChanges } = await afterRes.json() as {
+        changes: Array<{ objectId: string; seq: number }>;
+      };
+      if (afterChanges.length > 0) {
+        const maxSeq = Math.max(...afterChanges.map((c) => c.seq));
+        this.journal.setServerSeq(maxSeq);
+      }
+
+      return { docsSynced, binariesSynced, dirtyCleared, durationMs: 0, touchedRoomIds, treeTouched: true };
+    } finally {
+      treeRoom?.leave();
+      client.destroy();
+      if (this.client === client) this.client = null;
     }
-
-    // cleanup
-    treeRoom.leave();
-    client.destroy();
-    this.client = null;
-
-    return { docsSynced, binariesSynced, dirtyCleared, durationMs: 0, touchedRoomIds, treeTouched: true };
   }
 
   /* ── room sync (bounded concurrency) ───────────────────────────── */
@@ -201,23 +238,34 @@ export class SyncCoordinator {
         console.log("coord: syncing doc room", id, "doc?", !!doc);
         if (!doc) return;
         const adaptor = new LoroAdaptor(doc);
-        const room = await client.join({
-          roomId: id,
-          crdtAdaptor: adaptor,
-          auth: new TextEncoder().encode(authToken),
-        });
-        console.log("coord: doc room joined", id);
-        await room.waitForReachingServerVersion();
-        console.log("coord: doc room version reached", id);
+        const room = await withTimeout(
+          client.join({
+            roomId: id,
+            crdtAdaptor: adaptor,
+            auth: new TextEncoder().encode(authToken),
+          }),
+          `Document room join (${id})`,
+          this.opts.connectionTimeoutMs,
+        );
+        try {
+          console.log("coord: doc room joined", id);
+          await withTimeout(
+            room.waitForReachingServerVersion(),
+            `Document room sync (${id})`,
+            this.opts.connectionTimeoutMs,
+          );
+          console.log("coord: doc room version reached", id);
 
-        // Record current local version as dirty target
-        const vv = Object.fromEntries(doc.version().toJSON()) as VV;
-        if (Object.keys(vv).length > 0) {
-          this.journal.markDirty(id, vv);
+          // Record current local version as dirty target
+          const vv = Object.fromEntries(doc.version().toJSON()) as VV;
+          if (Object.keys(vv).length > 0) {
+            this.journal.markDirty(id, vv);
+          }
+          count++;
+          touched.push(id);
+        } finally {
+          room.leave();
         }
-        count++;
-        touched.push(id);
-        room.leave();
       } finally { release(); }
     }));
 

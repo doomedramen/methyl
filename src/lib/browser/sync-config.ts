@@ -1,3 +1,5 @@
+import { testWebSocketConnection } from "@/lib/sync/websocket";
+
 /**
  * Local persistence for the browser's sync connection settings (server URL +
  * access token). Kept DOM-free (only touches `localStorage` behind a
@@ -78,7 +80,7 @@ export interface MethylHealth {
 export async function testSyncConnection(
   config: SyncConfig,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { httpUrl } = deriveSyncUrls(config.serverUrl);
+  const { wsUrl, httpUrl } = deriveSyncUrls(config.serverUrl);
   try {
     const health = await fetch(`${httpUrl}/healthz`);
     if (!health.ok) return { ok: false, error: `Server responded ${health.status} at /healthz` };
@@ -87,6 +89,18 @@ export async function testSyncConnection(
     });
     if (auth.status === 401) return { ok: false, error: "Access token was rejected" };
     if (!auth.ok) return { ok: false, error: `Server responded ${auth.status} at /api/rooms` };
+    try {
+      await testWebSocketConnection(wsUrl);
+    } catch (err) {
+      const detail = err instanceof Error && err.message ? ` (${err.message})` : "";
+      return {
+        ok: false,
+        error:
+          "The HTTP API is reachable, but the sync WebSocket could not connect. " +
+          "Enable WebSocket upgrade forwarding in the reverse proxy." +
+          detail,
+      };
+    }
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
