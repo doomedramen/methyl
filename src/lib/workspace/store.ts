@@ -2,9 +2,13 @@ export type WorkspaceResource =
   | { kind: "document"; documentId: string }
   | { kind: "asset"; treeId: string };
 
+export type WorkspaceCollection = "notes" | "inbox" | "graphs";
+
 export interface WorkspaceTab {
   id: string;
   resource: WorkspaceResource | null;
+  /** Collection shown when this tab has no resource. */
+  collection?: WorkspaceCollection;
 }
 
 export interface WorkspacePane {
@@ -67,7 +71,7 @@ function createEmptySnapshot(): WorkspaceSnapshot {
     root: {
       kind: "pane",
       id: DEFAULT_PANE_ID,
-      tabs: [{ id: DEFAULT_TAB_ID, resource: null }],
+      tabs: [{ id: DEFAULT_TAB_ID, resource: null, collection: "notes" }],
       activeTabId: DEFAULT_TAB_ID,
     },
     focusedPaneId: DEFAULT_PANE_ID,
@@ -84,7 +88,11 @@ function cloneNode(node: WorkspaceNode): WorkspaceNode {
     return {
       kind: "pane",
       id: node.id,
-      tabs: node.tabs.map((tab) => ({ id: tab.id, resource: cloneResource(tab.resource) })),
+      tabs: node.tabs.map((tab) => ({
+        id: tab.id,
+        resource: cloneResource(tab.resource),
+        ...(tab.resource ? {} : { collection: tab.collection ?? "notes" }),
+      })),
       activeTabId: node.activeTabId,
     };
   }
@@ -115,6 +123,10 @@ function isResource(value: unknown): value is WorkspaceResource {
   );
 }
 
+function isWorkspaceCollection(value: unknown): value is WorkspaceCollection {
+  return value === "notes" || value === "inbox" || value === "graphs";
+}
+
 function parseNode(value: unknown): WorkspaceNode | null {
   if (!value || typeof value !== "object") return null;
   const node = value as Record<string, unknown>;
@@ -122,10 +134,16 @@ function parseNode(value: unknown): WorkspaceNode | null {
     const tabs = node.tabs
       .filter((tab): tab is Record<string, unknown> => Boolean(tab && typeof tab === "object"))
       .filter((tab) => typeof tab.id === "string")
-      .map((tab) => ({
-        id: tab.id as string,
-        resource: isResource(tab.resource) ? { ...tab.resource } : null,
-      }));
+      .map((tab) => {
+        const resource = isResource(tab.resource) ? { ...tab.resource } : null;
+        return {
+          id: tab.id as string,
+          resource,
+          ...(resource
+            ? {}
+            : { collection: isWorkspaceCollection(tab.collection) ? tab.collection : "notes" }),
+        };
+      });
     if (tabs.length === 0) return null;
     const activeTabId = typeof node.activeTabId === "string" && tabs.some((tab) => tab.id === node.activeTabId)
       ? node.activeTabId
@@ -296,6 +314,7 @@ export class WorkspaceStore {
       const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId) ?? pane.tabs[0]!;
       tabId = tab.id;
       tab.resource = cloneResource(resource);
+      tab.collection = undefined;
     }
     pane.activeTabId = tabId;
     this.snapshot.focusedPaneId = pane.id;
@@ -307,27 +326,34 @@ export class WorkspaceStore {
   newTab(paneId = this.snapshot.focusedPaneId): string {
     const pane = findPane(this.snapshot.root, paneId) ?? this.getFocusedPane();
     const id = this.nextId("tab");
-    pane.tabs.push({ id, resource: null });
+    pane.tabs.push({ id, resource: null, collection: "notes" });
     pane.activeTabId = id;
     this.snapshot.focusedPaneId = pane.id;
     this.changed();
     return id;
   }
 
-  closeTab(tabId: string): void {
+  closeTab(tabId: string): string {
     const found = findTab(this.snapshot.root, tabId);
-    if (!found) return;
+    if (!found) return this.getFocusedTab().id;
     const { pane } = found;
+    let nextTabId = pane.activeTabId;
     if (pane.tabs.length === 1) {
       pane.tabs[0]!.resource = null;
+      pane.tabs[0]!.collection = "notes";
       pane.activeTabId = pane.tabs[0]!.id;
+      nextTabId = pane.activeTabId;
     } else {
       const index = pane.tabs.findIndex((tab) => tab.id === tabId);
       pane.tabs.splice(index, 1);
-      if (pane.activeTabId === tabId) pane.activeTabId = pane.tabs[Math.max(0, index - 1)]!.id;
+      if (pane.activeTabId === tabId) {
+        pane.activeTabId = pane.tabs[Math.max(0, index - 1)]!.id;
+        nextTabId = pane.activeTabId;
+      }
     }
     this.snapshot.focusedPaneId = pane.id;
     this.changed();
+    return nextTabId;
   }
 
   focusTab(tabId: string): void {
@@ -337,6 +363,18 @@ export class WorkspaceStore {
     this.snapshot.focusedPaneId = found.pane.id;
     if (found.tab.resource) this.remember(found.tab.resource);
     this.changed();
+  }
+
+  openCollection(collection: WorkspaceCollection, paneId = this.snapshot.focusedPaneId): string {
+    const pane = findPane(this.snapshot.root, paneId) ?? this.getFocusedPane();
+    const tab = pane.tabs.find((candidate) => !candidate.resource);
+    const tabId = tab?.id ?? this.nextId("tab");
+    if (!tab) pane.tabs.push({ id: tabId, resource: null, collection });
+    else tab.collection = collection;
+    pane.activeTabId = tabId;
+    this.snapshot.focusedPaneId = pane.id;
+    this.changed();
+    return tabId;
   }
 
   focusPane(paneId: string): void {
@@ -353,7 +391,7 @@ export class WorkspaceStore {
     const newPane: WorkspacePane = {
       kind: "pane",
       id: this.nextId("pane"),
-      tabs: [{ id: this.nextId("tab"), resource: null }],
+      tabs: [{ id: this.nextId("tab"), resource: null, collection: "notes" }],
       activeTabId: "",
     };
     newPane.activeTabId = newPane.tabs[0]!.id;
@@ -393,7 +431,7 @@ export class WorkspaceStore {
     destination.activeTabId = tab.id;
     this.snapshot.focusedPaneId = destination.id;
     if (source.pane.tabs.length === 0) {
-      const blank = { id: this.nextId("tab"), resource: null };
+      const blank = { id: this.nextId("tab"), resource: null, collection: "notes" as const };
       source.pane.tabs.push(blank);
       source.pane.activeTabId = blank.id;
     } else if (source.pane.activeTabId === tabId) {
@@ -413,11 +451,9 @@ export class WorkspaceStore {
 
   prune(validResources: Iterable<WorkspaceResource>): void {
     const valid = new Set(Array.from(validResources, resourceKey));
-    for (const pane of collectPanes(this.snapshot.root)) {
-      for (const tab of pane.tabs) {
-        if (tab.resource && !valid.has(resourceKey(tab.resource))) tab.resource = null;
-      }
-    }
+    // Keep missing tab resources visible. The workspace can then explain that
+    // a note or attachment is unavailable instead of silently showing a new
+    // collection and inviting accidental replacement.
     this.snapshot.recentDocumentIds = this.snapshot.recentDocumentIds.filter((id) => valid.has(`document:${id}`));
     this.changed();
   }
@@ -426,6 +462,7 @@ export class WorkspaceStore {
     const pane = this.getFocusedPane();
     const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId) ?? pane.tabs[0]!;
     tab.resource = cloneResource(resource);
+    tab.collection = resource ? undefined : "notes";
     this.snapshot.focusedPaneId = pane.id;
     if (resource) this.remember(resource);
     this.changed();

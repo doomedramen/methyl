@@ -19,7 +19,10 @@ export class ActiveEditorRegistry {
   }
 
   focus(tabId: string): void {
-    if (this.views.has(tabId)) this.focusedTabId = tabId;
+    const view = this.views.get(tabId);
+    if (!view) return;
+    this.focusedTabId = tabId;
+    view.focus?.();
   }
 
   get(tabId: string | null | undefined): EditorView | null {

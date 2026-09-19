@@ -74,6 +74,8 @@ export interface App {
   };
   vault: {
     createNote(options?: NoteCreationOptions): Promise<string>;
+    /** Capture a blank note in Inbox without changing generic note creation routing. */
+    captureThought?(): Promise<string>;
     createGraph(): Promise<string>;
     createFolder(name: string): Promise<void>;
     read(id: string): Promise<string | null>;

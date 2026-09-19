@@ -20,21 +20,19 @@ test("sidebar add menu offers a folder", async ({ page }) => {
   await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
 });
 
-test("top bar add menu offers note and graph", async ({ page }) => {
-  await page.locator("header").getByRole("button", { name: "Add" }).click();
-
-  await expect(page.getByRole("menuitem", { name: "New note" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "New graph" })).toBeVisible();
-  await page.getByRole("menuitem", { name: "New graph" }).click();
-  await expect(page.locator(".react-flow")).toBeVisible();
+test("top bar capture button opens a note", async ({ page }) => {
+  const capture = page.locator("header").getByRole("button", { name: "Capture a thought" });
+  await expect(capture).toBeEnabled();
+  await capture.click();
+  await expect(page.locator(".cm-content")).toBeVisible();
 });
 
 test("add controls stay touch-sized on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  const topBarAdd = page.locator("header").getByRole("button", { name: "Add" });
-  const topBarBox = await topBarAdd.boundingBox();
+  const capture = page.locator("header").getByRole("button", { name: "Capture a thought" });
+  const topBarBox = await capture.boundingBox();
   expect(topBarBox?.width).toBeGreaterThanOrEqual(44);
   expect(topBarBox?.height).toBeGreaterThanOrEqual(44);
 

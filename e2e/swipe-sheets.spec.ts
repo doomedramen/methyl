@@ -71,16 +71,14 @@ test("swiping inward from the right edge opens a populated side sheet", async ({
   await page.goto("/");
 
   const editor = page.locator(".cm-content");
-  const add = page.locator("header").getByRole("button", { name: "Add" });
+  const capture = page.locator("header").getByRole("button", { name: "Capture a thought" });
 
-  await add.click();
-  await page.getByRole("menuitem", { name: "New note" }).click();
+  await capture.click();
   await expect(editor).toBeVisible();
   await editor.fill("# Target");
   await page.waitForTimeout(800);
 
-  await add.click();
-  await page.getByRole("menuitem", { name: "New note" }).click();
+  await capture.click();
   await expect(editor).toBeVisible();
   await editor.fill("See [[Untitled]] for details.");
   await page.waitForTimeout(800);

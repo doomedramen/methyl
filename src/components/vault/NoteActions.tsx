@@ -27,7 +27,7 @@ interface RenameDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentTitle: string;
-  onRename: (title: string) => void;
+  onRename: (title: string) => Promise<void>;
 }
 
 export function RenameNoteDialog({
@@ -37,23 +37,37 @@ export function RenameNoteDialog({
   onRename,
 }: RenameDialogProps) {
   const [value, setValue] = useState(currentTitle);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (next) setValue(currentTitle);
+        if (next) {
+          setValue(currentTitle);
+          setError(null);
+        }
+        if (!next && submitting) return;
         onOpenChange(next);
       }}
     >
       <DialogContent>
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
             const trimmed = value.trim();
-            if (!trimmed) return;
-            onRename(trimmed);
-            onOpenChange(false);
+            if (!trimmed || submitting) return;
+            setSubmitting(true);
+            setError(null);
+            try {
+              await onRename(trimmed);
+              onOpenChange(false);
+            } catch {
+              setError("Couldn't rename note. Try again.");
+            } finally {
+              setSubmitting(false);
+            }
           }}
         >
           <DialogHeader>
@@ -66,19 +80,22 @@ export function RenameNoteDialog({
                 id="rename-note-title"
                 autoFocus
                 value={value}
+                aria-invalid={Boolean(error)}
                 onChange={(e) => setValue(e.target.value)}
               />
             </FieldContent>
           </Field>
+          {error && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
           <DialogFooter className="mt-4">
             <Button
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
+              disabled={submitting}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!value.trim()}>
+            <Button type="submit" disabled={!value.trim() || submitting}>
               <Pencil data-icon="inline-start" />
               Rename
             </Button>

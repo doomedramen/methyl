@@ -28,6 +28,15 @@ export const CORE_COMMANDS_MANIFEST: PluginManifest = {
 export class CoreCommandsPlugin extends Plugin {
   onload(): void {
     this.addCommand({ id: "new-note", name: "New note", icon: Plus, callback: async () => { await this.app.vault.createNote(); } });
+    this.addCommand({
+      id: "capture-thought",
+      name: "Capture a thought",
+      icon: Plus,
+      callback: async () => {
+        if (this.app.vault.captureThought) await this.app.vault.captureThought();
+        else await this.app.vault.createNote();
+      },
+    });
     this.addCommand({ id: "new-graph", name: "New graph", icon: Workflow, callback: async () => { await this.app.vault.createGraph(); } });
     this.addCommand({ id: "new-folder", name: "New folder", icon: FolderPlus, callback: () => this.app.vault.createFolder("") });
     this.addCommand({ id: "toggle-sidebar", name: "Toggle sidebar", icon: PanelLeft, callback: () => this.app.workspace.toggleSidebar() });

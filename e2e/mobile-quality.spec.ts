@@ -4,7 +4,7 @@ test.use({ ...devices["iPhone 13"], browserName: "chromium" });
 
 async function openApp(page: Page) {
   await page.goto("/");
-  await expect(page.locator("header").getByRole("button", { name: "Add" })).toBeEnabled();
+  await expect(page.locator("header").getByRole("button", { name: "Capture a thought" })).toBeEnabled();
 }
 
 async function expectTouchTarget(locator: Locator, label: string) {
@@ -37,7 +37,10 @@ test.describe("mobile quality", () => {
       page.locator("header").getByRole("button", { name: "Toggle theme" }),
       "theme toggle",
     );
-    await expectTouchTarget(page.locator("header").getByRole("button", { name: "Add" }), "add");
+    await expectTouchTarget(
+      page.locator("header").getByRole("button", { name: "Capture a thought" }),
+      "capture",
+    );
     await expectNoHorizontalOverflow(page);
   });
 
@@ -63,8 +66,7 @@ test.describe("mobile quality", () => {
     await page.setViewportSize({ width: 375, height: 667 });
     await openApp(page);
 
-    await page.locator("header").getByRole("button", { name: "Add" }).click();
-    await page.getByRole("menuitem", { name: "New note" }).click();
+    await page.locator("header").getByRole("button", { name: "Capture a thought" }).click();
     const editor = page.locator(".cm-content");
     await expect(editor).toBeVisible();
     await editor.fill("A mobile note with enough content to exercise the editor width.");

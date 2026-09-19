@@ -152,6 +152,16 @@ describe("DerivedIndexes", () => {
     expect(bBacklinks[0].from).toBe(a.indexed.id);
   });
 
+  it("bare filename links resolve when a note has a different heading", async () => {
+    const target = mkDoc("# Target\n\nDestination", "Inbox/Untitled.md");
+    const source = mkDoc("See [[Untitled]] for details.", "Source.md");
+    await derived.build([target.indexed, source.indexed]);
+
+    expect(derived.backlinksFor(target.indexed.id)).toEqual([
+      expect.objectContaining({ from: source.indexed.id }),
+    ]);
+  });
+
   it("self-links are excluded", async () => {
     const self: ParsedDocument = {
       id: "self",

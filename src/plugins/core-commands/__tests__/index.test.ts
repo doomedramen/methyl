@@ -27,7 +27,7 @@ function makeApp(overrides: Partial<App> = {}): App {
 }
 
 describe("CoreCommandsPlugin", () => {
-  it("registers new-note, new-graph, new-folder, toggle-sidebar and sync-settings", async () => {
+  it("registers capture alongside existing creation and navigation commands", async () => {
     const app = makeApp();
     const commands = new CommandRegistry();
     const host = new PluginHost(app, new InMemoryPluginStorage(), commands);
@@ -37,6 +37,7 @@ describe("CoreCommandsPlugin", () => {
     expect(ids).toEqual(
       expect.arrayContaining([
         "core-commands:new-note",
+        "core-commands:capture-thought",
         "core-commands:new-graph",
         "core-commands:new-folder",
         "core-commands:toggle-sidebar",
@@ -53,5 +54,18 @@ describe("CoreCommandsPlugin", () => {
     await host.enable("core-commands");
     await commands.execute("core-commands:new-note", null, null, vi.fn());
     expect(app.vault.createNote).toHaveBeenCalledOnce();
+  });
+
+  it("capture command uses dedicated capture routing", async () => {
+    const app = makeApp();
+    const captureThought = vi.fn(async () => "captured");
+    app.vault.captureThought = captureThought;
+    const commands = new CommandRegistry();
+    const host = new PluginHost(app, new InMemoryPluginStorage(), commands);
+    host.register(CORE_COMMANDS_MANIFEST, CoreCommandsPlugin);
+    await host.enable("core-commands");
+    await commands.execute("core-commands:capture-thought", null, null, vi.fn());
+    expect(captureThought).toHaveBeenCalledOnce();
+    expect(app.vault.createNote).not.toHaveBeenCalled();
   });
 });

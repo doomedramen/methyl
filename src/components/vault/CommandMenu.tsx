@@ -99,7 +99,10 @@ export function CommandMenu({
                   ) : (
                     <FileText data-icon="inline-start" />
                   )}
-                  {note.title}
+                  <span className="min-w-0 truncate">{note.title}</span>
+                  <span className="ml-auto max-w-[45%] truncate text-xs text-muted-foreground">
+                    {note.path ?? "Notes"}
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>

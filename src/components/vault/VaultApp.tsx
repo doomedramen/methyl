@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import type { TreeID } from "loro-crdt";
-import { Check, Inbox, Link2, Plus, TriangleAlert } from "lucide-react";
+import { Check, Circle, FileWarning, Link2, Plus, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import type { VaultTree, VaultTreeNode } from "@/lib/vault/tree";
 import { Button } from "@/components/ui/button";
@@ -27,14 +27,6 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
@@ -42,7 +34,6 @@ import {
 import { NoteEditor } from "@/components/editor/NoteEditor";
 import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
 import { AppSidebar, type BinaryRow, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
-import { CreateMenu } from "./CreateMenu";
 import { COLLECTIONS, LibraryView, type LibraryCollection } from "./LibraryView";
 import { NoteSurface } from "./NoteSurface";
 import { BacklinksPanel } from "./BacklinksPanel";
@@ -73,6 +64,7 @@ import type { CreateHandler, CreateRequest } from "./create-actions";
 import { ActiveEditorRegistry } from "@/lib/editor/active-registry";
 import {
   createEmptyWorkspaceSnapshot,
+  collectTabs,
   LocalStorageWorkspacePersistence,
   type WorkspaceOpenMode,
   resourceKey,
@@ -125,14 +117,14 @@ const QuickSwitcher = dynamic(
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
 const SAVE_LABEL: Record<Exclude<SaveState, "idle">, string> = {
-  dirty: "Editing…",
+  dirty: "Unsaved changes",
   saving: "Saving…",
   saved: "Saved",
   error: "Not saved",
 };
 
 /** How long the "Saved" confirmation lingers before hiding. */
-const SAVED_VISIBLE_MS = 2000;
+const SAVED_VISIBLE_MS = 1500;
 const EMPTY_WORKSPACE_SNAPSHOT = createEmptyWorkspaceSnapshot();
 const NOOP_SUBSCRIBE = () => () => {};
 const getEmptyWorkspaceSnapshot = () => EMPTY_WORKSPACE_SNAPSHOT;
@@ -210,6 +202,7 @@ function findFolder(rows: SidebarRow[], treeId: TreeID): FolderRow | undefined {
 function VaultPluginBridge({
   engine,
   onCreate,
+  onCaptureThought,
   onOpenNewFolder,
   onManagePlugins,
   onManageTemplates,
@@ -223,6 +216,7 @@ function VaultPluginBridge({
 }: {
   engine: VaultEngine | null;
   onCreate: CreateHandler;
+  onCaptureThought: () => Promise<string>;
   onOpenNewFolder: () => void;
   /** Opens `PluginsDialog` (Task 11); a no-op until that dialog exists. */
   onManagePlugins?: () => void;
@@ -354,6 +348,7 @@ function VaultPluginBridge({
         createNote: async (options?: NoteCreationOptions) => {
           return (await onCreate({ kind: "note", options })) ?? "";
         },
+        captureThought: onCaptureThought,
         createGraph: async () => {
           return (await onCreate({ kind: "graph" })) ?? "";
         },
@@ -378,6 +373,7 @@ function VaultPluginBridge({
       focusedTabId,
       notify,
       onCreate,
+      onCaptureThought,
       onManagePlugins,
       onManageTemplates,
       onNotesChanged,
@@ -531,19 +527,18 @@ function makeNoopApp(): App {
 export function VaultApp() {
   const [engine, setEngine] = useState<VaultEngine | null>(null);
   const [rows, setRows] = useState<SidebarRow[]>([]);
-  const [saving, setSaving] = useState<SaveState>("idle");
+  const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
   const [error, setError] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
-  const [collections, setCollections] = useState<Record<string, LibraryCollection>>({});
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
   const [templateDialogMode, setTemplateDialogMode] = useState<TemplateDialogMode | null>(null);
   const [templateParentTreeId, setTemplateParentTreeId] = useState<TreeID | undefined>(undefined);
-  // Incremented each time the user asks to save (Cmd/Ctrl+S); the active
-  // editor watches it and flushes immediately.
-  const [saveRequest, setSaveRequest] = useState(0);
+  const [saveRequest, setSaveRequest] = useState<{ nonce: number; documentId: string } | null>(null);
+  const [capturePending, setCapturePending] = useState(false);
+  const [editorFocusRequest, setEditorFocusRequest] = useState<{ nonce: number; tabId: string } | null>(null);
 
   const workspaceStore = useMemo<WorkspaceStore | null>(
     () =>
@@ -565,17 +560,22 @@ export function VaultApp() {
   const activeId = focusedResource?.kind === "document" ? focusedResource.documentId : null;
   const activeResourceKey = resourceKey(focusedResource ?? null);
   const focusedTabId = focusedTab?.id ?? null;
+  const focusedCollection: LibraryCollection | null = focusedResource
+    ? null
+    : focusedTab?.collection ?? "notes";
 
   const openDocument = useCallback(
-    (documentId: string, mode: WorkspaceOpenMode = "replace", paneId?: string) => {
-      workspaceStore?.open({ kind: "document", documentId }, { mode, paneId });
+    (documentId: string, mode: WorkspaceOpenMode = "replace", paneId?: string): string => {
+      setEditorFocusRequest(null);
+      return workspaceStore?.open({ kind: "document", documentId }, { mode, paneId }) ?? "";
     },
     [workspaceStore],
   );
 
   const openAsset = useCallback(
-    (treeId: TreeID, mode: WorkspaceOpenMode = "replace", paneId?: string) => {
-      workspaceStore?.open({ kind: "asset", treeId: String(treeId) }, { mode, paneId });
+    (treeId: TreeID, mode: WorkspaceOpenMode = "replace", paneId?: string): string => {
+      setEditorFocusRequest(null);
+      return workspaceStore?.open({ kind: "asset", treeId: String(treeId) }, { mode, paneId }) ?? "";
     },
     [workspaceStore],
   );
@@ -616,7 +616,9 @@ export function VaultApp() {
   // which would just be background noise. Direct children only: a note
   // filed deeper by the user has already been "read" out of the inbox.
   useEffect(() => {
-    const inbox = rows.find((r): r is FolderRow => r.kind === "directory" && r.name === INBOX_FOLDER_NAME);
+    const inbox = rows.find(
+      (r): r is FolderRow => r.kind === "directory" && r.name.toLowerCase() === INBOX_FOLDER_NAME.toLowerCase(),
+    );
     const count = inbox ? inbox.children.filter((c) => c.kind === "markdown").length : 0;
     void setAppBadge(count);
   }, [rows]);
@@ -692,50 +694,81 @@ export function VaultApp() {
     }
   }, [engine, activeId, rows]);
 
-  const saveErrorShown = useRef(false);
-  const onSaveError = useCallback(() => {
-    if (!saveErrorShown.current) {
-      saveErrorShown.current = true;
-      toast.error("Changes to this note weren't saved. Copy your text before reloading.");
+  const notesRef = useRef(notes);
+  useLayoutEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+  const saveErrorShown = useRef(new Set<string>());
+  const savingTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const setDocumentSaveState = useCallback((documentId: string, state: SaveState) => {
+    setSaveStates((previous) => ({ ...previous, [documentId]: state }));
+  }, []);
+
+  const onPersisting = useCallback((documentId: string) => {
+    const existing = savingTimers.current.get(documentId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      savingTimers.current.delete(documentId);
+      setSaveStates((previous) => {
+        if (previous[documentId] !== "dirty" && previous[documentId] !== "error") return previous;
+        return { ...previous, [documentId]: "saving" };
+      });
+    }, 250);
+    savingTimers.current.set(documentId, timer);
+  }, []);
+
+  const onSaveError = useCallback((documentId: string) => {
+    const title = notesRef.current.find((note) => note.id === documentId)?.title ?? "this note";
+    if (!saveErrorShown.current.has(documentId)) {
+      saveErrorShown.current.add(documentId);
+      toast.error(`Changes to “${title}” weren't saved. Copy your text before reloading.`);
     }
-    setSaving("error");
+    const timer = savingTimers.current.get(documentId);
+    if (timer) clearTimeout(timer);
+    savingTimers.current.delete(documentId);
+    setDocumentSaveState(documentId, "error");
+  }, [setDocumentSaveState]);
+
+  const onPersisted = useCallback((documentId: string) => {
+    const timer = savingTimers.current.get(documentId);
+    if (timer) clearTimeout(timer);
+    savingTimers.current.delete(documentId);
+    saveErrorShown.current.delete(documentId);
+    setDocumentSaveState(documentId, "saved");
+    setTimeout(() => {
+      setSaveStates((previous) =>
+        previous[documentId] === "saved" ? { ...previous, [documentId]: "idle" } : previous,
+      );
+    }, SAVED_VISIBLE_MS);
+  }, [setDocumentSaveState]);
+
+  const onEditorDirtyChange = useCallback((documentId: string, dirty: boolean) => {
+    if (!dirty) return;
+    setSaveStates((previous) => ({
+      ...previous,
+      [documentId]: previous[documentId] === "error" ? "error" : "dirty",
+    }));
   }, []);
 
-  // Only confirm a save that followed an edit; persists on open stay silent.
-  const onPersisted = useCallback(() => {
-    setSaving((prev) => (prev === "idle" ? prev : "saved"));
-  }, []);
-
-  // Cmd/Ctrl+S: trigger a save in the open editor and surface the "Saved"
-  // badge — both when there's something to flush and as a confirmation that
-  // the doc is already persisted. A stale writer-lock flag is avoided by
-  // reading `isWriter` below, which re-derives on the §12 promotion tick.
+  // Cmd/Ctrl+S targets focused writable document only. Editors in other panes
+  // receive the request object but ignore a different documentId.
   const isWriter = Boolean(engine?.releaseWriterLock);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (!engine || !activeId || !isWriter) return;
-        setSaveRequest((n) => n + 1);
-        // Show the confirmation immediately; a failing persist overwrites
-        // it with the error state.
-        setSaving((prev) => (prev === "error" ? prev : "saved"));
+        setSaveRequest((previous) => ({ nonce: (previous?.nonce ?? 0) + 1, documentId: activeId }));
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [engine, activeId, isWriter]);
 
-  useEffect(() => {
-    if (saving !== "saved") return;
-    const t = setTimeout(() => setSaving("idle"), SAVED_VISIBLE_MS);
-    return () => clearTimeout(t);
-  }, [saving]);
-
-  useEffect(() => {
-    setSaving("idle");
-    saveErrorShown.current = false;
-  }, [activeId]);
+  useEffect(() => () => {
+    for (const timer of savingTimers.current.values()) clearTimeout(timer);
+  }, []);
 
   // Blocks mutations from a read-only tab (§12) — this engine is a real,
   // writable-in-memory VaultEngine.open() result even when this tab
@@ -748,6 +781,48 @@ export function VaultApp() {
     }
     return true;
   }, [engine]);
+
+  const captureInFlight = useRef(false);
+  const captureRequestNonce = useRef(0);
+  const captureThought = useCallback(async (): Promise<string> => {
+    if (captureInFlight.current || !engine || !workspaceStore || !requireWriter()) return "";
+    captureInFlight.current = true;
+    setCapturePending(true);
+    try {
+      const inboxId = ensureInbox(engine);
+      const doc = engine.createDocument(inboxId, "Untitled.md", "");
+      const focused = workspaceStore.getFocusedTab();
+      const tabId = workspaceStore.open(
+        { kind: "document", documentId: doc.id },
+        { mode: focused.resource ? "new" : "replace" },
+      );
+      setEditorFocusRequest({ nonce: ++captureRequestNonce.current, tabId });
+      refreshNotes(engine);
+      try {
+        await engine.persistTreeIncremental();
+        await engine.persistDocumentIncremental(doc.id);
+      } catch (error) {
+        console.error(error);
+        onSaveError(doc.id);
+      }
+      return doc.id;
+    } finally {
+      captureInFlight.current = false;
+      setCapturePending(false);
+    }
+  }, [engine, onSaveError, refreshNotes, requireWriter, workspaceStore]);
+
+  const modalOwnsFocus =
+    commandOpen ||
+    quickSwitcherOpen ||
+    backlinksOpen ||
+    newFolderOpen ||
+    pluginsDialogOpen ||
+    templateDialogMode !== null;
+  const activeEditorFocusRequest =
+    editorFocusRequest && focusedTabId === editorFocusRequest.tabId && !modalOwnsFocus
+      ? editorFocusRequest.nonce
+      : null;
 
   const createNote = useCallback(
     (parentTreeId?: TreeID, options: NoteCreationOptions = {}): string => {
@@ -920,18 +995,12 @@ export function VaultApp() {
 
   const onRenameNote = useCallback(
     async (id: string, title: string) => {
-      if (!engine || !requireWriter()) return;
-      try {
-        // Renames the file only (tree node name) — content is never
-        // touched, so the note can't be orphaned by editing its heading.
-        await engine.renameDocument(id, title);
-        await engine.persistTreeIncremental();
-        refreshNotes(engine);
-        toast.success("Note renamed");
-      } catch (e) {
-        console.error(e);
-        toast.error("Couldn't rename note");
-      }
+      if (!engine) throw new Error("Vault is not ready");
+      if (!requireWriter()) throw new Error("Vault is read-only");
+      // Renames file only. Content, selection, scroll, and undo history stay intact.
+      await engine.renameDocument(id, title);
+      await engine.persistTreeIncremental();
+      refreshNotes(engine);
     },
     [engine, refreshNotes, requireWriter],
   );
@@ -1046,35 +1115,29 @@ export function VaultApp() {
 
   const getTabTitle = useCallback(
     (tab: WorkspaceTab): string => {
-      if (!tab.resource) return COLLECTIONS[collections[tab.id] ?? "notes"].title;
+      if (!tab.resource) return COLLECTIONS[tab.collection ?? "notes"].title;
       if (tab.resource.kind === "asset") {
         return engine?.tree.getNode(tab.resource.treeId as TreeID)?.name ?? "Missing attachment";
       }
       const resource = tab.resource;
       return notes.find((note) => note.id === resource.documentId)?.title ?? "Missing note";
     },
-    [collections, engine, notes],
+    [engine, notes],
   );
 
-  const onEditorDirtyChange = useCallback((dirty: boolean) => {
-    setSaving((prev) =>
-      prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
-    );
-  }, []);
-
   const renderWorkspaceTab = useCallback(
-    (tab: WorkspaceTab, _paneId: string): ReactNode => {
+    (tab: WorkspaceTab): ReactNode => {
       if (!engine || !tab.resource) return null;
       if (tab.resource.kind === "asset") {
         const node = engine.tree.getNode(tab.resource.treeId as TreeID);
         if (!node || node.kind !== "binary") {
-          return <VaultEmpty onCreate={() => onCreate({ kind: "note" })} disabled={!engine.releaseWriterLock} />;
+          return <UnavailableSurface kind="attachment" onAllNotes={() => workspaceStore?.openCollection("notes")} />;
         }
         return <AssetViewer key={tab.id} engine={engine} treeId={node.treeId} title={node.name} />;
       }
       const documentId = tab.resource.documentId;
       const note = notes.find((candidate) => candidate.id === documentId);
-      if (!note) return <VaultEmpty onCreate={() => onCreate({ kind: "note" })} disabled={!engine.releaseWriterLock} />;
+      if (!note) return <UnavailableSurface kind="note" onAllNotes={() => workspaceStore?.openCollection("notes")} />;
       if (note.isGraph) {
         return (
           <GraphEditor
@@ -1083,6 +1146,7 @@ export function VaultApp() {
             documentId={documentId}
             readOnly={!engine.releaseWriterLock}
             onDirtyChange={onEditorDirtyChange}
+            onPersisting={onPersisting}
             onPersisted={onPersisted}
             onSaveError={onSaveError}
             saveRequest={saveRequest}
@@ -1096,9 +1160,11 @@ export function VaultApp() {
             engine={engine}
             documentId={documentId}
             workspaceTabId={tab.id}
+            focusRequest={activeEditorFocusRequest && focusedTabId === tab.id ? activeEditorFocusRequest : null}
             onAttachmentsChanged={() => refreshNotes(engine)}
             readOnly={!engine.releaseWriterLock}
             onDirtyChange={onEditorDirtyChange}
+            onPersisting={onPersisting}
             onPersisted={onPersisted}
             onSaveError={onSaveError}
             saveRequest={saveRequest}
@@ -1106,28 +1172,37 @@ export function VaultApp() {
         </NoteSurface>
       );
     },
-    [engine, notes, onCreate, onEditorDirtyChange, onPersisted, onRenameNote, onSaveError, saveRequest],
+    [
+      activeEditorFocusRequest,
+      engine,
+      focusedTabId,
+      notes,
+      onEditorDirtyChange,
+      onPersisting,
+      onPersisted,
+      onRenameNote,
+      onSaveError,
+      refreshNotes,
+      saveRequest,
+      workspaceStore,
+    ],
   );
 
   const openCollection = useCallback((collection: LibraryCollection) => {
-    if (!workspaceStore) return;
-    const pane = workspaceStore.getFocusedPane();
-    const libraryTab = pane.tabs.find((tab) => !tab.resource);
-    const tabId = libraryTab?.id ?? workspaceStore.newTab(pane.id);
-    workspaceStore.focusTab(tabId);
-    setCollections((previous) => ({ ...previous, [tabId]: collection }));
+    setEditorFocusRequest(null);
+    workspaceStore?.openCollection(collection);
   }, [workspaceStore]);
 
   const renderWorkspaceEmpty = useCallback(
     (paneId: string, tabId: string): ReactNode => {
-      const collection = collections[tabId] ?? "notes";
+      const tab = collectTabs(workspaceSnapshot.root).find((candidate) => candidate.id === tabId);
+      const collection = tab?.collection ?? "notes";
       return (
         <LibraryView
           collection={collection}
           notes={notes}
           recentDocumentIds={workspaceSnapshot.recentDocumentIds}
-          onSearch={() => setCommandOpen(true)}
-          onOpen={(id) => openDocument(id, "replace", paneId)}
+          onOpen={(id, mode) => openDocument(id, mode, paneId)}
           onCreate={() => {
             workspaceStore?.focusPane(paneId);
             if (!engine?.releaseWriterLock) return;
@@ -1140,12 +1215,13 @@ export function VaultApp() {
         />
       );
     },
-    [collections, engine, notes, onCreate, openDocument, workspaceSnapshot.recentDocumentIds, workspaceStore],
+    [engine, notes, onCreate, openDocument, workspaceSnapshot, workspaceStore],
   );
 
   const onRemoteSyncChange = useCallback(() => {
     if (engine) refreshNotes(engine);
   }, [engine, refreshNotes]);
+  const activeSaveState: SaveState = activeId ? saveStates[activeId] ?? "idle" : "idle";
 
   return (
     <SyncProvider engine={engine} onRemoteChange={onRemoteSyncChange}>
@@ -1153,6 +1229,7 @@ export function VaultApp() {
     <VaultPluginBridge
       engine={engine}
       onCreate={onCreate}
+      onCaptureThought={captureThought}
       onOpenNewFolder={() => setNewFolderOpen(true)}
       activeNote={pluginActiveNote}
       focusedTabId={focusedTabId}
@@ -1179,8 +1256,7 @@ export function VaultApp() {
         onDeleteAsset={onDeleteAsset}
         onMove={onMove}
         onOpenCommandMenu={() => setCommandOpen(true)}
-        notes={notes}
-        collection={!focusedResource ? collections[focusedTabId ?? ""] ?? "notes" : null}
+        collection={focusedCollection}
         onOpenCollection={openCollection}
         newFolderOpen={newFolderOpen}
         onNewFolderOpenChange={setNewFolderOpen}
@@ -1189,54 +1265,28 @@ export function VaultApp() {
         <VaultAccessBanner engine={engine} />
         <header className="app-titlebar wco-drag flex min-h-14 shrink-0 items-center gap-2 bg-background px-3">
           <SidebarTrigger className="wco-no-drag size-11 md:size-8" />
-          <Breadcrumb className="min-w-0">
-            <BreadcrumbList className="flex-nowrap">
-              {activeTitle ? (
-                <>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink
-                      render={
-                        <button
-                          type="button"
-                          className="wco-no-drag"
-                          onClick={() => openCollection("notes")}
-                        />
-                      }
-                    >
-                      All notes
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem className="min-w-0">
-                    <BreadcrumbPage className="truncate" aria-live="polite">
-                      {activeTitle}
-                    </BreadcrumbPage>
-                  </BreadcrumbItem>
-                </>
-              ) : (
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{COLLECTIONS[collections[focusedTabId ?? ""] ?? "notes"].title}</BreadcrumbPage>
-                </BreadcrumbItem>
-              )}
-            </BreadcrumbList>
-          </Breadcrumb>
+          <div className="min-w-0 flex-1" />
           <div className="wco-no-drag ml-auto flex items-center gap-2">
-            <span aria-live="polite" className="contents">
-              {activeId && saving !== "idle" && (
+            <span aria-live="polite" className="save-status-slot">
+              {activeId && activeSaveState !== "idle" && (
                 <Badge
                   variant={
-                    saving === "saved" ? "secondary" : saving === "error" ? "destructive" : "outline"
+                    activeSaveState === "saved" ? "secondary" : activeSaveState === "error" ? "destructive" : "outline"
                   }
+                  aria-label={SAVE_LABEL[activeSaveState]}
+                  title={SAVE_LABEL[activeSaveState]}
                   className="animate-in fade-in-0 motion-reduce:animate-none"
                 >
-                  {saving === "saving" ? (
+                  {activeSaveState === "saving" ? (
                     <Spinner data-icon="inline-start" />
-                  ) : saving === "saved" ? (
+                  ) : activeSaveState === "saved" ? (
                     <Check data-icon="inline-start" />
-                  ) : saving === "error" ? (
+                  ) : activeSaveState === "error" ? (
                     <TriangleAlert data-icon="inline-start" />
+                  ) : activeSaveState === "dirty" ? (
+                    <Circle data-icon="inline-start" />
                   ) : null}
-                  {SAVE_LABEL[saving]}
+                  {SAVE_LABEL[activeSaveState]}
                 </Badge>
               )}
             </span>
@@ -1270,12 +1320,24 @@ export function VaultApp() {
               </Tooltip>
             )}
             <ModeToggle />
-            <CreateMenu
-              onCreate={onCreate}
-              disabled={!engine?.releaseWriterLock}
-              variant="default"
-              className="capture-button size-11 md:size-9"
-            />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="default"
+                    size="icon-lg"
+                    className="capture-button wco-no-drag size-11 md:size-9"
+                    aria-label="Capture a thought"
+                    title="Capture a thought"
+                    disabled={!engine?.releaseWriterLock || capturePending}
+                    onClick={() => void captureThought()}
+                  >
+                    <Plus />
+                  </Button>
+                }
+              />
+              <TooltipContent>Capture a thought</TooltipContent>
+            </Tooltip>
           </div>
         </header>
 
@@ -1291,6 +1353,7 @@ export function VaultApp() {
               getTabTitle={getTabTitle}
               renderTab={renderWorkspaceTab}
               renderEmpty={renderWorkspaceEmpty}
+              onTabActivated={() => setEditorFocusRequest(null)}
             />
           ) : null}
         </main>
@@ -1363,16 +1426,21 @@ function GraphLoading() {
   );
 }
 
-function VaultEmpty({ onCreate, disabled }: { onCreate: () => void; disabled?: boolean }) {
+function UnavailableSurface({
+  kind,
+  onAllNotes,
+}: {
+  kind: "note" | "attachment";
+  onAllNotes: () => void;
+}) {
   return (
     <Empty>
       <EmptyMedia variant="icon">
-        <Inbox />
+        <FileWarning />
       </EmptyMedia>
-      <EmptyTitle>Nothing open</EmptyTitle>
-      <Button size="lg" onClick={onCreate} disabled={disabled}>
-        <Plus data-icon="inline-start" />
-        New note
+      <EmptyTitle>{kind === "note" ? "This note is unavailable" : "This attachment is unavailable"}</EmptyTitle>
+      <Button variant="outline" size="lg" onClick={onAllNotes}>
+        All notes
       </Button>
     </Empty>
   );

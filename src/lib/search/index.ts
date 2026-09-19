@@ -181,7 +181,10 @@ export class DerivedIndexes {
     const byTitle = new Map<string, string>();
     for (const d of docs) {
       byTitle.set(d.title.toLowerCase(), d.id);
-      byTitle.set(d.path.replace(/\.md$/i, "").toLowerCase(), d.id);
+      const path = d.path.replace(/\.md$/i, "").toLowerCase();
+      byTitle.set(path, d.id);
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      if (!byTitle.has(name)) byTitle.set(name, d.id);
     }
 
     for (const doc of docs) {

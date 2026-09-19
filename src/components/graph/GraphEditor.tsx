@@ -327,11 +327,12 @@ interface GraphEditorProps {
   engine: VaultEngine;
   documentId: string;
   readOnly?: boolean;
-  onDirtyChange?: (dirty: boolean) => void;
-  onPersisted?: () => void;
-  onSaveError?: () => void;
-  /** Incrementing counter; a new value asks for an immediate persist. */
-  saveRequest?: number;
+  onDirtyChange?: (documentId: string, dirty: boolean) => void;
+  onPersisting?: (documentId: string) => void;
+  onPersisted?: (documentId: string) => void;
+  onSaveError?: (documentId: string) => void;
+  /** Targeted request; split editors must not all flush together. */
+  saveRequest?: { nonce: number; documentId: string } | null;
 }
 
 function GraphEditorInner({
@@ -339,9 +340,10 @@ function GraphEditorInner({
   documentId,
   readOnly = false,
   onDirtyChange,
+  onPersisting,
   onPersisted,
   onSaveError,
-  saveRequest = 0,
+  saveRequest = null,
 }: GraphEditorProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -386,6 +388,7 @@ function GraphEditorInner({
       if (disposed.current || readOnly) return;
       const doc = engine.getDocument(documentId);
       if (!doc) return;
+      onPersisting?.(documentId);
       try {
         // Dynamic import: keeps loro-crdt's WASM out of this component's
         // static module graph (NoteEditor.tsx does the same) — GraphEditor
@@ -399,18 +402,18 @@ function GraphEditorInner({
           doc.doc.commit();
         }
         await engine.persistDocumentIncremental(documentId);
-        if (!disposed.current) onPersisted?.();
+        if (!disposed.current) onPersisted?.(documentId);
       } catch (err) {
         console.error("[graph] persist failed", err);
-        if (!disposed.current) onSaveError?.();
+        if (!disposed.current) onSaveError?.(documentId);
       }
     },
-    [engine, documentId, readOnly, onPersisted, onSaveError],
+    [engine, documentId, readOnly, onPersisting, onPersisted, onSaveError],
   );
 
   const schedulePersist = useCallback(
     (nextNodes: GraphFlowNode[], nextEdges: Edge[]) => {
-      onDirtyChange?.(true);
+      onDirtyChange?.(documentId, true);
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(() => {
         void persistNow(nextNodes, nextEdges);
@@ -723,7 +726,7 @@ function GraphEditorInner({
 
   // Reply to the app-level "save now" request (Cmd/Ctrl+S in VaultApp).
   useEffect(() => {
-    if (!saveRequest || readOnly) return;
+    if (!saveRequest || saveRequest.documentId !== documentId || readOnly) return;
     void persistNow(nodesRef.current, edgesRef.current);
   }, [saveRequest, readOnly, persistNow]);
 

@@ -9,7 +9,7 @@ import type { NoteRow } from "./AppSidebar";
 export function NoteSurface({ note, readOnly, onRename, children }: {
   note: NoteRow;
   readOnly: boolean;
-  onRename: (id: string, title: string) => void;
+  onRename: (id: string, title: string) => Promise<void>;
   children: ReactNode;
 }) {
   const [renaming, setRenaming] = useState(false);

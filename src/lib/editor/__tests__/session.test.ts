@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
 import { VaultEngine } from "@/lib/vault/engine";
 import { CONTENT_KEY } from "@/lib/core/document";
@@ -97,6 +97,50 @@ describe("createEditorSession", () => {
     expect(body(reopened.engine.getDocument(doc.id))).toContain(
       "updated in editor",
     );
+  });
+
+  it("keeps newer edits dirty until a later flush acknowledges them", async () => {
+    const engine = await makeEngine();
+    const doc = engine.createDocument(undefined, "pending.md", "# Pending");
+    await engine.persistTree();
+    await engine.materializeDocument(doc.id, "Pending.md");
+
+    const persist = engine.persistDocumentIncremental.bind(engine);
+    let release: (() => void) | undefined;
+    vi.spyOn(engine, "persistDocumentIncremental").mockImplementation(async (documentId, rules) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return persist(documentId, rules);
+    });
+
+    let persisted = 0;
+    const session = createEditorSession({
+      engine,
+      documentId: doc.id,
+      onPersisted: () => persisted++,
+    });
+    session.text.splice(session.text.length, 0, "\nfirst");
+    session.schedulePersist();
+    const firstFlush = session.flush();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+
+    session.text.splice(session.text.length, 0, "\nsecond");
+    session.schedulePersist();
+    release!();
+
+    expect(await firstFlush).toBe("dirty");
+    expect(session.isDirty()).toBe(true);
+    expect(persisted).toBe(0);
+
+    release = undefined;
+    const secondFlush = session.flush();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    release!();
+    expect(await secondFlush).toBe("persisted");
+    expect(session.isDirty()).toBe(false);
+    expect(persisted).toBe(1);
+    await session.dispose();
   });
 
   it("throws when the doc is not loaded in the engine", async () => {

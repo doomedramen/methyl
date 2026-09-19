@@ -24,7 +24,7 @@ export const amoledMinimal = EditorView.theme({
     width: "100%",
     maxWidth: "var(--note-page-width, 1100px)",
     margin: "0 auto",
-    padding: "16px clamp(24px, 4vw, 48px) 35vh",
+    padding: "16px var(--note-page-gutter, 48px) 35vh",
     lineHeight: "1.7",
     fontFamily: "var(--font-sans, inherit)",
   },

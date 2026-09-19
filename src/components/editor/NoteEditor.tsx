@@ -29,30 +29,33 @@ export function NoteEditor({
   workspaceTabId,
   onAttachmentsChanged,
   onDirtyChange,
+  onPersisting,
   onPersisted,
   onSaveError,
   readOnly = false,
-  /** Incrementing counter; a new value asks for an immediate flush. */
-  saveRequest = 0,
+  focusRequest = null,
+  saveRequest = null,
 }: {
   engine: VaultEngine;
   documentId: string;
   /** Stable identity used when more than one editor is mounted in a split. */
   workspaceTabId?: string;
   onAttachmentsChanged?: () => void;
-  onDirtyChange?: (dirty: boolean) => void;
-  onPersisted?: () => void;
+  onDirtyChange?: (documentId: string, dirty: boolean) => void;
+  onPersisting?: (documentId: string) => void;
+  onPersisted?: (documentId: string) => void;
   /** Edits did not reach the stored note (persist threw or text diverged). */
-  onSaveError?: () => void;
+  onSaveError?: (documentId: string) => void;
   /**
    * This tab doesn't hold the vault's writer lock (§12) — disable editing
    * rather than let two tabs write to the same OPFS store concurrently.
    * Content still updates live if the writer tab (or a sync round) changes
    * it, via the same loro-codemirror doc.subscribe binding as a writable
    * editor; only local keystrokes are blocked.
-   */
+  */
   readOnly?: boolean;
-  saveRequest?: number;
+  focusRequest?: number | null;
+  saveRequest?: { nonce: number; documentId: string } | null;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -60,6 +63,9 @@ export function NoteEditor({
   // Updated when the (async-bootstrapped) editor session creates its flush,
   // so a save request can fire it from outside the session's lifecycle.
   const flushRef = useRef<(() => void) | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const focusRequestRef = useRef<number | null>(focusRequest);
+  const focusedRequestRef = useRef<number | null>(null);
   const attachFilesRef = useRef<(files: File[]) => void>(() => undefined);
   const attachmentChangeRef = useRef(onAttachmentsChanged);
   useLayoutEffect(() => {
@@ -78,13 +84,23 @@ export function NoteEditor({
     appRef.current = app;
   }, [app]);
 
+  useLayoutEffect(() => {
+    focusRequestRef.current = focusRequest;
+    if (focusRequest === null || focusedRequestRef.current === focusRequest) return;
+    if (document.querySelector('[role="dialog"][data-open], [role="dialog"][data-state="open"]')) return;
+    const view = viewRef.current;
+    if (!view) return;
+    focusedRequestRef.current = focusRequest;
+    view.focus();
+  }, [focusRequest]);
+
   // Reply to the app-level "save now" request (Cmd/Ctrl+S in VaultApp).
   // If nothing is dirty the session's flush no-ops, which is fine — VaultApp
   // shows the "Saved" badge itself for the already-saved case.
   useEffect(() => {
-    if (!saveRequest) return;
+    if (!saveRequest || saveRequest.documentId !== documentId) return;
     flushRef.current?.();
-  }, [saveRequest]);
+  }, [documentId, saveRequest]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -134,10 +150,11 @@ export function NoteEditor({
           documentId,
           maxDirtyMs: 3_000,
           onPersisted: () => {
-            if (inSync()) onPersisted?.();
-            else onSaveError?.();
+            if (inSync()) onPersisted?.(documentId);
+            else onSaveError?.(documentId);
           },
-          onPersistError: () => onSaveError?.(),
+          onPersistStart: () => onPersisting?.(documentId),
+          onPersistError: () => onSaveError?.(documentId),
         });
         view = new EditorView({
           parent: host,
@@ -158,11 +175,11 @@ export function NoteEditor({
               EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
                   session.schedulePersist();
-                  onDirtyChange?.(true);
+                  onDirtyChange?.(documentId, true);
                   // Catch edits that never reach the LoroText, so no persist fires.
                   if (verifyTimer) clearTimeout(verifyTimer);
                   verifyTimer = setTimeout(() => {
-                    if (!disposed && !inSync()) onSaveError?.();
+                    if (!disposed && !inSync()) onSaveError?.(documentId);
                   }, 5_000);
                 }
               }),
@@ -246,8 +263,23 @@ export function NoteEditor({
         };
         view.dom.addEventListener("focusin", focusEditor);
         appRef.current.workspace.setActiveEditorView?.(view, editorTabId);
+        viewRef.current = view;
+        if (
+          focusRequestRef.current !== null &&
+          focusedRequestRef.current !== focusRequestRef.current &&
+          !document.querySelector('[role="dialog"][data-open], [role="dialog"][data-state="open"]')
+        ) {
+          focusedRequestRef.current = focusRequestRef.current;
+          view.focus();
+        }
 
-        const flush = () => void session.flush();
+        const flush = () => {
+          if (!session.isDirty()) {
+            onPersisted?.(documentId);
+            return;
+          }
+          void session.flush();
+        };
         flushRef.current = flush;
         const onHidden = () => {
           if (document.visibilityState === "hidden") flush();
@@ -275,6 +307,7 @@ export function NoteEditor({
           appRef.current.workspace.setActiveEditorView?.(null, editorTabId);
           const v = view;
           view = null;
+          viewRef.current = null;
           // Layout-effect cleanup runs before React removes this component's
           // host. Detach CodeMirror before that happens; waiting for the
           // session flush would leave EditorView.destroy() running against a

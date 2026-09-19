@@ -69,7 +69,8 @@ import {
 import { cn } from "@/lib/utils";
 import { PwaStatus } from "@/components/pwa/PwaStatus";
 import { CreateMenu } from "./CreateMenu";
-import { COLLECTIONS, collectionNotes, type LibraryCollection } from "./LibraryView";
+import { COLLECTIONS, type LibraryCollection } from "./LibraryView";
+import { formatHotkey } from "@/lib/plugins/hotkeys";
 import type { CreateHandler } from "./create-actions";
 import {
   RenameNoteDialog,
@@ -134,7 +135,7 @@ interface AppSidebarProps {
   onCreate: CreateHandler;
   onSelect: (id: string) => void;
   onSelectAsset: (treeId: TreeID) => void;
-  onRenameNote: (id: string, title: string) => void;
+  onRenameNote: (id: string, title: string) => Promise<void>;
   onDeleteNote: (id: string) => void;
   onRenameFolder: (treeId: TreeID, name: string) => void;
   onDeleteFolder: (treeId: TreeID) => void;
@@ -142,7 +143,6 @@ interface AppSidebarProps {
   onDeleteAsset: (treeId: TreeID) => void;
   onMove: (target: MoveTarget) => void;
   onOpenCommandMenu: () => void;
-  notes: NoteRow[];
   collection: LibraryCollection | null;
   onOpenCollection: (collection: LibraryCollection) => void;
   newFolderOpen: boolean;
@@ -344,7 +344,6 @@ export function AppSidebar({
   onDeleteAsset,
   onMove,
   onOpenCommandMenu,
-  notes,
   collection,
   onOpenCollection,
   newFolderOpen,
@@ -717,6 +716,7 @@ export function AppSidebar({
   // (VaultApp's creation handler guards on a missing engine/lock), so the buttons
   // that surface them stay disabled until writing is actually possible.
   const canWrite = Boolean(engine?.releaseWriterLock);
+  const platform = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "mac" : "other";
 
   return (
     <Sidebar variant="sidebar" className={cn("methyl-sidebar", activeDragId && "select-none touch-none")}>
@@ -744,12 +744,11 @@ export function AppSidebar({
           >
             <Search className="text-muted-foreground" />
             Search notes
-            <Kbd className="ml-auto">⌘K</Kbd>
+            <Kbd className="ml-auto">{formatHotkey({ modifiers: ["Mod"], key: "K" }, platform)}</Kbd>
           </Button>
           <nav aria-label="Collections" className="collection-nav">
             {(Object.keys(COLLECTIONS) as LibraryCollection[]).map((key) => {
               const { title, icon: Icon } = COLLECTIONS[key];
-              const count = collectionNotes(notes, key).length;
               return (
                 <button
                   key={key}
@@ -759,7 +758,6 @@ export function AppSidebar({
                 >
                   <Icon aria-hidden="true" className={`collection-${key}`} />
                   <span>{title}</span>
-                  {count > 0 && <small>{count}</small>}
                 </button>
               );
             })}

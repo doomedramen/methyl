@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   LocalStorageWorkspacePersistence,
+  parseWorkspaceSnapshot,
   WorkspaceStore,
   type WorkspacePersistence,
   type WorkspaceSnapshot,
@@ -91,5 +92,51 @@ describe("WorkspaceStore", () => {
     const storage = new LocalStorageWorkspacePersistence("test-workspace");
     testLocalStorage.setItem("test-workspace:v", "{bad");
     expect(storage.load("v")).toBeNull();
+  });
+
+  it("loads collection identity without changing document or asset tabs", () => {
+    const snapshot = parseWorkspaceSnapshot({
+      version: 1,
+      root: {
+        kind: "pane",
+        id: "pane-a",
+        activeTabId: "tab-inbox",
+        tabs: [
+          { id: "tab-inbox", resource: null, collection: "inbox" },
+          { id: "tab-graphs", resource: null, collection: "invalid" },
+          { id: "tab-note", resource: { kind: "document", documentId: "note-1" }, collection: "graphs" },
+          { id: "tab-asset", resource: { kind: "asset", treeId: "asset-1" }, collection: "inbox" },
+        ],
+      },
+      focusedPaneId: "pane-a",
+      recentDocumentIds: ["note-1"],
+    });
+
+    expect(snapshot?.root.kind).toBe("pane");
+    if (snapshot?.root.kind !== "pane") return;
+    expect(snapshot.root.tabs.map((tab) => tab.collection)).toEqual(["inbox", "notes", undefined, undefined]);
+    expect(snapshot.root.tabs[2]?.resource).toEqual({ kind: "document", documentId: "note-1" });
+    expect(snapshot.root.tabs[3]?.resource).toEqual({ kind: "asset", treeId: "asset-1" });
+  });
+
+  it("opens collections in a blank tab and keeps document tabs intact", () => {
+    const store = new WorkspaceStore({ idFactory: ids() });
+    const noteTab = store.open({ kind: "document", documentId: "note" });
+    const inboxTab = store.openCollection("inbox");
+    expect(inboxTab).not.toBe(noteTab);
+    expect(store.getFocusedTab()).toMatchObject({ resource: null, collection: "inbox" });
+    expect(store.getFocusedPane().tabs).toHaveLength(2);
+
+    store.open({ kind: "document", documentId: "note-2" });
+    const graphsTab = store.openCollection("graphs");
+    expect(graphsTab).not.toBe(noteTab);
+    expect(store.getFocusedTab()).toMatchObject({ resource: null, collection: "graphs" });
+    expect(store.getFocusedPane().tabs).toHaveLength(3);
+    expect(store.getFocusedPane().tabs[0]?.resource).toEqual({ kind: "document", documentId: "note" });
+
+    const lastTabStore = new WorkspaceStore({ idFactory: ids() });
+    const lastTab = lastTabStore.open({ kind: "document", documentId: "only" });
+    lastTabStore.closeTab(lastTab);
+    expect(lastTabStore.getFocusedTab()).toMatchObject({ resource: null, collection: "notes" });
   });
 });

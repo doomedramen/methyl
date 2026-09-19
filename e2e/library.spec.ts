@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("Inbox creation, renaming, and collection navigation preserve the note", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("header").getByRole("button", { name: "Add" })).toBeEnabled();
+  await expect(page.locator("header").getByRole("button", { name: "Capture a thought" })).toBeEnabled();
   const collections = page.getByRole("navigation", { name: "Collections" });
   await collections.getByRole("button", { name: /^Inbox/ }).click();
   await page.getByRole("button", { name: "New note", exact: true }).click();
@@ -17,7 +17,7 @@ test("Inbox creation, renaming, and collection navigation preserve the note", as
   await expect(page.getByRole("heading", { name: "Recently opened" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "A captured thought" })).toBeVisible();
   await collections.getByRole("button", { name: /^Inbox/ }).click();
-  await page.locator(".library-page").getByRole("button", { name: "A captured thought Inbox" }).click();
+  await page.locator(".library-page").getByRole("button", { name: "A captured thought", exact: true }).click();
   await expect(editor).toContainText("Keep this thought while browsing collections.");
   // Reopening the title dialog must use the current filename, not its initial value.
   await page.getByRole("button", { name: "Rename A captured thought", exact: true }).click();
@@ -29,10 +29,10 @@ test("Inbox creation, renaming, and collection navigation preserve the note", as
 
 test("graph collection filters notes and creates a real graph", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("header").getByRole("button", { name: "Add" })).toBeEnabled();
+  await expect(page.locator("header").getByRole("button", { name: "Capture a thought" })).toBeEnabled();
   const collections = page.getByRole("navigation", { name: "Collections" });
   await collections.getByRole("button", { name: /^Graphs/ }).click();
-  await expect(page.getByRole("heading", { name: "Connect your ideas" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No graphs yet" })).toBeVisible();
   await page.getByRole("button", { name: "New graph", exact: true }).click();
   await expect(page.locator(".react-flow")).toBeVisible();
   await collections.getByRole("button", { name: /^Graphs/ }).click();
@@ -44,7 +44,7 @@ test("mobile collections close the drawer and reduced motion suppresses the reve
   await page.setViewportSize({ width: 375, height: 667 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
-  await expect(page.locator("header").getByRole("button", { name: "Add" })).toBeEnabled();
+  await expect(page.locator("header").getByRole("button", { name: "Capture a thought" })).toBeEnabled();
   await page.getByRole("button", { name: "Toggle Sidebar" }).click();
   await page.getByRole("navigation", { name: "Collections" }).getByRole("button", { name: /^Inbox/ }).click();
   await expect(page.locator('[data-sidebar="sidebar"][data-mobile="true"]')).not.toBeVisible();

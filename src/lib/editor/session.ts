@@ -10,6 +10,8 @@ export interface EditorSessionOptions {
   persistDebounceMs?: number;
   /** Force a flush once the doc has been dirty for this long. */
   maxDirtyMs?: number;
+  /** Called when a real persistence attempt starts. */
+  onPersistStart?: () => void;
   /** Called after a successful incremental persist. */
   onPersisted?: () => void;
   /** Called when a persist attempt throws. */
@@ -24,7 +26,7 @@ export interface EditorSession {
   /** Mark dirty and schedule a (debounced) incremental persist. */
   schedulePersist(): void;
   /** Immediately write any pending local edits. */
-  flush(): Promise<void>;
+  flush(): Promise<"idle" | "persisted" | "dirty" | "error">;
   isDirty(): boolean;
   lastPersistedAt(): number | null;
   dispose(flush?: boolean): Promise<void>;
@@ -44,6 +46,7 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
     documentId,
     persistDebounceMs = 400,
     maxDirtyMs = 2_000,
+    onPersistStart,
     onPersisted,
     onPersistError,
   } = opts;
@@ -59,6 +62,7 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
   let maxAgeTimer: ReturnType<typeof setTimeout> | null = null;
   let processing = false;
   let disposed = false;
+  let editGeneration = 0;
 
   const clearTimers = () => {
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -75,11 +79,13 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
     }, maxDirtyMs);
   };
 
-  const flush = async (): Promise<void> => {
+  const flush = async (): Promise<"idle" | "persisted" | "dirty" | "error"> => {
     clearTimers();
-    if (disposed) return;
-    if (!dirty) return;
+    if (disposed) return "idle";
+    if (!dirty) return "idle";
     processing = true;
+    const generationAtStart = editGeneration;
+    onPersistStart?.();
     try {
       // A per-document mutex, deliberately distinct from the tab's own
       // long-lived writer lock (§12) — re-acquiring that same lock name
@@ -91,11 +97,17 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
       const lock = await acquireVaultOpLock(engine.vaultId, documentId);
       await lock.guard(() => engine.persistDocumentIncremental(documentId));
       lastPersisted = Date.now();
-      dirty = false;
-      onPersisted?.();
+      if (editGeneration === generationAtStart) {
+        dirty = false;
+        onPersisted?.();
+        return "persisted";
+      }
+      dirty = true;
+      return "dirty";
     } catch (err) {
       console.error("[editor] persist failed", err);
       onPersistError?.(err);
+      return "error";
     } finally {
       processing = false;
       // Edits that landed while persisting must flush again
@@ -121,6 +133,7 @@ export function createEditorSession(opts: EditorSessionOptions): EditorSession {
     doc,
     text,
     schedulePersist: () => {
+      editGeneration += 1;
       dirty = true;
       beginTimers();
     },

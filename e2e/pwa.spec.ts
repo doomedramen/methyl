@@ -35,7 +35,7 @@ test("?action=new creates and opens a note, then strips the query param", async 
   await page.goto("/?action=new");
   await page.waitForTimeout(1200);
 
-  await expect(page.getByRole("navigation", { name: "breadcrumb" })).toContainText("Untitled");
+  await expect(page.getByRole("tab", { name: "Untitled", exact: true })).toBeVisible();
   // Once VaultApp has handled the action it rewrites the URL without it —
   // the note itself continues to mirror into the path instead (see
   // VaultApp.tsx's URL-mirroring effect).
