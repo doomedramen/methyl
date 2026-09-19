@@ -41,7 +41,7 @@ import {
 } from "@/components/ui/sidebar";
 import { NoteEditor } from "@/components/editor/NoteEditor";
 import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
-import { AppSidebar, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
+import { AppSidebar, type BinaryRow, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
 import { CreateMenu } from "./CreateMenu";
 import { COLLECTIONS, LibraryView, type LibraryCollection } from "./LibraryView";
 import { NoteSurface } from "./NoteSurface";
@@ -75,11 +75,15 @@ import {
   createEmptyWorkspaceSnapshot,
   LocalStorageWorkspacePersistence,
   type WorkspaceOpenMode,
+  resourceKey,
   type WorkspaceStore,
   type WorkspaceTab,
+  type WorkspaceResource,
   WorkspaceStore as WorkspaceStateStore,
 } from "@/lib/workspace/store";
 import { findActiveTab, WorkspaceView } from "./WorkspaceView";
+import { AssetViewer } from "./AssetViewer";
+import { AttachmentPreviewCache } from "@/lib/vault/attachments";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -150,6 +154,18 @@ function toRow(node: VaultTreeNode, tree: VaultTree, engine: VaultEngine, parent
       children: tree.children(node.treeId).map((child) => toRow(child, tree, engine, `${parentPath}${node.name}/`)),
     };
   }
+  if (node.kind === "binary") {
+    const path = `${parentPath}${node.name}`;
+    const row: BinaryRow = {
+      treeId: node.treeId,
+      kind: "binary",
+      id: String(node.treeId),
+      title: node.name,
+      path,
+      sha256: node.sha256,
+    };
+    return row;
+  }
   const doc = node.documentId ? engine.getDocument(node.documentId) : undefined;
   const isGraph = doc ? detectGraphDocument(doc.getMarkdown()) !== null : false;
   return {
@@ -170,7 +186,7 @@ function flattenNotes(rows: SidebarRow[]): NoteRow[] {
   const out: NoteRow[] = [];
   for (const row of rows) {
     if (row.kind === "markdown") out.push(row);
-    else out.push(...flattenNotes(row.children));
+    else if (row.kind === "directory") out.push(...flattenNotes(row.children));
   }
   return out;
 }
@@ -260,6 +276,11 @@ function VaultPluginBridge({
   // registry separate from the workspace tree: it is a live DOM concern, not
   // persisted vault state.
   const activeEditors = useMemo(() => new ActiveEditorRegistry(), []);
+  const attachmentCache = useMemo(
+    () => (engine ? new AttachmentPreviewCache(engine) : null),
+    [engine],
+  );
+  useEffect(() => () => attachmentCache?.dispose(), [attachmentCache]);
 
   const appImpl: App = useMemo<App>(
     () => ({
@@ -305,6 +326,10 @@ function VaultPluginBridge({
             : undefined,
         getWikilinkCandidates: () =>
           engine && wikilinkModRef.current ? wikilinkModRef.current.listWikilinkCandidates(engine.tree) : [],
+        resolveAttachment: (target: string, documentId?: string) =>
+          attachmentCache?.resolve(target, documentId ?? activeNote?.documentId),
+        loadAttachment: (target: string, documentId?: string) =>
+          attachmentCache?.load(target, documentId ?? activeNote?.documentId) ?? Promise.resolve(undefined),
         createWikilinkTarget: (target: string) => {
           if (!engine || !wikilinkModRef.current) return;
           if (readOnly) {
@@ -348,6 +373,7 @@ function VaultPluginBridge({
     [
       activeNote,
       activeEditors,
+      attachmentCache,
       commandRegistry,
       engine,
       focusedTabId,
@@ -538,11 +564,19 @@ export function VaultApp() {
   const focusedTab = findActiveTab(workspaceSnapshot);
   const focusedResource = focusedTab?.resource;
   const activeId = focusedResource?.kind === "document" ? focusedResource.documentId : null;
+  const activeResourceKey = resourceKey(focusedResource ?? null);
   const focusedTabId = focusedTab?.id ?? null;
 
   const openDocument = useCallback(
     (documentId: string, mode: WorkspaceOpenMode = "replace", paneId?: string) => {
       workspaceStore?.open({ kind: "document", documentId }, { mode, paneId });
+    },
+    [workspaceStore],
+  );
+
+  const openAsset = useCallback(
+    (treeId: TreeID, mode: WorkspaceOpenMode = "replace", paneId?: string) => {
+      workspaceStore?.open({ kind: "asset", treeId: String(treeId) }, { mode, paneId });
     },
     [workspaceStore],
   );
@@ -605,9 +639,14 @@ export function VaultApp() {
   useEffect(() => {
     if (!engine || !workspaceStore || !notePathRef.current) return;
     refreshNotes(engine);
-    workspaceStore.prune(
-      engine.tree.documentIds().map((documentId) => ({ kind: "document", documentId })),
-    );
+    const validResources: WorkspaceResource[] = [
+      ...engine.tree.documentIds().map((documentId) => ({ kind: "document" as const, documentId })),
+      ...engine.tree
+        .allNodes()
+        .filter((node) => node.kind === "binary")
+        .map((node) => ({ kind: "asset" as const, treeId: String(node.treeId) })),
+    ];
+    workspaceStore.prune(validResources);
     const wanted = notePathRef.current.notePathFromLocation(window.location.pathname, engine.vaultId);
     if (wanted) {
       const found = notePathRef.current.docIdForPath(engine.tree, wanted);
@@ -972,11 +1011,13 @@ export function VaultApp() {
   const getTabTitle = useCallback(
     (tab: WorkspaceTab): string => {
       if (!tab.resource) return COLLECTIONS[collections[tab.id] ?? "notes"].title;
-      if (tab.resource.kind === "asset") return "Asset";
+      if (tab.resource.kind === "asset") {
+        return engine?.tree.getNode(tab.resource.treeId as TreeID)?.name ?? "Missing attachment";
+      }
       const resource = tab.resource;
       return notes.find((note) => note.id === resource.documentId)?.title ?? "Missing note";
     },
-    [collections, notes],
+    [collections, engine, notes],
   );
 
   const onEditorDirtyChange = useCallback((dirty: boolean) => {
@@ -987,7 +1028,14 @@ export function VaultApp() {
 
   const renderWorkspaceTab = useCallback(
     (tab: WorkspaceTab, _paneId: string): ReactNode => {
-      if (!engine || !tab.resource || tab.resource.kind !== "document") return null;
+      if (!engine || !tab.resource) return null;
+      if (tab.resource.kind === "asset") {
+        const node = engine.tree.getNode(tab.resource.treeId as TreeID);
+        if (!node || node.kind !== "binary") {
+          return <VaultEmpty onCreate={() => onCreate({ kind: "note" })} disabled={!engine.releaseWriterLock} />;
+        }
+        return <AssetViewer key={tab.id} engine={engine} treeId={node.treeId} title={node.name} />;
+      }
       const documentId = tab.resource.documentId;
       const note = notes.find((candidate) => candidate.id === documentId);
       if (!note) return <VaultEmpty onCreate={() => onCreate({ kind: "note" })} disabled={!engine.releaseWriterLock} />;
@@ -1012,6 +1060,7 @@ export function VaultApp() {
             engine={engine}
             documentId={documentId}
             workspaceTabId={tab.id}
+            onAttachmentsChanged={() => refreshNotes(engine)}
             readOnly={!engine.releaseWriterLock}
             onDirtyChange={onEditorDirtyChange}
             onPersisted={onPersisted}
@@ -1081,9 +1130,11 @@ export function VaultApp() {
       <AppSidebar
         rows={rows}
         activeId={activeId}
+        activeResourceKey={activeResourceKey}
         engine={engine}
         onCreate={onCreate}
         onSelect={openDocument}
+        onSelectAsset={openAsset}
         onRenameNote={onRenameNote}
         onDeleteNote={onDeleteNote}
         onRenameFolder={onRenameFolder}

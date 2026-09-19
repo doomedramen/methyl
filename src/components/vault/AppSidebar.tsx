@@ -11,6 +11,7 @@ import {
   FolderPlus,
   Inbox,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Plus,
   Search,
@@ -105,7 +106,16 @@ export interface NoteRow {
   isGraph: boolean;
 }
 
-export type SidebarRow = FolderRow | NoteRow;
+export interface BinaryRow {
+  treeId: TreeID;
+  kind: "binary";
+  id: string;
+  title: string;
+  path?: string;
+  sha256?: string;
+}
+
+export type SidebarRow = FolderRow | NoteRow | BinaryRow;
 
 export interface MoveTarget {
   treeId: TreeID;
@@ -116,10 +126,12 @@ export interface MoveTarget {
 interface AppSidebarProps {
   rows: SidebarRow[];
   activeId: string | null;
+  activeResourceKey?: string | null;
   /** Passed through to the footer status popover for the diagnostics copy action. */
   engine: VaultEngine | null;
   onCreate: CreateHandler;
   onSelect: (id: string) => void;
+  onSelectAsset: (treeId: TreeID) => void;
   onRenameNote: (id: string, title: string) => void;
   onDeleteNote: (id: string) => void;
   onRenameFolder: (treeId: TreeID, name: string) => void;
@@ -307,7 +319,7 @@ function countNotes(row: FolderRow): number {
   let n = 0;
   for (const child of row.children) {
     if (child.kind === "markdown") n += 1;
-    else n += countNotes(child);
+    else if (child.kind === "directory") n += countNotes(child);
   }
   return n;
 }
@@ -315,9 +327,11 @@ function countNotes(row: FolderRow): number {
 export function AppSidebar({
   rows,
   activeId,
+  activeResourceKey = null,
   engine,
   onCreate,
   onSelect,
+  onSelectAsset,
   onRenameNote,
   onDeleteNote,
   onRenameFolder,
@@ -398,6 +412,11 @@ export function AppSidebar({
 
   const pick = (id: string) => {
     onSelect(id);
+    setOpenMobile(false);
+  };
+
+  const pickAsset = (treeId: TreeID) => {
+    onSelectAsset(treeId);
     setOpenMobile(false);
   };
 
@@ -821,9 +840,11 @@ export function AppSidebar({
                         key={f.row.treeId}
                         flat={f}
                         activeId={activeId}
+                        activeResourceKey={activeResourceKey}
                         isCollapsed={f.row.kind === "directory" && collapsed.has(f.row.treeId)}
                         onToggleCollapsed={toggleCollapsed}
                         onPick={pick}
+                        onPickAsset={pickAsset}
                         placement={placement}
                         isDragging={activeDragId === f.row.treeId}
                         isDimmed={Boolean(
@@ -858,6 +879,8 @@ export function AppSidebar({
                       <div className="flex min-w-0 items-center gap-2">
                         {draggedRow.kind === "directory" ? (
                           <Folder className="size-4 shrink-0" />
+                        ) : draggedRow.kind === "binary" ? (
+                          <Paperclip className="size-4 shrink-0" />
                         ) : draggedRow.isGraph ? (
                           <Workflow className="size-4 shrink-0" />
                         ) : (
@@ -942,9 +965,11 @@ export function AppSidebar({
 interface RowProps {
   flat: FlatRow;
   activeId: string | null;
+  activeResourceKey: string | null;
   isCollapsed: boolean;
   onToggleCollapsed: (treeId: TreeID) => void;
   onPick: (id: string) => void;
+  onPickAsset: (treeId: TreeID) => void;
   placement: SidebarPlacement | null;
   isDragging: boolean;
   isDimmed: boolean;
@@ -959,9 +984,11 @@ interface RowProps {
 function Row({
   flat,
   activeId,
+  activeResourceKey,
   isCollapsed,
   onToggleCollapsed,
   onPick,
+  onPickAsset,
   placement,
   isDragging,
   isDimmed,
@@ -1095,6 +1122,37 @@ function Row({
           </ContextMenuContent>
         </ContextMenu>
         {showBefore && <DropLine position="before" depth={placement?.depth ?? depth} />}
+        {showAfter && <DropLine position="after" depth={placement?.depth ?? depth} />}
+      </SidebarMenuItem>
+    );
+  }
+
+  if (row.kind === "binary") {
+    const asset = row;
+    return (
+      <SidebarMenuItem className="group/menu-item relative">
+        {showBefore && <DropLine position="before" depth={placement?.depth ?? depth} />}
+        <div
+          ref={setRefs}
+          {...attributes}
+          {...listeners}
+          data-sidebar-drag-row="true"
+          style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
+          className={cn("relative rounded-md", (isDragging || isDimmed) && "opacity-35")}
+        >
+          {depth > 0 && <IndentGuide depth={depth} />}
+          {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
+          <SidebarMenuButton
+            isActive={activeResourceKey === `asset:${String(asset.treeId)}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => onPickAsset(asset.treeId)}
+            className={ROW_BUTTON}
+            title={asset.path}
+          >
+            <Paperclip className="text-muted-foreground" />
+            <span>{asset.title}</span>
+          </SidebarMenuButton>
+        </div>
         {showAfter && <DropLine position="after" depth={placement?.depth ?? depth} />}
       </SidebarMenuItem>
     );
