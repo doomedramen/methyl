@@ -23,7 +23,7 @@ export function ModeToggle() {
             <DropdownMenuTrigger
               render={
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="icon-lg"
                   className="relative size-11 md:size-9"
                 >

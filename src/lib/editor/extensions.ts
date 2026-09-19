@@ -2,6 +2,7 @@ import { type Compartment, type Extension } from "@codemirror/state";
 import {
   EditorView,
   keymap,
+  placeholder,
   highlightSpecialChars,
   drawSelection,
   rectangularSelection,
@@ -53,6 +54,7 @@ export function adhdEditorExtensions(opts: {
   const getText: (d: LoroDoc) => LoroText = getContentTextFromDoc;
 
   return [
+    placeholder("Start writing…"),
     highlightSpecialChars(),
     drawSelection(),
     rectangularSelection(),

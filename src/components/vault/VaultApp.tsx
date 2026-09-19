@@ -25,7 +25,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
-import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Breadcrumb,
@@ -44,12 +43,14 @@ import { NoteEditor } from "@/components/editor/NoteEditor";
 import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
 import { AppSidebar, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
 import { CreateMenu } from "./CreateMenu";
+import { COLLECTIONS, LibraryView, type LibraryCollection } from "./LibraryView";
+import { NoteSurface } from "./NoteSurface";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
 import { VaultAccessBanner } from "./VaultAccessBanner";
-import { captureToInbox, INBOX_FOLDER_NAME } from "@/lib/vault/inbox";
+import { captureToInbox, ensureInbox, INBOX_FOLDER_NAME } from "@/lib/vault/inbox";
 import { setAppBadge } from "@/lib/browser/pwa";
 import { shareToCaptures, type SharePayload } from "@/lib/vault/share-payload";
 import { PluginHost } from "@/lib/plugins/host";
@@ -509,6 +510,7 @@ export function VaultApp() {
   const [error, setError] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
+  const [collections, setCollections] = useState<Record<string, LibraryCollection>>({});
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
@@ -969,12 +971,12 @@ export function VaultApp() {
 
   const getTabTitle = useCallback(
     (tab: WorkspaceTab): string => {
-      if (!tab.resource) return "New tab";
+      if (!tab.resource) return COLLECTIONS[collections[tab.id] ?? "notes"].title;
       if (tab.resource.kind === "asset") return "Asset";
       const resource = tab.resource;
       return notes.find((note) => note.id === resource.documentId)?.title ?? "Missing note";
     },
-    [notes],
+    [collections, notes],
   );
 
   const onEditorDirtyChange = useCallback((dirty: boolean) => {
@@ -1004,33 +1006,56 @@ export function VaultApp() {
         );
       }
       return (
-        <NoteEditor
-          key={tab.id}
-          engine={engine}
-          documentId={documentId}
-          workspaceTabId={tab.id}
-          readOnly={!engine.releaseWriterLock}
-          onDirtyChange={onEditorDirtyChange}
-          onPersisted={onPersisted}
-          onSaveError={onSaveError}
-          saveRequest={saveRequest}
+        <NoteSurface key={tab.id} note={note} readOnly={!engine.releaseWriterLock} onRename={onRenameNote}>
+          <NoteEditor
+            key={tab.id}
+            engine={engine}
+            documentId={documentId}
+            workspaceTabId={tab.id}
+            readOnly={!engine.releaseWriterLock}
+            onDirtyChange={onEditorDirtyChange}
+            onPersisted={onPersisted}
+            onSaveError={onSaveError}
+            saveRequest={saveRequest}
+          />
+        </NoteSurface>
+      );
+    },
+    [engine, notes, onCreate, onEditorDirtyChange, onPersisted, onRenameNote, onSaveError, saveRequest],
+  );
+
+  const openCollection = useCallback((collection: LibraryCollection) => {
+    if (!workspaceStore) return;
+    const pane = workspaceStore.getFocusedPane();
+    const libraryTab = pane.tabs.find((tab) => !tab.resource);
+    const tabId = libraryTab?.id ?? workspaceStore.newTab(pane.id);
+    workspaceStore.focusTab(tabId);
+    setCollections((previous) => ({ ...previous, [tabId]: collection }));
+  }, [workspaceStore]);
+
+  const renderWorkspaceEmpty = useCallback(
+    (paneId: string, tabId: string): ReactNode => {
+      const collection = collections[tabId] ?? "notes";
+      return (
+        <LibraryView
+          collection={collection}
+          notes={notes}
+          recentDocumentIds={workspaceSnapshot.recentDocumentIds}
+          onSearch={() => setCommandOpen(true)}
+          onOpen={(id) => openDocument(id, "replace", paneId)}
+          onCreate={() => {
+            workspaceStore?.focusPane(paneId);
+            if (!engine?.releaseWriterLock) return;
+            onCreate({
+              kind: collection === "graphs" ? "graph" : "note",
+              parentTreeId: collection === "inbox" ? ensureInbox(engine) : undefined,
+            });
+          }}
+          disabled={!engine?.releaseWriterLock}
         />
       );
     },
-    [engine, notes, onCreate, onEditorDirtyChange, onPersisted, onSaveError, saveRequest],
-  );
-
-  const renderWorkspaceEmpty = useCallback(
-    (paneId: string): ReactNode => (
-      <VaultEmpty
-        onCreate={() => {
-          workspaceStore?.focusPane(paneId);
-          onCreate({ kind: "note" });
-        }}
-        disabled={!engine?.releaseWriterLock}
-      />
-    ),
-    [engine, onCreate, workspaceStore],
+    [collections, engine, notes, onCreate, openDocument, workspaceSnapshot.recentDocumentIds, workspaceStore],
   );
 
   const onRemoteSyncChange = useCallback(() => {
@@ -1039,7 +1064,7 @@ export function VaultApp() {
 
   return (
     <SyncProvider engine={engine} onRemoteChange={onRemoteSyncChange}>
-    <SidebarProvider className="h-full">
+    <SidebarProvider className="methyl-app h-full">
     <VaultPluginBridge
       engine={engine}
       onCreate={onCreate}
@@ -1065,14 +1090,16 @@ export function VaultApp() {
         onDeleteFolder={onDeleteFolder}
         onMove={onMove}
         onOpenCommandMenu={() => setCommandOpen(true)}
+        notes={notes}
+        collection={!focusedResource ? collections[focusedTabId ?? ""] ?? "notes" : null}
+        onOpenCollection={openCollection}
         newFolderOpen={newFolderOpen}
         onNewFolderOpenChange={setNewFolderOpen}
       />
-      <SidebarInset className="flex min-w-0 flex-1 flex-col">
+      <SidebarInset className="methyl-canvas flex min-w-0 flex-1 flex-col">
         <VaultAccessBanner engine={engine} />
-        <header className="app-titlebar wco-drag flex min-h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
+        <header className="app-titlebar wco-drag flex min-h-14 shrink-0 items-center gap-2 bg-background px-3">
           <SidebarTrigger className="wco-no-drag size-11 md:size-8" />
-          <Separator orientation="vertical" className="h-5" />
           <Breadcrumb className="min-w-0">
             <BreadcrumbList className="flex-nowrap">
               {activeTitle ? (
@@ -1083,11 +1110,11 @@ export function VaultApp() {
                         <button
                           type="button"
                           className="wco-no-drag"
-                          onClick={() => workspaceStore?.replaceFromDeepLink(null)}
+                          onClick={() => openCollection("notes")}
                         />
                       }
                     >
-                      Vault
+                      All notes
                     </BreadcrumbLink>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
@@ -1099,7 +1126,7 @@ export function VaultApp() {
                 </>
               ) : (
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Vault</BreadcrumbPage>
+                  <BreadcrumbPage>{COLLECTIONS[collections[focusedTabId ?? ""] ?? "notes"].title}</BreadcrumbPage>
                 </BreadcrumbItem>
               )}
             </BreadcrumbList>
@@ -1131,7 +1158,7 @@ export function VaultApp() {
                     <Button
                       variant="outline"
                       size="icon-lg"
-                      className="relative !size-11 !min-h-11 !min-w-11"
+                      className="backlinks-trigger relative !size-11 !min-h-11 !min-w-11"
                       aria-label="Show backlinks"
                       aria-expanded={backlinksOpen}
                       aria-haspopup="dialog"
@@ -1157,8 +1184,8 @@ export function VaultApp() {
             <CreateMenu
               onCreate={onCreate}
               disabled={!engine?.releaseWriterLock}
-              variant="outline"
-              className="size-11 md:size-9"
+              variant="default"
+              className="capture-button size-11 md:size-9"
             />
           </div>
         </header>

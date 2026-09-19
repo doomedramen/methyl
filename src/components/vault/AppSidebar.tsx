@@ -68,6 +68,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PwaStatus } from "@/components/pwa/PwaStatus";
 import { CreateMenu } from "./CreateMenu";
+import { COLLECTIONS, collectionNotes, type LibraryCollection } from "./LibraryView";
 import type { CreateHandler } from "./create-actions";
 import {
   RenameNoteDialog,
@@ -125,6 +126,9 @@ interface AppSidebarProps {
   onDeleteFolder: (treeId: TreeID) => void;
   onMove: (target: MoveTarget) => void;
   onOpenCommandMenu: () => void;
+  notes: NoteRow[];
+  collection: LibraryCollection | null;
+  onOpenCollection: (collection: LibraryCollection) => void;
   newFolderOpen: boolean;
   onNewFolderOpenChange: (open: boolean) => void;
 }
@@ -320,6 +324,9 @@ export function AppSidebar({
   onDeleteFolder,
   onMove,
   onOpenCommandMenu,
+  notes,
+  collection,
+  onOpenCollection,
   newFolderOpen,
   onNewFolderOpenChange,
 }: AppSidebarProps) {
@@ -685,8 +692,8 @@ export function AppSidebar({
   const canWrite = Boolean(engine?.releaseWriterLock);
 
   return (
-    <Sidebar variant="inset" className={activeDragId ? "select-none touch-none" : undefined}>
-      <SidebarHeader className="flex-row items-center justify-between gap-2 px-4 pt-6 md:pt-3">
+    <Sidebar variant="sidebar" className={cn("methyl-sidebar", activeDragId && "select-none touch-none")}>
+      <SidebarHeader className="methyl-sidebar-header flex-row items-center justify-between gap-2 px-5 pt-6 md:pt-5">
         <div className="flex min-w-0 items-center gap-2">
           <img src="/icon.svg" alt="" className="size-6 shrink-0 rounded-md" />
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
@@ -705,15 +712,33 @@ export function AppSidebar({
         <SidebarGroup>
           <Button
             variant="ghost"
-            className="mb-1 h-11 w-full justify-start gap-2 bg-sidebar-accent/40 px-2 font-normal text-muted-foreground hover:bg-sidebar-accent md:h-8"
+            className="sidebar-search mb-4 h-11 w-full justify-start gap-2 px-3 font-normal text-muted-foreground md:h-9"
             onClick={onOpenCommandMenu}
           >
             <Search className="text-muted-foreground" />
             Search notes
             <Kbd className="ml-auto">⌘K</Kbd>
           </Button>
-          <SidebarGroupLabel className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-            Notes
+          <nav aria-label="Collections" className="collection-nav">
+            {(Object.keys(COLLECTIONS) as LibraryCollection[]).map((key) => {
+              const { title, icon: Icon } = COLLECTIONS[key];
+              const count = collectionNotes(notes, key).length;
+              return (
+                <button
+                  key={key}
+                  className="collection-link"
+                  aria-current={collection === key ? "page" : undefined}
+                  onClick={() => { onOpenCollection(key); setOpenMobile(false); }}
+                >
+                  <Icon aria-hidden="true" className={`collection-${key}`} />
+                  <span>{title}</span>
+                  {count > 0 && <small>{count}</small>}
+                </button>
+              );
+            })}
+          </nav>
+          <SidebarGroupLabel className="sidebar-section-label">
+            Your notes
           </SidebarGroupLabel>
           <SidebarGroupContent>
             {isEmpty ? (
@@ -868,7 +893,7 @@ export function AppSidebar({
         {dragAnnouncement}
       </div>
 
-      <SidebarFooter className="flex-row items-center justify-between gap-2">
+      <SidebarFooter className="methyl-sidebar-footer flex-row items-center justify-between gap-2">
         <PwaStatus engine={engine} />
       </SidebarFooter>
 
@@ -1188,7 +1213,7 @@ function FolderAfterDropZone({
 }
 
 /** Row height: comfortable touch target on mobile, compact on desktop. */
-const ROW_BUTTON = "h-11 md:h-8";
+const ROW_BUTTON = "note-tree-row h-11 md:h-9";
 
 function DropLine({
   position,

@@ -23,7 +23,7 @@ export interface WorkspaceViewProps {
   store: WorkspaceStore;
   getTabTitle: (tab: WorkspaceTab) => string;
   renderTab: (tab: WorkspaceTab, paneId: string) => ReactNode;
-  renderEmpty: (paneId: string) => ReactNode;
+  renderEmpty: (paneId: string, tabId: string) => ReactNode;
 }
 
 export function WorkspaceView({
@@ -128,17 +128,17 @@ function WorkspacePaneView({
   store: WorkspaceStore;
   getTabTitle: (tab: WorkspaceTab) => string;
   renderTab: (tab: WorkspaceTab, paneId: string) => ReactNode;
-  renderEmpty: (paneId: string) => ReactNode;
+  renderEmpty: (paneId: string, tabId: string) => ReactNode;
 }) {
   const activeTab = pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane.tabs[0]!;
   return (
     <section
-      className={cn("flex h-full min-h-0 min-w-0 flex-1 flex-col border-r last:border-r-0", focused && "bg-muted/10")}
+      className={cn("flex h-full min-h-0 min-w-0 flex-1 flex-col border-r last:border-r-0", focused && "workspace-active")}
       data-workspace-pane={pane.id}
       data-workspace-focused={focused ? "true" : "false"}
       onPointerDown={() => store.focusPane(pane.id)}
     >
-      <div className="flex min-h-10 shrink-0 items-end border-b bg-muted/20 px-1" data-workspace-tabbar="true">
+      <div className="workspace-tabs flex min-h-10 shrink-0 items-end px-3" data-workspace-tabbar="true">
         <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto" role="tablist" aria-label="Open notes">
           {pane.tabs.map((tab) => {
             const active = tab.id === pane.activeTabId;
@@ -146,8 +146,8 @@ function WorkspacePaneView({
               <div
                 key={tab.id}
                 className={cn(
-                  "group flex min-w-0 max-w-56 items-center rounded-t-md border border-b-0 px-1 text-sm",
-                  active ? "bg-background text-foreground" : "border-transparent text-muted-foreground hover:bg-background/60",
+                  "workspace-tab group flex min-w-0 max-w-56 items-center rounded-md px-1 text-sm",
+                  active ? "workspace-tab-selected text-foreground" : "text-muted-foreground hover:bg-muted/60",
                 )}
               >
                 <button
@@ -231,7 +231,7 @@ function WorkspacePaneView({
         </div>
       </div>
       <div className="min-h-0 min-w-0 flex-1" data-workspace-content="true">
-        {activeTab.resource ? renderTab(activeTab, pane.id) : renderEmpty(pane.id)}
+        {activeTab.resource ? renderTab(activeTab, pane.id) : renderEmpty(pane.id, activeTab.id)}
       </div>
     </section>
   );

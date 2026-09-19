@@ -1,5 +1,4 @@
 import { EditorView } from "@codemirror/view";
-import { type Extension } from "@codemirror/state";
 
 /**
  * Minimal reader-style theme with dark support via the `dark` flag.
@@ -23,12 +22,13 @@ export const amoledMinimal = EditorView.theme({
     // Centered reading column; auto margins work inside the flex scroller.
     boxSizing: "border-box",
     width: "100%",
-    maxWidth: "792px",
+    maxWidth: "var(--note-page-width, 1100px)",
     margin: "0 auto",
-    padding: "16px 16px 40vh",
+    padding: "16px clamp(24px, 4vw, 48px) 35vh",
     lineHeight: "1.7",
     fontFamily: "var(--font-sans, inherit)",
   },
+  ".cm-placeholder": { color: "var(--muted-foreground)", fontStyle: "normal" },
   ".cm-line": {
     padding: "0 0 4px 0",
   },
