@@ -349,7 +349,7 @@
 @supports (-webkit-touch-callout: none) {
   @media (display-mode: standalone) and (pointer: coarse) {
     .app-titlebar {
-      --ios-pwa-header-bridge: 24px;
+      --ios-pwa-header-bridge: 12px;
       min-height: calc(3.5rem + var(--ios-pwa-header-bridge));
       padding-top: calc(
         env(titlebar-area-height, 0px) + var(--ios-pwa-header-bridge)
