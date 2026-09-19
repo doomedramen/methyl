@@ -60,6 +60,21 @@ describe("WorkspaceStore", () => {
     expect(store.getFocusedPane().tabs).toHaveLength(2);
   });
 
+  it("enforces a responsive tab limit across new-tab entry points", () => {
+    const store = new WorkspaceStore({ idFactory: ids() });
+    store.setTabLimit(2);
+    store.open({ kind: "document", documentId: "a" });
+    store.open({ kind: "document", documentId: "b" }, { mode: "new" });
+    expect(store.getFocusedPane().tabs).toHaveLength(2);
+
+    expect(store.newTab()).toBe(store.getFocusedTab().id);
+    expect(store.getFocusedPane().tabs).toHaveLength(2);
+
+    store.open({ kind: "document", documentId: "c" }, { mode: "new" });
+    expect(store.getFocusedPane().tabs).toHaveLength(2);
+    expect(store.getFocusedTab().resource).toEqual({ kind: "document", documentId: "c" });
+  });
+
   it("splits, moves focus, and collapses a pane without losing tabs", () => {
     const store = new WorkspaceStore({ idFactory: ids() });
     store.open({ kind: "document", documentId: "a" });

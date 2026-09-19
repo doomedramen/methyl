@@ -417,7 +417,7 @@
   box-shadow: 0 2px 5px color-mix(in srgb, var(--primary) 17%, transparent);
 }
 .workspace-tabs { gap: 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
-.workspace-tab { font-size: 12px; }
+.workspace-tab { flex: 1 1 120px; max-width: 14rem; min-width: 0; font-size: 12px; }
 .workspace-tab-selected { background: var(--muted); }
 .workspace-tab button[role="tab"] { padding-block: 6px; }
 [data-workspace-pane] { background: var(--background); }

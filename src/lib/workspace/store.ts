@@ -257,6 +257,7 @@ export class WorkspaceStore {
   private publishedSnapshot: WorkspaceSnapshot;
   private readonly listeners = new Set<() => void>();
   private readonly usedIds = new Set<string>();
+  private tabLimit = Number.POSITIVE_INFINITY;
   private idCollisionCounter = 0;
   private readonly vaultId: string;
   private readonly persistence?: WorkspacePersistence;
@@ -298,6 +299,10 @@ export class WorkspaceStore {
     return [...this.snapshot.recentDocumentIds];
   }
 
+  setTabLimit(limit: number): void {
+    this.tabLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : Number.POSITIVE_INFINITY;
+  }
+
   open(resource: WorkspaceResource, options: WorkspaceOpenOptions = {}): string {
     const existing = collectTabs(this.snapshot.root).find((tab) => sameResource(tab.resource, resource));
     if (existing) {
@@ -307,7 +312,7 @@ export class WorkspaceStore {
     const pane = findPane(this.snapshot.root, options.paneId ?? this.snapshot.focusedPaneId) ?? this.getFocusedPane();
     const mode = options.mode ?? "replace";
     let tabId = pane.activeTabId;
-    if (mode === "new" || pane.tabs.length === 0) {
+    if ((mode === "new" && this.canAddTab(pane)) || pane.tabs.length === 0) {
       tabId = this.nextId("tab");
       pane.tabs.push({ id: tabId, resource: cloneResource(resource) });
     } else {
@@ -325,6 +330,7 @@ export class WorkspaceStore {
 
   newTab(paneId = this.snapshot.focusedPaneId): string {
     const pane = findPane(this.snapshot.root, paneId) ?? this.getFocusedPane();
+    if (!this.canAddTab(pane)) return pane.activeTabId;
     const id = this.nextId("tab");
     pane.tabs.push({ id, resource: null, collection: "notes" });
     pane.activeTabId = id;
@@ -368,9 +374,14 @@ export class WorkspaceStore {
   openCollection(collection: WorkspaceCollection, paneId = this.snapshot.focusedPaneId): string {
     const pane = findPane(this.snapshot.root, paneId) ?? this.getFocusedPane();
     const tab = pane.tabs.find((candidate) => !candidate.resource);
-    const tabId = tab?.id ?? this.nextId("tab");
-    if (!tab) pane.tabs.push({ id: tabId, resource: null, collection });
-    else tab.collection = collection;
+    const tabId = tab?.id ?? (this.canAddTab(pane) ? this.nextId("tab") : pane.activeTabId);
+    const target = pane.tabs.find((candidate) => candidate.id === tabId);
+    if (target) {
+      target.resource = null;
+      target.collection = collection;
+    } else {
+      pane.tabs.push({ id: tabId, resource: null, collection });
+    }
     pane.activeTabId = tabId;
     this.snapshot.focusedPaneId = pane.id;
     this.changed();
@@ -423,7 +434,7 @@ export class WorkspaceStore {
   moveTab(tabId: string, paneId: string): void {
     const source = findTab(this.snapshot.root, tabId);
     const destination = findPane(this.snapshot.root, paneId);
-    if (!source || !destination || source.pane.id === destination.id) return;
+    if (!source || !destination || source.pane.id === destination.id || !this.canAddTab(destination)) return;
     const index = source.pane.tabs.findIndex((tab) => tab.id === tabId);
     const [tab] = source.pane.tabs.splice(index, 1);
     if (!tab) return;
@@ -488,6 +499,10 @@ export class WorkspaceStore {
     const unique = `${candidate}-${this.idCollisionCounter}`;
     this.usedIds.add(unique);
     return unique;
+  }
+
+  private canAddTab(pane: WorkspacePane): boolean {
+    return pane.tabs.length < this.tabLimit;
   }
 
   private changed(): void {

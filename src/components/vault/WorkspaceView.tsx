@@ -1,7 +1,7 @@
 "use client";
 
 import { MoreHorizontal, Plus, Rows2, Columns2, X } from "lucide-react";
-import { useState, type ReactNode, type KeyboardEvent } from "react";
+import { useEffect, useState, type ReactNode, type KeyboardEvent } from "react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -23,6 +23,10 @@ import {
   type WorkspaceStore,
   type WorkspaceTab,
 } from "@/lib/workspace/store";
+import {
+  DEFAULT_WORKSPACE_TAB_LIMIT,
+  maxWorkspaceTabsForWidth,
+} from "@/lib/workspace/tab-limit";
 
 export interface WorkspaceViewProps {
   snapshot: WorkspaceSnapshot;
@@ -41,6 +45,12 @@ export function WorkspaceView({
   renderEmpty,
   onTabActivated,
 }: WorkspaceViewProps) {
+  const tabLimit = useResponsiveTabLimit();
+
+  useEffect(() => {
+    store.setTabLimit(tabLimit);
+  }, [store, tabLimit]);
+
   return (
     <div className="flex h-full min-h-0 w-full" data-workspace-root="true">
       <WorkspaceNodeView
@@ -51,6 +61,7 @@ export function WorkspaceView({
         renderTab={renderTab}
         renderEmpty={renderEmpty}
         onTabActivated={onTabActivated}
+        tabLimit={tabLimit}
       />
     </div>
   );
@@ -64,7 +75,8 @@ function WorkspaceNodeView({
   renderTab,
   renderEmpty,
   onTabActivated,
-}: WorkspaceViewProps & { node: WorkspaceNode }) {
+  tabLimit,
+}: WorkspaceViewProps & { node: WorkspaceNode; tabLimit: number }) {
   if (node.kind === "pane") {
     return (
       <WorkspacePaneView
@@ -76,6 +88,7 @@ function WorkspaceNodeView({
         renderTab={renderTab}
         renderEmpty={renderEmpty}
         onTabActivated={onTabActivated}
+        tabLimit={tabLimit}
       />
     );
   }
@@ -105,6 +118,7 @@ function WorkspaceNodeView({
           renderTab={renderTab}
           renderEmpty={renderEmpty}
           onTabActivated={onTabActivated}
+          tabLimit={tabLimit}
         />
       </ResizablePanel>
       <ResizableHandle withHandle />
@@ -117,6 +131,7 @@ function WorkspaceNodeView({
           renderTab={renderTab}
           renderEmpty={renderEmpty}
           onTabActivated={onTabActivated}
+          tabLimit={tabLimit}
         />
       </ResizablePanel>
     </ResizablePanelGroup>
@@ -132,6 +147,7 @@ function WorkspacePaneView({
   renderTab,
   renderEmpty,
   onTabActivated,
+  tabLimit,
 }: {
   pane: WorkspacePane;
   focused: boolean;
@@ -141,6 +157,7 @@ function WorkspacePaneView({
   renderTab: (tab: WorkspaceTab, paneId: string) => ReactNode;
   renderEmpty: (paneId: string, tabId: string) => ReactNode;
   onTabActivated?: (tabId: string) => void;
+  tabLimit: number;
 }) {
   const activeTab = pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane.tabs[0]!;
   const [rovingTabId, setRovingTabId] = useState(activeTab.id);
@@ -212,7 +229,7 @@ function WorkspacePaneView({
               <div
                 key={tab.id}
                 className={cn(
-                  "workspace-tab group flex min-w-0 max-w-56 items-center rounded-md px-1 text-sm",
+                  "workspace-tab group flex min-w-0 items-center rounded-md px-1 text-sm",
                   active ? "workspace-tab-selected text-foreground" : "text-muted-foreground hover:bg-muted/60",
                 )}
               >
@@ -253,7 +270,8 @@ function WorkspacePaneView({
             variant="ghost"
             size="icon-sm"
             aria-label="New tab"
-            title="New tab"
+            title={pane.tabs.length >= tabLimit ? "Tab limit reached" : "New tab"}
+            disabled={pane.tabs.length >= tabLimit}
             onClick={(event) => {
               event.stopPropagation();
               const id = store.newTab(pane.id);
@@ -331,4 +349,17 @@ function flattenPanes(node: WorkspaceNode): WorkspacePane[] {
 
 export function isWorkspaceSplit(node: WorkspaceNode): node is WorkspaceSplit {
   return node.kind === "split";
+}
+
+function useResponsiveTabLimit(): number {
+  const [tabLimit, setTabLimit] = useState(DEFAULT_WORKSPACE_TAB_LIMIT);
+
+  useEffect(() => {
+    const updateTabLimit = () => setTabLimit(maxWorkspaceTabsForWidth(window.innerWidth));
+    updateTabLimit();
+    window.addEventListener("resize", updateTabLimit);
+    return () => window.removeEventListener("resize", updateTabLimit);
+  }, []);
+
+  return tabLimit;
 }

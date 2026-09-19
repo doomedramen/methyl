@@ -77,6 +77,25 @@ test.describe("mobile quality", () => {
     await expectNoHorizontalOverflow(page);
   });
 
+  test("workspace tab limit follows mobile viewport width", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await openApp(page);
+
+    const capture = page.locator("header").getByRole("button", { name: "Capture a thought" });
+    await capture.click();
+    await capture.click();
+    await expect(page.getByRole("tab")).toHaveCount(2);
+
+    const newTab = page.getByRole("button", { name: "New tab" });
+    await expect(newTab).toBeDisabled();
+    await expect(page.getByRole("button", { name: /^Close / })).toHaveCount(2);
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(newTab).toBeEnabled();
+    await newTab.click();
+    await expect(page.getByRole("tab")).toHaveCount(3);
+  });
+
   test("reduced motion removes side-sheet transition", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.setViewportSize({ width: 390, height: 844 });
