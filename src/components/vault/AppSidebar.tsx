@@ -37,7 +37,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-
 import { Kbd } from "@/components/ui/kbd";
 import {
   DropdownMenu,
@@ -67,6 +66,7 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { PwaStatus } from "@/components/pwa/PwaStatus";
+import { CreateMenu } from "./CreateMenu";
 import {
   RenameNoteDialog,
   DeleteNoteAlert,
@@ -440,7 +440,7 @@ export function AppSidebar({
           <img src="/icon.svg" alt="" className="size-6 shrink-0 rounded-md" />
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-2">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -461,40 +461,12 @@ export function AppSidebar({
             />
             <TooltipContent>New folder</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onCreate()}
-                  aria-label="New note"
-                  className="size-9 text-muted-foreground md:size-8"
-                  disabled={!canWrite}
-                >
-                  <Plus />
-                </Button>
-              }
-            />
-            <TooltipContent>New note</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onCreateGraph()}
-                  aria-label="New graph"
-                  className="size-9 text-muted-foreground md:size-8"
-                  disabled={!canWrite}
-                >
-                  <Workflow />
-                </Button>
-              }
-            />
-            <TooltipContent>New graph</TooltipContent>
-          </Tooltip>
+          <CreateMenu
+            onCreateNote={() => onCreate()}
+            onCreateGraph={() => onCreateGraph()}
+            disabled={!canWrite}
+            className="size-11 text-muted-foreground md:size-8"
+          />
         </div>
       </SidebarHeader>
 

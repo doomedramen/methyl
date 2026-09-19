@@ -24,18 +24,17 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
  * (see playwright.config.ts for why the sync server isn't used).
  */
 
-/** The sidebar's own root — scopes "New note"/"New folder" lookups away
- *  from the editor header, which has its own "New note" button in the
- *  empty state. */
+/** The sidebar's own root — scopes add/folder controls away from the
+ *  editor header. */
 function sidebar(page: Page): Locator {
   return page.locator('[data-slot="sidebar-inner"]');
 }
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
-  // Wait for the vault engine to finish booting: "New note" is only
+  // Wait for the vault engine to finish booting: the add menu is only
   // enabled once an engine exists.
-  await expect(sidebar(page).getByRole("button", { name: "New note" })).toBeEnabled();
+  await expect(sidebar(page).getByRole("button", { name: "Add" })).toBeEnabled();
 });
 
 // --- OPFS file listing -------------------------------------------------
@@ -100,7 +99,8 @@ async function createNote(page: Page, title: string, parent?: string) {
     await folderRow.locator(`button[aria-label="Actions for ${parent}"]`).click();
     await page.getByRole("menuitem", { name: "New note" }).click();
   } else {
-    await sidebar(page).getByRole("button", { name: "New note" }).click();
+    await sidebar(page).getByRole("button", { name: "Add" }).click();
+    await page.getByRole("menuitem", { name: "New note" }).click();
   }
   // New notes are created as "Untitled" (auto-suffixed on clash); rename to
   // the wanted title via the row action menu.

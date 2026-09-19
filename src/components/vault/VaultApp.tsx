@@ -25,7 +25,6 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   SidebarInset,
   SidebarProvider,
@@ -34,6 +33,7 @@ import {
 import { NoteEditor } from "@/components/editor/NoteEditor";
 import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
 import { AppSidebar, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
+import { CreateMenu } from "./CreateMenu";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
@@ -932,23 +932,13 @@ export function VaultApp() {
               )}
             </span>
             <ModeToggle />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    size="icon-lg"
-                    onClick={() => onCreateNote()}
-                    aria-label="New note"
-                    className="size-10 md:size-9"
-                    disabled={!engine?.releaseWriterLock}
-                  >
-                    <Plus />
-                  </Button>
-                }
-              />
-              <TooltipContent>New note</TooltipContent>
-            </Tooltip>
+            <CreateMenu
+              onCreateNote={() => onCreateNote()}
+              onCreateGraph={() => onCreateGraph()}
+              disabled={!engine?.releaseWriterLock}
+              variant="outline"
+              className="size-11 md:size-9"
+            />
           </div>
         </header>
 

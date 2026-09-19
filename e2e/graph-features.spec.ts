@@ -18,7 +18,8 @@ async function openVault(page: Page): Promise<Locator> {
 
 async function newGraph(page: Page): Promise<Locator> {
   const sb = await openVault(page);
-  await sb.getByRole("button", { name: "New graph" }).click();
+  await sb.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("menuitem", { name: "New graph" }).click();
   const pane = page.locator(".react-flow");
   await expect(pane).toBeVisible();
   return pane;
