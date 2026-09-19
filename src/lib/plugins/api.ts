@@ -65,7 +65,8 @@ export interface App {
      * on mount/unmount; plugins should treat both as implementation detail.
      */
     getActiveEditorView?(): EditorView | null;
-    setActiveEditorView?(view: EditorView | null): void;
+    setActiveEditorView?(view: EditorView | null, workspaceTabId?: string): void;
+    focusEditorTab?(workspaceTabId: string): void;
   };
   vault: {
     createNote(options?: NoteCreationOptions): Promise<string>;

@@ -1,7 +1,16 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { TreeID } from "loro-crdt";
 import { Check, Inbox, Link2, Plus, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
@@ -39,7 +48,6 @@ import { BacklinksPanel } from "./BacklinksPanel";
 import { ModeToggle } from "@/components/mode-toggle";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncProvider } from "@/lib/browser/sync-context";
-import type { docIdForPath, notePathFromLocation, pathForDocId } from "@/lib/vault/note-path";
 import { VaultAccessBanner } from "./VaultAccessBanner";
 import { captureToInbox, INBOX_FOLDER_NAME } from "@/lib/vault/inbox";
 import { setAppBadge } from "@/lib/browser/pwa";
@@ -60,8 +68,17 @@ import type { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikili
 import { PluginsDialog } from "@/components/plugins/PluginsDialog";
 import { TemplatesDialog, type TemplateDialogMode } from "@/components/plugins/TemplatesDialog";
 import type { Template } from "@/plugins/core-templates";
-import type { EditorView } from "@codemirror/view";
 import type { CreateHandler, CreateRequest } from "./create-actions";
+import { ActiveEditorRegistry } from "@/lib/editor/active-registry";
+import {
+  createEmptyWorkspaceSnapshot,
+  LocalStorageWorkspacePersistence,
+  type WorkspaceOpenMode,
+  type WorkspaceStore,
+  type WorkspaceTab,
+  WorkspaceStore as WorkspaceStateStore,
+} from "@/lib/workspace/store";
+import { findActiveTab, WorkspaceView } from "./WorkspaceView";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -96,6 +113,10 @@ const CommandMenu = dynamic(
   () => import("./CommandMenu").then((mod) => mod.CommandMenu),
   { ssr: false },
 );
+const QuickSwitcher = dynamic(
+  () => import("./QuickSwitcher").then((mod) => mod.QuickSwitcher),
+  { ssr: false },
+);
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -108,6 +129,9 @@ const SAVE_LABEL: Record<Exclude<SaveState, "idle">, string> = {
 
 /** How long the "Saved" confirmation lingers before hiding. */
 const SAVED_VISIBLE_MS = 2000;
+const EMPTY_WORKSPACE_SNAPSHOT = createEmptyWorkspaceSnapshot();
+const NOOP_SUBSCRIBE = () => () => {};
+const getEmptyWorkspaceSnapshot = () => EMPTY_WORKSPACE_SNAPSHOT;
 
 /**
  * Build the nested folder/note tree for the sidebar, in stored tree order.
@@ -116,13 +140,13 @@ const SAVED_VISIBLE_MS = 2000;
  * or deleted freely without the note vanishing or being relabeled out from
  * under the user; only a rename (which renames the file) changes the title.
  */
-function toRow(node: VaultTreeNode, tree: VaultTree, engine: VaultEngine): SidebarRow {
+function toRow(node: VaultTreeNode, tree: VaultTree, engine: VaultEngine, parentPath = ""): SidebarRow {
   if (node.kind === "directory") {
     return {
       treeId: node.treeId,
       kind: "directory",
       name: node.name,
-      children: tree.children(node.treeId).map((child) => toRow(child, tree, engine)),
+      children: tree.children(node.treeId).map((child) => toRow(child, tree, engine, `${parentPath}${node.name}/`)),
     };
   }
   const doc = node.documentId ? engine.getDocument(node.documentId) : undefined;
@@ -132,6 +156,7 @@ function toRow(node: VaultTreeNode, tree: VaultTree, engine: VaultEngine): Sideb
     kind: "markdown",
     id: node.documentId ?? node.treeId,
     title: node.name.replace(/\.md$/i, ""),
+    path: `${parentPath}${node.name}`,
     isGraph,
   };
 }
@@ -174,6 +199,7 @@ function VaultPluginBridge({
   onManageTemplates,
   onOpenTemplatePicker,
   activeNote,
+  focusedTabId,
   onOpenNote,
   onNotesChanged,
   readOnly,
@@ -186,8 +212,9 @@ function VaultPluginBridge({
   onManagePlugins?: () => void;
   onManageTemplates?: () => void;
   onOpenTemplatePicker?: () => void;
-  /** The single open note (this app shows one editor pane at a time). */
+  /** The note in the focused workspace tab. */
   activeNote: NoteContext | null;
+  focusedTabId: string | null;
   onOpenNote: (id: string) => void;
   onNotesChanged: () => void;
   /** This tab doesn't hold the writer lock (§12) — block wikilink note creation. */
@@ -228,24 +255,28 @@ function VaultPluginBridge({
     else toast(msg);
   }, []);
 
-  // The single mounted NoteEditor's CodeMirror view, if any — set via
-  // app.workspace.setActiveEditorView (called by NoteEditor on mount/
-  // unmount) so `Command.editorCallback` commands have something to act on.
-  const activeViewRef = useRef<EditorView | null>(null);
+  // Split panes can mount several CodeMirror views at once. Keep the editor
+  // registry separate from the workspace tree: it is a live DOM concern, not
+  // persisted vault state.
+  const activeEditors = useMemo(() => new ActiveEditorRegistry(), []);
 
   const appImpl: App = useMemo<App>(
     () => ({
       commands: {
         list: () => commandRegistry.list(activeNote),
         execute: (fullId) => {
-          void commandRegistry.execute(fullId, activeNote, activeViewRef.current, notify);
+          void commandRegistry.execute(fullId, activeNote, activeEditors.get(focusedTabId), notify);
         },
       },
       workspace: {
         getActiveNote: (): NoteContext | null => activeNote,
-        getActiveEditorView: () => activeViewRef.current,
-        setActiveEditorView: (view: EditorView | null) => {
-          activeViewRef.current = view;
+        getActiveEditorView: () => activeEditors.get(focusedTabId) ?? activeEditors.getFocused(),
+        setActiveEditorView: (view, workspaceTabId) => {
+          if (workspaceTabId) activeEditors.set(workspaceTabId, view);
+          else if (!view) activeEditors.clear();
+        },
+        focusEditorTab: (workspaceTabId) => {
+          activeEditors.focus(workspaceTabId);
         },
         openNote: (id: string) => onOpenNote(id),
         toggleSidebar: () => toggleSidebar(),
@@ -315,8 +346,10 @@ function VaultPluginBridge({
     }),
     [
       activeNote,
+      activeEditors,
       commandRegistry,
       engine,
+      focusedTabId,
       notify,
       onCreate,
       onManagePlugins,
@@ -472,10 +505,10 @@ function makeNoopApp(): App {
 export function VaultApp() {
   const [engine, setEngine] = useState<VaultEngine | null>(null);
   const [rows, setRows] = useState<SidebarRow[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [saving, setSaving] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
@@ -484,6 +517,33 @@ export function VaultApp() {
   // Incremented each time the user asks to save (Cmd/Ctrl+S); the active
   // editor watches it and flushes immediately.
   const [saveRequest, setSaveRequest] = useState(0);
+
+  const workspaceStore = useMemo<WorkspaceStore | null>(
+    () =>
+      engine
+        ? new WorkspaceStateStore({
+            vaultId: engine.vaultId,
+            persistence: new LocalStorageWorkspacePersistence(),
+          })
+        : null,
+    [engine],
+  );
+  const workspaceSnapshot = useSyncExternalStore(
+    workspaceStore?.subscribe ?? NOOP_SUBSCRIBE,
+    workspaceStore?.getSnapshot ?? getEmptyWorkspaceSnapshot,
+    () => EMPTY_WORKSPACE_SNAPSHOT,
+  );
+  const focusedTab = findActiveTab(workspaceSnapshot);
+  const focusedResource = focusedTab?.resource;
+  const activeId = focusedResource?.kind === "document" ? focusedResource.documentId : null;
+  const focusedTabId = focusedTab?.id ?? null;
+
+  const openDocument = useCallback(
+    (documentId: string, mode: WorkspaceOpenMode = "replace", paneId?: string) => {
+      workspaceStore?.open({ kind: "document", documentId }, { mode, paneId });
+    },
+    [workspaceStore],
+  );
 
   const refreshNotes = useCallback((eng: VaultEngine) => {
     setRows(buildRootRows(eng.tree, eng));
@@ -527,14 +587,6 @@ export function VaultApp() {
         if (cancelled) return;
         notePathRef.current = notePath;
         setEngine(eng);
-        refreshNotes(eng);
-
-        const wanted = notePath.notePathFromLocation(window.location.pathname, eng.vaultId);
-        if (wanted) {
-          const found = notePath.docIdForPath(eng.tree, wanted);
-          if (found) setActiveId(found);
-        }
-        urlRestored.current = true;
       })
       .catch((e) => {
         console.error(e);
@@ -544,6 +596,23 @@ export function VaultApp() {
       cancelled = true;
     };
   }, [refreshNotes]);
+
+  // Once the workspace store is mounted, prune persisted tabs against the
+  // current tree and let a human-readable URL override only the focused tab.
+  // Other persisted tabs/splits survive a reload.
+  useEffect(() => {
+    if (!engine || !workspaceStore || !notePathRef.current) return;
+    refreshNotes(engine);
+    workspaceStore.prune(
+      engine.tree.documentIds().map((documentId) => ({ kind: "document", documentId })),
+    );
+    const wanted = notePathRef.current.notePathFromLocation(window.location.pathname, engine.vaultId);
+    if (wanted) {
+      const found = notePathRef.current.docIdForPath(engine.tree, wanted);
+      if (found) workspaceStore.replaceFromDeepLink({ kind: "document", documentId: found });
+    }
+    urlRestored.current = true;
+  }, [engine, refreshNotes, workspaceStore]);
 
   // Re-render when this tab is promoted to writer in place (§12) — the
   // engine object reference doesn't change (see becomeWriter in
@@ -641,13 +710,13 @@ export function VaultApp() {
       // -> Untitled 2.md -> ...), so it's always safe to ask for the same
       // base name.
       const doc = engine.createDocument(parentTreeId, options.name ?? "Untitled.md", options.markdown ?? "");
-      setActiveId(doc.id);
+      openDocument(doc.id);
       void engine.persistTreeIncremental();
       void engine.persistDocumentIncremental(doc.id);
       refreshNotes(engine);
       return doc.id;
     },
-    [engine, refreshNotes, requireWriter],
+    [engine, openDocument, refreshNotes, requireWriter],
   );
 
   const openTemplates = useCallback((mode: TemplateDialogMode, parentTreeId?: TreeID) => {
@@ -666,13 +735,13 @@ export function VaultApp() {
     (parentTreeId?: TreeID): string => {
       if (!engine || !requireWriter()) return "";
       const doc = engine.createDocument(parentTreeId, "Untitled Graph.md", emptyGraphMarkdown());
-      setActiveId(doc.id);
+      openDocument(doc.id);
       void engine.persistTreeIncremental();
       void engine.persistDocumentIncremental(doc.id);
       refreshNotes(engine);
       return doc.id;
     },
-    [engine, refreshNotes, requireWriter],
+    [engine, openDocument, refreshNotes, requireWriter],
   );
 
   const createFolder = useCallback(
@@ -763,7 +832,7 @@ export function VaultApp() {
             const doc = await captureToInbox(engine, capture.name, capture.markdown);
             lastId = doc.id;
           }
-          if (lastId) setActiveId(lastId);
+          if (lastId) openDocument(lastId);
           refreshNotes(engine);
           toast.success("Shared into Inbox");
         } catch (e) {
@@ -774,7 +843,7 @@ export function VaultApp() {
         }
       })();
     }
-  }, [engine, onCreate, refreshNotes]);
+  }, [engine, onCreate, openDocument, refreshNotes]);
 
   // File double-clicked/"Open with"-ed on the OS (manifest.webmanifest's
   // `file_handlers`) arrives here instead of `?action`'s query string —
@@ -793,7 +862,7 @@ export function VaultApp() {
           const doc = await captureToInbox(engine, file.name, text);
           lastId = doc.id;
         }
-        if (lastId) setActiveId(lastId);
+        if (lastId) openDocument(lastId);
         refreshNotes(engine);
         toast.success(params.files.length > 1 ? "Files added to Inbox" : "File added to Inbox");
       } catch (e) {
@@ -801,7 +870,7 @@ export function VaultApp() {
         toast.error("Couldn't open the file");
       }
     });
-  }, [engine, refreshNotes]);
+  }, [engine, openDocument, refreshNotes]);
 
   const onRenameNote = useCallback(
     async (id: string, title: string) => {
@@ -818,7 +887,7 @@ export function VaultApp() {
         toast.error("Couldn't rename note");
       }
     },
-    [engine, refreshNotes],
+    [engine, refreshNotes, requireWriter],
   );
 
   const onDeleteNote = useCallback(
@@ -826,7 +895,7 @@ export function VaultApp() {
       if (!engine || !requireWriter()) return;
       try {
         await engine.deleteDocument(id);
-        setActiveId((cur) => (cur === id ? null : cur));
+        if (activeId === id) workspaceStore?.replaceFromDeepLink(null);
         refreshNotes(engine);
         toast.success("Note deleted");
       } catch (e) {
@@ -834,7 +903,7 @@ export function VaultApp() {
         toast.error("Couldn't delete note");
       }
     },
-    [engine, refreshNotes],
+    [activeId, engine, refreshNotes, requireWriter, workspaceStore],
   );
 
   const onRenameFolder = useCallback(
@@ -850,7 +919,7 @@ export function VaultApp() {
         toast.error("Couldn't rename folder");
       }
     },
-    [engine, refreshNotes],
+    [engine, refreshNotes, requireWriter],
   );
 
   const onDeleteFolder = useCallback(
@@ -860,7 +929,7 @@ export function VaultApp() {
         const folder = findFolder(rows, treeId);
         const containedIds = folder ? flattenNotes([folder]).map((n) => n.id) : [];
         await engine.deleteFolder(treeId);
-        setActiveId((cur) => (cur && containedIds.includes(cur) ? null : cur));
+        if (activeId && containedIds.includes(activeId)) workspaceStore?.replaceFromDeepLink(null);
         refreshNotes(engine);
         toast.success("Folder deleted");
       } catch (e) {
@@ -868,7 +937,7 @@ export function VaultApp() {
         toast.error("Couldn't delete folder");
       }
     },
-    [engine, refreshNotes, rows],
+    [activeId, engine, refreshNotes, requireWriter, rows, workspaceStore],
   );
 
   const onMove = useCallback(
@@ -883,7 +952,7 @@ export function VaultApp() {
         toast.error("Couldn't move item");
       }
     },
-    [engine, refreshNotes],
+    [engine, refreshNotes, requireWriter],
   );
 
   const activeNote = notes.find((n) => n.id === activeId);
@@ -898,6 +967,72 @@ export function VaultApp() {
     [engine],
   );
 
+  const getTabTitle = useCallback(
+    (tab: WorkspaceTab): string => {
+      if (!tab.resource) return "New tab";
+      if (tab.resource.kind === "asset") return "Asset";
+      const resource = tab.resource;
+      return notes.find((note) => note.id === resource.documentId)?.title ?? "Missing note";
+    },
+    [notes],
+  );
+
+  const onEditorDirtyChange = useCallback((dirty: boolean) => {
+    setSaving((prev) =>
+      prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
+    );
+  }, []);
+
+  const renderWorkspaceTab = useCallback(
+    (tab: WorkspaceTab, _paneId: string): ReactNode => {
+      if (!engine || !tab.resource || tab.resource.kind !== "document") return null;
+      const documentId = tab.resource.documentId;
+      const note = notes.find((candidate) => candidate.id === documentId);
+      if (!note) return <VaultEmpty onCreate={() => onCreate({ kind: "note" })} disabled={!engine.releaseWriterLock} />;
+      if (note.isGraph) {
+        return (
+          <GraphEditor
+            key={tab.id}
+            engine={engine}
+            documentId={documentId}
+            readOnly={!engine.releaseWriterLock}
+            onDirtyChange={onEditorDirtyChange}
+            onPersisted={onPersisted}
+            onSaveError={onSaveError}
+            saveRequest={saveRequest}
+          />
+        );
+      }
+      return (
+        <NoteEditor
+          key={tab.id}
+          engine={engine}
+          documentId={documentId}
+          workspaceTabId={tab.id}
+          readOnly={!engine.releaseWriterLock}
+          onDirtyChange={onEditorDirtyChange}
+          onPersisted={onPersisted}
+          onSaveError={onSaveError}
+          saveRequest={saveRequest}
+        />
+      );
+    },
+    [engine, notes, onCreate, onEditorDirtyChange, onPersisted, onSaveError, saveRequest],
+  );
+
+  const renderWorkspaceEmpty = useCallback(
+    (paneId: string): ReactNode => (
+      <VaultEmpty
+        onCreate={() => {
+          workspaceStore?.focusPane(paneId);
+          onCreate({ kind: "note" });
+        }}
+        disabled={!engine?.releaseWriterLock}
+      />
+    ),
+    [engine, onCreate, workspaceStore],
+  );
+
   const onRemoteSyncChange = useCallback(() => {
     if (engine) refreshNotes(engine);
   }, [engine, refreshNotes]);
@@ -910,7 +1045,8 @@ export function VaultApp() {
       onCreate={onCreate}
       onOpenNewFolder={() => setNewFolderOpen(true)}
       activeNote={pluginActiveNote}
-      onOpenNote={setActiveId}
+      focusedTabId={focusedTabId}
+      onOpenNote={openDocument}
       onNotesChanged={() => engine && refreshNotes(engine)}
       readOnly={!isWriterTab}
       onManagePlugins={() => setPluginsDialogOpen(true)}
@@ -922,7 +1058,7 @@ export function VaultApp() {
         activeId={activeId}
         engine={engine}
         onCreate={onCreate}
-        onSelect={setActiveId}
+        onSelect={openDocument}
         onRenameNote={onRenameNote}
         onDeleteNote={onDeleteNote}
         onRenameFolder={onRenameFolder}
@@ -947,7 +1083,7 @@ export function VaultApp() {
                         <button
                           type="button"
                           className="wco-no-drag"
-                          onClick={() => setActiveId(null)}
+                          onClick={() => workspaceStore?.replaceFromDeepLink(null)}
                         />
                       }
                     >
@@ -1032,40 +1168,15 @@ export function VaultApp() {
             <VaultError message={error} />
           ) : !engine ? (
             <VaultLoading />
-          ) : activeId ? (
-            activeNote?.isGraph ? (
-              <GraphEditor
-                engine={engine}
-                documentId={activeId}
-                readOnly={!engine.releaseWriterLock}
-                onDirtyChange={(dirty) =>
-                  setSaving((prev) =>
-                    prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
-                  )
-                }
-                onPersisted={onPersisted}
-                onSaveError={onSaveError}
-                saveRequest={saveRequest}
-              />
-            ) : (
-              <NoteEditor
-                engine={engine}
-                documentId={activeId}
-                readOnly={!engine.releaseWriterLock}
-                onDirtyChange={(dirty) =>
-                  setSaving((prev) =>
-                    // Keep the error visible until a verified save clears it.
-                    prev === "error" ? prev : dirty ? "dirty" : prev === "dirty" ? "saving" : prev,
-                  )
-                }
-                onPersisted={onPersisted}
-                onSaveError={onSaveError}
-                saveRequest={saveRequest}
-              />
-            )
-          ) : (
-            <VaultEmpty onCreate={() => onCreate({ kind: "note" })} disabled={!engine?.releaseWriterLock} />
-          )}
+          ) : workspaceStore ? (
+            <WorkspaceView
+              snapshot={workspaceSnapshot}
+              store={workspaceStore}
+              getTabTitle={getTabTitle}
+              renderTab={renderWorkspaceTab}
+              renderEmpty={renderWorkspaceEmpty}
+            />
+          ) : null}
         </main>
       </SidebarInset>
 
@@ -1076,7 +1187,7 @@ export function VaultApp() {
           currentTitle={activeTitle ?? "Current note"}
           backlinks={backlinks}
           notes={notes}
-          onSelectNote={setActiveId}
+          onSelectNote={openDocument}
         />
       )}
       {engine && (
@@ -1084,8 +1195,18 @@ export function VaultApp() {
           open={commandOpen}
           onOpenChange={setCommandOpen}
           notes={notes}
-          onSelectNote={setActiveId}
+          onSelectNote={openDocument}
           searchNotes={searchNotes}
+        />
+      )}
+      {engine && (
+        <QuickSwitcher
+          open={quickSwitcherOpen}
+          onOpenChange={setQuickSwitcherOpen}
+          notes={notes}
+          recentDocumentIds={workspaceSnapshot.recentDocumentIds}
+          onOpenNote={openDocument}
+          onCreate={onCreate}
         />
       )}
       <PluginsDialog open={pluginsDialogOpen} onOpenChange={setPluginsDialogOpen} />

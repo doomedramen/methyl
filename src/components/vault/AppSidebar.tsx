@@ -98,6 +98,7 @@ export interface NoteRow {
   kind: "markdown";
   id: string;
   title: string;
+  path?: string;
   /** Body is a single mermaid flowchart block (SPEC §37) — shown with a
    *  distinct icon and opened in the graph editor rather than as text. */
   isGraph: boolean;

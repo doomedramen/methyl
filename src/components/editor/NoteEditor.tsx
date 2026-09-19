@@ -24,6 +24,7 @@ function loadUser(): EditorUser {
 export function NoteEditor({
   engine,
   documentId,
+  workspaceTabId,
   onDirtyChange,
   onPersisted,
   onSaveError,
@@ -33,6 +34,8 @@ export function NoteEditor({
 }: {
   engine: VaultEngine;
   documentId: string;
+  /** Stable identity used when more than one editor is mounted in a split. */
+  workspaceTabId?: string;
   onDirtyChange?: (dirty: boolean) => void;
   onPersisted?: () => void;
   /** Edits did not reach the stored note (persist threw or text diverged). */
@@ -181,7 +184,14 @@ export function NoteEditor({
 
         // Exposes this view to app.commands.execute for Command.editorCallback
         // commands (word-count's "Show", any future editor-scoped command).
-        appRef.current.workspace.setActiveEditorView?.(view);
+        // The tab id matters when two split panes are mounted at once.
+        const editorTabId = workspaceTabId ?? documentId;
+        const focusEditor = () => {
+          appRef.current.workspace.setActiveEditorView?.(view, editorTabId);
+          appRef.current.workspace.focusEditorTab?.(editorTabId);
+        };
+        view.dom.addEventListener("focusin", focusEditor);
+        appRef.current.workspace.setActiveEditorView?.(view, editorTabId);
 
         const flush = () => void session.flush();
         flushRef.current = flush;
@@ -203,7 +213,8 @@ export function NoteEditor({
           document.removeEventListener("visibilitychange", onHidden);
           window.removeEventListener("beforeunload", flush);
           unsubscribePluginExtensions();
-          appRef.current.workspace.setActiveEditorView?.(null);
+          view?.dom.removeEventListener("focusin", focusEditor);
+          appRef.current.workspace.setActiveEditorView?.(null, editorTabId);
           const v = view;
           view = null;
           // Layout-effect cleanup runs before React removes this component's
@@ -225,7 +236,7 @@ export function NoteEditor({
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [engine, documentId, readOnly, pluginHost]);
+  }, [engine, documentId, pluginHost, readOnly, workspaceTabId]);
 
   return <div ref={hostRef} className="cm-host h-full w-full overflow-auto" />;
 }
