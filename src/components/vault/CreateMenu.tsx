@@ -1,6 +1,6 @@
 "use client";
 
-import { FilePlus, FileText, Plus, Workflow } from "lucide-react";
+import { FilePlus, FileText, FolderPlus, Plus, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,6 +15,8 @@ import type { CreateHandler } from "./create-actions";
 
 interface CreateMenuProps {
   onCreate: CreateHandler;
+  /** Opens the naming dialog; the actual folder mutation still uses onCreate. */
+  onRequestNewFolder?: () => void;
   disabled?: boolean;
   className?: string;
   variant?: "default" | "outline" | "secondary" | "ghost" | "destructive" | "link";
@@ -23,6 +25,7 @@ interface CreateMenuProps {
 /** Shared add control for creating notes, template notes, and graphs. */
 export function CreateMenu({
   onCreate,
+  onRequestNewFolder,
   disabled,
   className,
   variant = "ghost",
@@ -61,6 +64,12 @@ export function CreateMenu({
           <DropdownMenuItem onClick={() => onCreate({ kind: "template" })}>
             <FilePlus data-icon="inline-start" />
             From template
+          </DropdownMenuItem>
+        ) : null}
+        {onRequestNewFolder ? (
+          <DropdownMenuItem onClick={onRequestNewFolder}>
+            <FolderPlus data-icon="inline-start" />
+            New folder
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem onClick={() => onCreate({ kind: "graph" })}>

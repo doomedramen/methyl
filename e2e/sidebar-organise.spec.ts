@@ -128,7 +128,8 @@ async function createNote(page: Page, title: string, parent?: string) {
 }
 
 async function createFolder(page: Page, name: string) {
-  await sidebar(page).getByRole("button", { name: "New folder" }).click();
+  await sidebar(page).getByRole("button", { name: "Add" }).click();
+  await page.getByRole("menuitem", { name: "New folder" }).click();
   await page.locator("#new-folder-name").fill(name);
   await page.getByRole("button", { name: "Create" }).click();
   await expect(rowByName(page, name)).toBeVisible();

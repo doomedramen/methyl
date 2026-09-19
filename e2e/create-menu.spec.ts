@@ -13,6 +13,13 @@ test("sidebar add menu offers note and graph", async ({ page }) => {
   await expect(page.getByRole("menuitem", { name: "New graph" })).toBeVisible();
 });
 
+test("sidebar add menu offers a folder", async ({ page }) => {
+  const sidebar = page.locator('[data-slot="sidebar-inner"]');
+  await sidebar.getByRole("button", { name: "Add" }).click();
+
+  await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
+});
+
 test("top bar add menu offers note and graph", async ({ page }) => {
   await page.locator("header").getByRole("button", { name: "Add" }).click();
 

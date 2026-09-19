@@ -49,9 +49,11 @@ test.describe("mobile quality", () => {
     const sidebar = page.locator('[data-sidebar="sidebar"][data-mobile="true"]');
     await expect(sidebar).toBeVisible();
 
-    await expectTouchTarget(sidebar.getByRole("button", { name: "New folder" }), "new folder");
     await expectTouchTarget(sidebar.getByRole("button", { name: "Add" }), "sidebar add");
     await expectTouchTarget(sidebar.getByRole("button", { name: "Search notes" }), "search notes");
+    await expect(sidebar.getByRole("button", { name: "New folder" })).toHaveCount(0);
+    await sidebar.getByRole("button", { name: "Add" }).click();
+    await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
 
     await expect(sidebar.locator('button[aria-label="Close sidebar"]')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);

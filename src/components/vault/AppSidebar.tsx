@@ -38,7 +38,6 @@ import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Kbd } from "@/components/ui/kbd";
 import {
   DropdownMenu,
@@ -692,25 +691,9 @@ export function AppSidebar({
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => requestNewFolder()}
-                  aria-label="New folder"
-                  className="size-11 text-muted-foreground md:size-8"
-                  disabled={!canWrite}
-                >
-                  <FolderPlus />
-                </Button>
-              }
-            />
-            <TooltipContent>New folder</TooltipContent>
-          </Tooltip>
           <CreateMenu
             onCreate={onCreate}
+            onRequestNewFolder={() => requestNewFolder()}
             disabled={!canWrite}
             className="size-11 text-muted-foreground md:size-8"
           />
