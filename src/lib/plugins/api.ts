@@ -57,6 +57,10 @@ export interface App {
     resolveWikilink?(target: string): string | undefined;
     createWikilinkTarget?(target: string): void;
     getWikilinkCandidates?(): WikilinkCandidate[];
+    /** Resolve an attachment embed to a cached browser object URL. */
+    resolveAttachment?(target: string, documentId?: string): string | undefined;
+    /** Load an attachment embed and return a browser object URL. */
+    loadAttachment?(target: string, documentId?: string): Promise<string | undefined>;
     /**
      * The mounted CodeMirror view for the active note, if any. Internal
      * wiring detail (not part of the documented plugin surface): it's how

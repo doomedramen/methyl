@@ -16,6 +16,14 @@ export class CoreLivePreviewPlugin extends Plugin {
         resolveWikilink: (target) => this.app.workspace.resolveWikilink?.(target),
         onOpenWikilink: (documentId) => this.app.workspace.openNote(documentId),
         onCreateWikilink: (target) => this.app.workspace.createWikilinkTarget?.(target),
+        resolveAttachment: (target) => this.app.workspace.resolveAttachment?.(
+          target,
+          this.app.workspace.getActiveNote()?.documentId,
+        ),
+        loadAttachment: (target) => this.app.workspace.loadAttachment?.(
+          target,
+          this.app.workspace.getActiveNote()?.documentId,
+        ) ?? Promise.resolve(undefined),
       }),
     );
   }

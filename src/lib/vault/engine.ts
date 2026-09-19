@@ -8,7 +8,7 @@ import type {
   MaterializationCheckpoint,
   PersistedDocState,
 } from "@/lib/core/types";
-import { sha256Text } from "@/lib/core/hash";
+import { sha256Hex, sha256Text } from "@/lib/core/hash";
 import { extractIdFromMarkdown, stripIdComment } from "@/lib/core/doc-id";
 import { parseMarkdown } from "@/lib/core/markdown";
 import { reconcileVault, type DocIndex, type FileSnapshot } from "@/lib/core/doc-index";
@@ -19,6 +19,7 @@ import {
   type CompactionRules,
 } from "@/lib/vault/compact";
 import { recordDiagnostic } from "@/lib/vault/diagnostics";
+import { attachmentMimeType } from "@/lib/vault/attachments";
 import {
   DerivedIndexes,
   SearchIndex,
@@ -40,7 +41,18 @@ export interface IngestReport {
   created: string[];
   /** Indexed paths that disappeared and weren't claimed by a move. */
   deleted: string[];
+  /** Binary files adopted from the user-visible Attachments/ folder. */
+  assetsCreated?: string[];
+  /** Tracked binary files whose bytes changed outside the app. */
+  assetsUpdated?: string[];
 }
+
+export interface AssetIngestReport {
+  created: string[];
+  updated: string[];
+}
+
+export const ATTACHMENTS_FOLDER_NAME = "Attachments";
 
 /** Where the sidecar doc index (SPEC §5) lives, relative to the vault root. */
 const DOC_INDEX_PATH = ".adhd/index.json";
@@ -80,6 +92,7 @@ export class VaultEngine {
    * materialize/rename/move/delete call.
    */
   private materializedPaths = new Map<string, string>();
+  private materializedAssetPaths = new Map<string, string>();
   private readonly searchIndex: SearchIndex;
   private readonly derivedIndexes: DerivedIndexes;
   private searchIndexReady = false;
@@ -219,6 +232,11 @@ export class VaultEngine {
       const assumedPath = node && buildPathFromNode(tree, node);
       if (assumedPath) engine.materializedPaths.set(id, assumedPath);
     }
+    for (const node of tree.allNodes()) {
+      if (node.kind !== "binary") continue;
+      const path = buildPathFromNode(tree, node);
+      if (path) engine.materializedAssetPaths.set(String(node.treeId), path);
+    }
 
     // 4. Recovery diff — does NOT resurrect deleted docs
     const persistedIds = await docStore.listDocumentIds();
@@ -338,6 +356,127 @@ export class VaultEngine {
     this.documents.set(docId, doc);
     if (this.searchIndexReady) this.indexSearchDocument(docId);
     return doc;
+  }
+
+  /** Return the user-visible path for a tracked binary asset. */
+  attachmentPath(treeId: TreeID): string | null {
+    const node = this.tree.getNode(treeId);
+    if (!node || node.kind !== "binary") return null;
+    return buildPathFromNode(this.tree, node);
+  }
+
+  /** Read an attachment by stable tree node id. */
+  async readAttachment(treeId: TreeID): Promise<Uint8Array | null> {
+    const path = this.attachmentPath(treeId);
+    return path ? this.docStore.readMaterialized(path) : null;
+  }
+
+  /** Create an attachment under the root Attachments/ directory. */
+  async createAttachment(name: string, bytes: Uint8Array): Promise<VaultTreeNode> {
+    const parent = this.ensureAttachmentsFolder();
+    const sha256 = await sha256Hex(bytes);
+    const treeId = this.tree.addBinaryFile(parent, name, {
+      sha256,
+      size: bytes.byteLength,
+      mime: attachmentMimeType(name),
+    });
+    const node = this.tree.getNode(treeId);
+    if (!node) throw new Error("Attachment tree node was not created");
+    const path = buildPathFromNode(this.tree, node);
+    if (!path) throw new Error("Attachment path was not created");
+    try {
+      await this.materializedWrite(path, bytes);
+      this.materializedAssetPaths.set(String(treeId), path);
+      await this.persistTreeIncremental();
+    } catch (error) {
+      // The tree edit has not been durably committed when the byte write or
+      // tree append fails. Remove the in-memory node so a caller can retry
+      // without leaving a phantom asset in the current session. A successfully
+      // written but uncommitted ordinary file remains recoverable as an
+      // external file on the next reconciliation pass.
+      this.tree.delete(treeId);
+      this.materializedAssetPaths.delete(String(treeId));
+      throw error;
+    }
+    return node;
+  }
+
+  /** Store downloaded/synced bytes for an existing binary tree node. */
+  async writeAttachment(treeId: TreeID, bytes: Uint8Array): Promise<void> {
+    const node = this.tree.getNode(treeId);
+    if (!node || node.kind !== "binary") throw new Error(`Binary asset not found: ${treeId}`);
+    const digest = await sha256Hex(bytes);
+    if (node.sha256 && node.sha256 !== digest) {
+      throw new Error(`Attachment hash mismatch for ${treeId}`);
+    }
+    const path = buildPathFromNode(this.tree, node);
+    if (!path) throw new Error(`Attachment path not found: ${treeId}`);
+    await this.materializedWrite(path, bytes);
+    this.materializedAssetPaths.set(String(treeId), path);
+  }
+
+  /** Delete an attachment node and its ordinary on-disk bytes. */
+  async deleteAttachment(treeId: TreeID): Promise<void> {
+    const node = this.tree.getNode(treeId);
+    if (!node || node.kind !== "binary") throw new Error(`Binary asset not found: ${treeId}`);
+    const path = this.materializedAssetPaths.get(String(treeId)) ?? buildPathFromNode(this.tree, node);
+    this.tree.delete(treeId);
+    this.materializedAssetPaths.delete(String(treeId));
+    if (path) await this.materializedRemove(path);
+    await this.persistTree();
+  }
+
+  /** Adopt ordinary files dropped into Attachments/ by an external actor. */
+  async ingestExternalAssets(): Promise<AssetIngestReport> {
+    const tracked = new Set(
+      this.tree.allNodes()
+        .filter((node) => node.kind === "binary")
+        .map((node) => buildPathFromNode(this.tree, node))
+        .filter((path): path is string => path !== null),
+    );
+    const created: string[] = [];
+    for (const path of await this.docStore.listMaterializedPaths()) {
+      if (!path.startsWith(`${ATTACHMENTS_FOLDER_NAME}/`) || path.endsWith(".tmp") || tracked.has(path)) continue;
+      const bytes = await this.docStore.readMaterialized(path);
+      if (!bytes) continue;
+      const parts = path.split("/");
+      const name = parts.pop();
+      if (!name) continue;
+      const parent = this.ensureFolderPath(parts);
+      const treeId = this.tree.addBinaryFile(parent, name, {
+        sha256: await sha256Hex(bytes),
+        size: bytes.byteLength,
+        mime: attachmentMimeType(name),
+      });
+      this.materializedAssetPaths.set(String(treeId), path);
+      created.push(String(treeId));
+    }
+    const updated: string[] = [];
+    for (const node of this.tree.allNodes()) {
+      if (node.kind !== "binary") continue;
+      const path = buildPathFromNode(this.tree, node);
+      if (!path || !tracked.has(path)) continue;
+      const bytes = await this.docStore.readMaterialized(path);
+      if (!bytes) continue;
+      const sha256 = await sha256Hex(bytes);
+      const mime = attachmentMimeType(node.name);
+      if (node.sha256 === sha256 && node.size === bytes.byteLength && node.mime === mime) continue;
+      this.tree.updateBinaryMetadata(node.treeId, {
+        sha256,
+        size: bytes.byteLength,
+        mime,
+      });
+      updated.push(String(node.treeId));
+    }
+    if (created.length > 0 || updated.length > 0) await this.persistTree();
+    return { created, updated };
+  }
+
+  private ensureAttachmentsFolder(): TreeID {
+    const existing = this.tree.roots().find(
+      (node) => node.kind === "directory" && node.name === ATTACHMENTS_FOLDER_NAME,
+    );
+    return existing?.treeId ?? this.tree.addDirectory(undefined, ATTACHMENTS_FOLDER_NAME);
   }
 
   /**
@@ -804,9 +943,10 @@ export class VaultEngine {
    *     external edit/move/copy/new-file/delete is absorbed rather than
    *     clobbered by the passes below
    *   - re-materialise any tracked doc whose file is missing or stale
-   *   - delete any materialised `.md` that no longer corresponds to a tree
-   *     node (stale path left behind by a rename/move that happened before
-   *     this session, e.g. across a crash) — never touches `.adhd`
+   *   - delete any stale materialised `.md` that no longer corresponds to a
+   *     tree node (stale path left behind by a rename/move that happened
+   *     before this session, e.g. across a crash) — unknown ordinary files
+   *     are preserved, and `.adhd` is never touched
    */
   /**
    * Resolve any post-merge same-name sibling collisions (VaultTree.
@@ -837,6 +977,9 @@ export class VaultEngine {
   }> {
     await this.resolveTreeNameCollisions();
     const ingested = await this.ingestExternalChanges();
+    const assets = await this.ingestExternalAssets();
+    if (assets.created.length > 0) ingested.assetsCreated = assets.created;
+    if (assets.updated.length > 0) ingested.assetsUpdated = assets.updated;
 
     const materialized: string[] = [];
     const expected = new Set<string>();
@@ -844,8 +987,8 @@ export class VaultEngine {
       const path = buildPathFromNode(this.tree, node);
       if (!path) continue;
       if (node.kind === "binary") {
-        // Not materialised by this engine (yet) — just protect it from GC.
         expected.add(path);
+        this.materializedAssetPaths.set(String(node.treeId), path);
         continue;
       }
       if (node.kind !== "markdown" || !node.documentId) continue;
@@ -863,8 +1006,17 @@ export class VaultEngine {
     for (const path of await this.docStore.listMaterializedPaths()) {
       if (path.endsWith(".tmp")) continue;
       if (!expected.has(path)) {
-        await this.materializedRemove(path);
-        removed.push(path);
+        // Markdown paths are safe to garbage-collect only after the
+        // document ingest pass has established that they are stale. Unknown
+        // ordinary files are user data (and may be attachments from another
+        // tool), so preserve them until the attachment reconciler adopts or
+        // explicitly removes them.
+        if (path.toLowerCase().endsWith(".md")) {
+          await this.materializedRemove(path);
+          removed.push(path);
+        } else {
+          await this.diag("preserve-unknown-materialized-file", { detail: path });
+        }
       }
     }
     if (removed.length > 0) {
@@ -1130,6 +1282,10 @@ export class VaultEngine {
   private async rematerializeSubtree(treeId: TreeID): Promise<void> {
     const node = this.tree.getNode(treeId);
     if (!node) return;
+    if (node.kind === "binary") {
+      await this.rematerializeAsset(node.treeId, node);
+      return;
+    }
     if (node.kind === "markdown" && node.documentId) {
       await this.materializeToTreePath(node.documentId);
       return;
@@ -1138,7 +1294,21 @@ export class VaultEngine {
       for (const docId of collectDocumentIds(this.tree, treeId)) {
         await this.materializeToTreePath(docId);
       }
+      for (const asset of collectBinaryNodes(this.tree, treeId)) {
+        await this.rematerializeAsset(asset.treeId, asset);
+      }
     }
+  }
+
+  private async rematerializeAsset(treeId: TreeID, node: VaultTreeNode): Promise<void> {
+    const newPath = buildPathFromNode(this.tree, node);
+    if (!newPath) return;
+    const key = String(treeId);
+    const oldPath = this.materializedAssetPaths.get(key);
+    const bytes = await this.docStore.readMaterialized(oldPath ?? newPath);
+    if (bytes) await this.materializedWrite(newPath, bytes);
+    if (oldPath && oldPath !== newPath) await this.materializedRemove(oldPath);
+    this.materializedAssetPaths.set(key, newPath);
   }
 
   /**
@@ -1151,6 +1321,7 @@ export class VaultEngine {
     const node = this.tree.getNode(treeId);
     if (!node) throw new Error(`Node not found: ${treeId}`);
     const docIds = collectDocumentIds(this.tree, treeId);
+    const assetNodes = collectBinaryNodes(this.tree, treeId);
     const oldPaths: string[] = [];
     for (const docId of docIds) {
       const path = this.materializedPaths.get(docId);
@@ -1158,15 +1329,20 @@ export class VaultEngine {
       this.documents.delete(docId);
       this.materializedPaths.delete(docId);
     }
+    const oldAssetPaths = assetNodes
+      .map((asset) => this.materializedAssetPaths.get(String(asset.treeId)) ?? buildPathFromNode(this.tree, asset))
+      .filter((path): path is string => path !== null);
+    for (const asset of assetNodes) this.materializedAssetPaths.delete(String(asset.treeId));
     this.tree.delete(treeId);
     await this.persistTree();
     for (const path of oldPaths) {
       await this.materializedRemove(path);
       await this.dropIndexEntry(path);
     }
+    for (const path of oldAssetPaths) await this.materializedRemove(path);
     await this.refreshIndexes();
     await this.diag("delete-folder", {
-      counts: { docs: docIds.length },
+      counts: { docs: docIds.length, assets: assetNodes.length },
       detail: `${treeId} ${oldPaths.slice(0, 10).join(",")}`,
     });
   }
@@ -1204,6 +1380,17 @@ function collectDocumentIds(tree: VaultTree, rootTreeId: TreeID): string[] {
   };
   visit(rootTreeId);
   return ids;
+}
+
+function collectBinaryNodes(tree: VaultTree, rootTreeId: TreeID): VaultTreeNode[] {
+  const nodes: VaultTreeNode[] = [];
+  const visit = (treeId: TreeID) => {
+    const node = tree.getNode(treeId);
+    if (node?.kind === "binary") nodes.push(node);
+    for (const child of tree.children(treeId)) visit(child.treeId);
+  };
+  visit(rootTreeId);
+  return nodes;
 }
 
 /**

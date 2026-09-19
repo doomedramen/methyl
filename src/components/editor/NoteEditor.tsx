@@ -5,6 +5,8 @@ import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
 import type { EditorSession } from "@/lib/editor/session";
 import type { EditorUser } from "@/lib/editor/sync";
+import { Paperclip } from "lucide-react";
+import { attachmentMarkdownLink, relativeAttachmentPath } from "@/lib/vault/attachments";
 import { useApp, usePluginHost } from "@/lib/plugins/react";
 import { reconfigurePluginCompartment } from "@/lib/plugins/editor";
 
@@ -25,6 +27,7 @@ export function NoteEditor({
   engine,
   documentId,
   workspaceTabId,
+  onAttachmentsChanged,
   onDirtyChange,
   onPersisted,
   onSaveError,
@@ -36,6 +39,7 @@ export function NoteEditor({
   documentId: string;
   /** Stable identity used when more than one editor is mounted in a split. */
   workspaceTabId?: string;
+  onAttachmentsChanged?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onPersisted?: () => void;
   /** Edits did not reach the stored note (persist threw or text diverged). */
@@ -51,10 +55,16 @@ export function NoteEditor({
   saveRequest?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   // Updated when the (async-bootstrapped) editor session creates its flush,
   // so a save request can fire it from outside the session's lifecycle.
   const flushRef = useRef<(() => void) | null>(null);
+  const attachFilesRef = useRef<(files: File[]) => void>(() => undefined);
+  const attachmentChangeRef = useRef(onAttachmentsChanged);
+  useLayoutEffect(() => {
+    attachmentChangeRef.current = onAttachmentsChanged;
+  }, [onAttachmentsChanged]);
   // Wikilink click/open/create and live preview are core plugins (Task 10)
   // driven off `app.workspace`; this component only needs the shared
   // EditorExtensionRegistry to seed and live-reconfigure the compartment.
@@ -160,6 +170,50 @@ export function NoteEditor({
           }),
         });
 
+        const attachFiles = async (files: File[]) => {
+          if (disposed || readOnly || !view || files.length === 0) return;
+          const links: string[] = [];
+          try {
+            for (const file of files) {
+              const bytes = new Uint8Array(await file.arrayBuffer());
+              const node = await engine.createAttachment(file.name || "attachment", bytes);
+              const path = relativeAttachmentPath(engine, documentId, node.treeId);
+              if (path) links.push(attachmentMarkdownLink(node.name, path));
+            }
+            await engine.persistTreeIncremental();
+            if (links.length > 0 && view) {
+              const { from, to } = view.state.selection.main;
+              const insert = links.join("\n");
+              view.dispatch({
+                changes: { from, to, insert },
+                selection: { anchor: from + insert.length },
+              });
+              attachmentChangeRef.current?.();
+            }
+          } catch (error) {
+            console.error("[editor] attachment import failed", error);
+          }
+        };
+        attachFilesRef.current = (files) => void attachFiles(files);
+        const onPaste = (event: ClipboardEvent) => {
+          const files = Array.from(event.clipboardData?.files ?? []);
+          if (files.length === 0 || readOnly) return;
+          event.preventDefault();
+          attachFilesRef.current(files);
+        };
+        const onDragOver = (event: DragEvent) => {
+          if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+        };
+        const onDrop = (event: DragEvent) => {
+          const files = Array.from(event.dataTransfer?.files ?? []);
+          if (files.length === 0 || readOnly) return;
+          event.preventDefault();
+          attachFilesRef.current(files);
+        };
+        host.addEventListener("paste", onPaste, true);
+        host.addEventListener("dragover", onDragOver);
+        host.addEventListener("drop", onDrop);
+
         // Work around a loro-codemirror@0.3.3 bug (node_modules/loro-codemirror/
         // dist/sync.js, LoroSyncPluginValue): its constructor unconditionally
         // sets `isInitDispatch = true` inside a `Promise.resolve().then(...)`
@@ -210,6 +264,10 @@ export function NoteEditor({
 
         cleanupRef.current = () => {
           if (verifyTimer) clearTimeout(verifyTimer);
+          attachFilesRef.current = () => undefined;
+          host.removeEventListener("paste", onPaste, true);
+          host.removeEventListener("dragover", onDragOver);
+          host.removeEventListener("drop", onDrop);
           document.removeEventListener("visibilitychange", onHidden);
           window.removeEventListener("beforeunload", flush);
           unsubscribePluginExtensions();
@@ -238,5 +296,33 @@ export function NoteEditor({
     };
   }, [engine, documentId, pluginHost, readOnly, workspaceTabId]);
 
-  return <div ref={hostRef} className="cm-host h-full w-full overflow-auto" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={hostRef} className="cm-host h-full w-full overflow-auto" />
+      {!readOnly && (
+        <>
+          <button
+            type="button"
+            className="absolute top-2 right-3 z-10 rounded-md border bg-background/85 p-1.5 text-muted-foreground shadow-sm backdrop-blur hover:text-foreground"
+            aria-label="Attach file"
+            title="Attach file"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip className="size-4" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="sr-only"
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              event.target.value = "";
+              attachFilesRef.current(files);
+            }}
+          />
+        </>
+      )}
+    </div>
+  );
 }

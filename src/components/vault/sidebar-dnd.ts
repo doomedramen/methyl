@@ -9,7 +9,7 @@ export type DropMode = "before" | "after" | "inside";
  */
 export interface SidebarDndRow {
   treeId: TreeID;
-  kind: "directory" | "markdown";
+  kind: "directory" | "markdown" | "binary";
   name?: string;
   title?: string;
   children?: readonly SidebarDndRow[];

@@ -48,7 +48,9 @@ export type LivePreviewSpec =
   /** Replace a task marker ("[ ]"/"[x]") with an interactive checkbox. */
   | { kind: "checkbox"; from: number; to: number; checked: boolean }
   /** Replace a "---" horizontal rule with an <hr> widget. */
-  | { kind: "hr"; from: number; to: number };
+  | { kind: "hr"; from: number; to: number }
+  /** Replace an image/wiki embed with a loaded attachment preview. */
+  | { kind: "attachment"; from: number; to: number; target: string; alt: string; url?: string };
 
 function touches(selection: TextRange[], from: number, to: number): boolean {
   return selection.some((r) => r.from <= to && r.to >= from);
@@ -97,6 +99,7 @@ function collectWikilinks(doc: string, claimed: TextRange[]): TextRange[] {
   while ((m = re.exec(doc))) {
     const from = m.index;
     const to = from + m[0].length;
+    if (doc[from - 1] === "!") continue;
     if (claimed.some((c) => c.from < to && c.to > from)) continue;
     out.push({ from, to });
   }
@@ -123,6 +126,37 @@ export function findWikilinkAt(
 export interface LivePreviewComputeOptions {
   /** Resolve a wikilink target to a document id, or undefined if missing. */
   resolveWikilink?: (target: string) => string | undefined;
+  /** Return a cached object URL for an attachment target, when available. */
+  resolveAttachment?: (target: string) => string | undefined;
+}
+
+interface AttachmentRange {
+  from: number;
+  to: number;
+  target: string;
+  alt: string;
+}
+
+function collectAttachmentRanges(doc: string, claimed: TextRange[]): AttachmentRange[] {
+  const out: AttachmentRange[] = [];
+  const push = (from: number, to: number, target: string, alt: string) => {
+    if (!target || /^(?:[a-z]+:|data:)/i.test(target)) return;
+    if (claimed.some((range) => range.from < to && range.to > from)) return;
+    out.push({ from, to, target: target.trim(), alt: alt.trim() || target.split("/").pop() || "attachment" });
+  };
+
+  const wikilink = /!\[\[([^\]\n]+)\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = wikilink.exec(doc))) {
+    push(match.index, match.index + match[0].length, match[1]!, match[1]!);
+  }
+
+  const markdown = /!\[([^\]\n]*)\]\((<[^>]+>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\)/g;
+  while ((match = markdown.exec(doc))) {
+    const target = match[2]!.replace(/^<|>$/g, "");
+    push(match.index, match.index + match[0].length, target, match[1]!);
+  }
+  return out;
 }
 
 export function computeLivePreviewSpecs(
@@ -157,6 +191,14 @@ export function computeLivePreviewSpecs(
     }
 
     const name = node.name;
+
+    // Image nodes are rendered by the attachment pass below. Skipping the
+    // parser's ordinary link decoration keeps the replacement ranges
+    // non-overlapping while preserving the raw Markdown in the document.
+    if (
+      name === "Image" ||
+      (name === "Link" && (doc[node.from] === "!" || doc[node.from - 1] === "!"))
+    ) return false;
 
     // ---- Headings (ATX) -------------------------------------------------
     if (name in HEADING_NODES) {
@@ -340,6 +382,18 @@ export function computeLivePreviewSpecs(
     }
   }
 
+  // ---- Attachments / images ----------------------------------------------
+  for (const range of collectAttachmentRanges(doc, codeRanges)) {
+    specs.push({
+      kind: "attachment",
+      from: range.from,
+      to: range.to,
+      target: range.target,
+      alt: range.alt,
+      url: options.resolveAttachment?.(range.target),
+    });
+  }
+
   return specs;
 }
 
@@ -367,6 +421,28 @@ class HrWidget extends WidgetType {
     const span = document.createElement("span");
     span.className = "cm-lp-hr";
     return span;
+  }
+}
+
+class AttachmentWidget extends WidgetType {
+  constructor(
+    readonly url: string,
+    readonly alt: string,
+  ) {
+    super();
+  }
+
+  eq(other: AttachmentWidget): boolean {
+    return other.url === this.url && other.alt === this.alt;
+  }
+
+  toDOM(): HTMLElement {
+    const image = document.createElement("img");
+    image.className = "cm-lp-attachment";
+    image.src = this.url;
+    image.alt = this.alt;
+    image.loading = "lazy";
+    return image;
   }
 }
 
@@ -458,6 +534,23 @@ function specsToDecorations(specs: LivePreviewSpec[], visible: readonly TextRang
           });
         }
         break;
+      case "attachment":
+        if (inView(spec.from, spec.to)) {
+          if (spec.url) {
+            points.push({
+              from: spec.from,
+              to: spec.to,
+              deco: Decoration.replace({ widget: new AttachmentWidget(spec.url, spec.alt) }),
+            });
+          } else {
+            points.push({
+              from: spec.from,
+              to: spec.to,
+              deco: Decoration.mark({ class: "cm-lp-attachment-pending" }),
+            });
+          }
+        }
+        break;
     }
   }
 
@@ -475,13 +568,10 @@ export interface LivePreviewOptions {
   onOpenWikilink?: (documentId: string) => void;
   /** Cmd/Ctrl-click (or Mod-Enter) on an unresolved wikilink. */
   onCreateWikilink?: (target: string) => void;
-}
-
-function buildDecorations(view: EditorView, options: LivePreviewOptions): DecorationSet {
-  const doc = view.state.doc.toString();
-  const selection = view.state.selection.ranges.map((r) => ({ from: r.from, to: r.to }));
-  const specs = computeLivePreviewSpecs(doc, selection, { resolveWikilink: options.resolveWikilink });
-  return specsToDecorations(specs, view.visibleRanges);
+  /** Return a cached attachment object URL, when one is ready. */
+  resolveAttachment?: (target: string) => string | undefined;
+  /** Load an attachment object URL and trigger a decoration refresh. */
+  loadAttachment?: (target: string) => Promise<string | undefined>;
 }
 
 function activateWikilinkAt(view: EditorView, pos: number, options: LivePreviewOptions): boolean {
@@ -504,12 +594,42 @@ function makeLivePreviewPlugin(options: LivePreviewOptions) {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
+      private readonly loadedAttachments = new Map<string, string>();
+      private readonly pendingAttachments = new Set<string>();
+
       constructor(view: EditorView) {
-        this.decorations = buildDecorations(view, options);
+        this.decorations = this.rebuild(view);
       }
+
+      private rebuild(view: EditorView): DecorationSet {
+        const specs = computeLivePreviewSpecs(
+          view.state.doc.toString(),
+          view.state.selection.ranges.map((r) => ({ from: r.from, to: r.to })),
+          {
+            resolveWikilink: options.resolveWikilink,
+            resolveAttachment: (target) =>
+              options.resolveAttachment?.(target) ?? this.loadedAttachments.get(target),
+          },
+        );
+        if (options.loadAttachment) {
+          for (const spec of specs) {
+            if (spec.kind !== "attachment" || spec.url || this.pendingAttachments.has(spec.target)) continue;
+            this.pendingAttachments.add(spec.target);
+            void options.loadAttachment(spec.target).then((url) => {
+              if (url) this.loadedAttachments.set(spec.target, url);
+              this.pendingAttachments.delete(spec.target);
+              if (view.dom.isConnected) {
+                view.dispatch({ selection: view.state.selection });
+              }
+            });
+          }
+        }
+        return specsToDecorations(specs, view.visibleRanges);
+      }
+
       update(update: ViewUpdate) {
         if (update.docChanged || update.viewportChanged || update.selectionSet) {
-          this.decorations = buildDecorations(update.view, options);
+          this.decorations = this.rebuild(update.view);
         }
       }
     },
@@ -606,6 +726,18 @@ const livePreviewTheme = EditorView.baseTheme({
     height: "1px",
     backgroundColor: "var(--border)",
     margin: "0.5em 0",
+  },
+  ".cm-lp-attachment": {
+    display: "block",
+    maxWidth: "min(100%, 48rem)",
+    maxHeight: "28rem",
+    margin: "0.75rem 0",
+    borderRadius: "0.5rem",
+    objectFit: "contain",
+  },
+  ".cm-lp-attachment-pending": {
+    color: "var(--muted-foreground)",
+    opacity: "0.7",
   },
 });
 

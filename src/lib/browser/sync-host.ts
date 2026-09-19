@@ -4,6 +4,7 @@ import { DirtyJournal, type DirtyEntry } from "@/lib/sync/journal";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncScheduler, type SyncStatus } from "@/lib/sync/scheduler";
 import { maybeDropUntouchedSeed } from "@/lib/browser/seed-marker";
+import type { TreeID } from "loro-crdt";
 
 const JOURNAL_PATH = ".adhd/sync/journal.json";
 
@@ -96,7 +97,7 @@ export class SyncHost {
       }
     }
 
-    if (report.treeTouched || report.touchedRoomIds.length > 0) {
+    if (report.treeTouched || report.touchedRoomIds.length > 0 || report.binariesSynced > 0) {
       for (const listener of this.changeListeners) listener(report);
     }
     return report;
@@ -180,13 +181,21 @@ export class SyncHost {
         return engine.ensureDocument(docId).doc;
       },
       getBinaryData: async (nodeId: string) =>
-        (await this.fs.readFile(assetPath(nodeId))) ?? null,
+        await engine.readAttachment(nodeId as TreeID),
+      writeBinaryData: async (nodeId: string, data: Uint8Array) => {
+        await engine.writeAttachment(nodeId as TreeID, data);
+      },
+      getBinaryIds: async () =>
+        engine.tree
+          .allNodes()
+          .filter((node) => node.kind === "binary")
+          .map((node) => String(node.treeId)),
       getMissingBinaryIds: async () => {
         const missing: string[] = [];
         for (const node of engine.tree.allNodes()) {
           if (node.kind !== "binary") continue;
           const treeId = `${node.treeId}`;
-          if ((await this.fs.exists(assetPath(treeId))) === false) {
+          if ((await engine.readAttachment(node.treeId)) === null) {
             missing.push(treeId);
           }
         }
@@ -194,10 +203,6 @@ export class SyncHost {
       },
     };
   }
-}
-
-function assetPath(nodeId: string): string {
-  return `.adhd/assets/${nodeId}`;
 }
 
 export async function loadJournal(

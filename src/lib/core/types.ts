@@ -8,6 +8,8 @@ export interface TreeNodeMeta {
   kind: NodeKind;
   documentId?: string;
   sha256?: string;
+  size?: number;
+  mime?: string;
 }
 
 export interface MaterializationCheckpoint {

@@ -107,6 +107,30 @@ describe("SyncHost client driver", () => {
     expect(raw).toBeTruthy();
   });
 
+  it("uploads local attachments and downloads them on a second device", async () => {
+    const fs = new MemoryVaultFS();
+    const engine = await makeVaultOn(fs);
+    const bytes = new Uint8Array([0, 17, 34, 255]);
+    const asset = await engine.createAttachment("remote.png", bytes);
+    const host = await SyncHost.create(makeHostOptions(engine, fs));
+
+    const uploaded = await host.sync();
+    expect(uploaded.binariesSynced).toBeGreaterThan(0);
+    expect(server.store.getAssetMeta(String(asset.treeId))?.size).toBe(bytes.length);
+    await waitFor(() => existsSync(join(tmpDir, "Attachments/remote.png")));
+    expect(new Uint8Array(readFileSync(join(tmpDir, "Attachments/remote.png")))).toEqual(bytes);
+    host.disconnect();
+
+    const fs2 = new MemoryVaultFS();
+    const engine2 = await makeVaultOn(fs2);
+    const host2 = await SyncHost.create(makeHostOptions(engine2, fs2));
+    const downloaded = await host2.sync();
+
+    expect(downloaded.binariesSynced).toBeGreaterThan(0);
+    expect(await engine2.readAttachment(asset.treeId)).toEqual(bytes);
+    host2.disconnect();
+  }, 15000);
+
   it("a second vault receives the first vault's notes", async () => {
     // First vault authored a note and synced it
     const fs = new MemoryVaultFS();

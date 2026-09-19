@@ -113,6 +113,19 @@ describe("buildWorkSet (SPEC §34 step 8)", () => {
     expect(binaries).toEqual(["bin:1"]);
   });
 
+  it("includes local and server-changed binary ids without treating them as docs", () => {
+    const { documents, binaries } = buildWorkSet({
+      localDirty: [],
+      serverChanged: ["doc:a"],
+      serverChangedBinaries: ["bin:remote"],
+      binaryIds: ["bin:local"],
+      treeDocumentIds: ["doc:a"],
+      knownSynced: known,
+    });
+    expect(documents).toEqual(["doc:a"]);
+    expect(binaries).toEqual(["bin:local", "bin:remote"]);
+  });
+
   it("bounded by max, documents before binaries", () => {
     const { documents, binaries } = buildWorkSet({
       localDirty: ["doc:1", "doc:2", "doc:3"],

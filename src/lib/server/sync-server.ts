@@ -1,10 +1,11 @@
 import { SimpleServer, type SimpleServerConfig } from "loro-websocket/server";
 import { CrdtType } from "loro-protocol";
-import { LoroDoc } from "loro-crdt";
+import { LoroDoc, type TreeID } from "loro-crdt";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { promises as fsPromises } from "fs";
 import { join } from "path";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import type { FSWatcher } from "chokidar";
 import { ServerStore } from "@/lib/server/store";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
@@ -42,32 +43,64 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function readBody(req: IncomingMessage, maxBytes = 64 * 1024 * 1024): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on("data", (c: Buffer) => {
-      size += c.length;
-      if (size > maxBytes) {
-        reject(new Error("body too large"));
-        req.destroy();
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
-
 export interface HttpApiOptions {
   store: ServerStore;
   authToken: string;
   assetDir: string;
+  onAssetPut?: (assetId: string, digest: string) => void | Promise<void>;
 }
 
-function sha256(data: Uint8Array): string {
-  return createHash("sha256").update(data).digest("hex");
+async function streamUpload(
+  req: IncomingMessage,
+  assetDir: string,
+  maxBytes = 512 * 1024 * 1024,
+): Promise<{ digest: string; size: number; path: string }> {
+  mkdirSync(assetDir, { recursive: true });
+  const tempPath = join(assetDir, `.upload-${randomUUID()}.tmp`);
+  const output = createWriteStream(tempPath, { flags: "wx" });
+  const hasher = createHash("sha256");
+  let size = 0;
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+      output.on("error", fail);
+      req.on("error", fail);
+      req.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        size += chunk.length;
+        if (size > maxBytes) {
+          fail(new Error("body too large"));
+          req.destroy();
+          output.destroy();
+          return;
+        }
+        hasher.update(chunk);
+        if (!output.write(chunk)) req.pause();
+      });
+      output.on("drain", () => req.resume());
+      req.on("end", () => {
+        if (settled) return;
+        output.end(() => {
+          settled = true;
+          resolve();
+        });
+      });
+    });
+    const digest = hasher.digest("hex");
+    const path = join(assetDir, digest);
+    if (existsSync(path)) unlinkSync(tempPath);
+    else renameSync(tempPath, path);
+    return { digest, size, path };
+  } catch (error) {
+    try { unlinkSync(tempPath); } catch { /* best effort */ }
+    throw error;
+  }
 }
 
 /**
@@ -79,7 +112,7 @@ function sha256(data: Uint8Array): string {
  * - GET  /api/rooms                    → room + durable summaries
  */
 export function createHttpApi(options: HttpApiOptions) {
-  const { store, authToken, assetDir } = options;
+  const { store, authToken, assetDir, onAssetPut } = options;
 
   return (req: IncomingMessage, res: ServerResponse): void => {
     if (req.headers["authorization"] !== `Bearer ${authToken}`) {
@@ -109,21 +142,37 @@ export function createHttpApi(options: HttpApiOptions) {
 
     if (req.method === "PUT" && pathname.startsWith("/api/assets/")) {
       const id = decodeURIComponent(pathname.slice("/api/assets/".length));
-      void readBody(req)
-        .then((body) => {
-          const digest = sha256(body);
-          mkdirSync(assetDir, { recursive: true });
-          writeFileSync(join(assetDir, digest), body);
+      void streamUpload(req, assetDir)
+        .then(({ digest, size }) => {
+          const current = store.getAssetMeta(id);
+          if (current?.sha256 === digest && current.size === size) {
+            sendJson(res, 200, { id, size, sha256: digest });
+            return;
+          }
+          if (current && current.sha256 !== digest) {
+            const conflictId = `${id}~${digest.slice(0, 12)}`;
+            const conflictSeq = store.getNextSeq();
+            store.upsertAsset(conflictId, digest, size, conflictSeq);
+            store.recordChange(conflictSeq, conflictId, "asset");
+            sendJson(res, 409, { id, conflictId, size, sha256: digest, error: "asset conflict" });
+            return;
+          }
           const seq = store.getNextSeq();
-          store.upsertAsset(id, digest, body.length, seq);
+          store.upsertAsset(id, digest, size, seq);
           store.recordChange(seq, id, "asset");
-          sendJson(res, 200, { id, size: body.length, sha256: digest });
+          void Promise.resolve(onAssetPut?.(id, digest)).then(
+            () => sendJson(res, 200, { id, size, sha256: digest }),
+            (error) => sendJson(res, 500, { error: String(error?.message ?? error) }),
+          );
         })
-        .catch((e) => sendJson(res, 400, { error: String(e?.message ?? e) }));
+        .catch((e) => {
+          const message = String(e?.message ?? e);
+          sendJson(res, message === "body too large" ? 413 : 400, { error: message });
+        });
       return;
     }
 
-    if (req.method === "GET" && pathname.startsWith("/api/assets/")) {
+    if ((req.method === "GET" || req.method === "HEAD") && pathname.startsWith("/api/assets/")) {
       const id = decodeURIComponent(pathname.slice("/api/assets/".length));
       const meta = store.getAssetMeta(id);
       if (!meta) {
@@ -135,9 +184,22 @@ export function createHttpApi(options: HttpApiOptions) {
         sendJson(res, 404, { error: "asset data missing" });
         return;
       }
-      const body = readFileSync(path);
-      res.writeHead(200, { "content-type": "application/octet-stream" });
-      res.end(body);
+      const size = statSync(path).size;
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": size,
+        etag: `"${meta.sha256}"`,
+      });
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      const stream = createReadStream(path);
+      stream.on("error", () => {
+        if (!res.headersSent) sendJson(res, 500, { error: "asset read failed" });
+        else res.destroy();
+      });
+      stream.pipe(res);
       return;
     }
 
@@ -228,6 +290,21 @@ function recordRoomSave(
   store.recordChange(seq, roomId, type === "tree" ? "tree" : "doc");
 }
 
+function recordAssetSave(
+  store: ServerStore,
+  assetDir: string,
+  assetId: string,
+  data: Uint8Array,
+): void {
+  const digest = createHash("sha256").update(data).digest("hex");
+  mkdirSync(assetDir, { recursive: true });
+  const path = join(assetDir, digest);
+  if (!existsSync(path)) writeFileSync(path, data);
+  const seq = store.getNextSeq();
+  store.upsertAsset(assetId, digest, data.length, seq);
+  store.recordChange(seq, assetId, "asset");
+}
+
 export function createSyncServer(options: SyncServerOptions) {
   const store = new ServerStore(`${options.vaultPath}/.adhd/server/sync.sqlite`);
   const assetDir = `${options.vaultPath}/.adhd/server/assets`;
@@ -312,6 +389,14 @@ export function createSyncServer(options: SyncServerOptions) {
     return engine;
   }
 
+  async function materializeServerAsset(assetId: string, digest: string): Promise<void> {
+    const eng = await ensureEngine();
+    const node = eng.tree.getNode(assetId as TreeID);
+    if (!node || node.kind !== "binary") return;
+    const bytes = new Uint8Array(await fsPromises.readFile(join(assetDir, digest)));
+    await eng.writeAttachment(node.treeId, bytes);
+  }
+
   const config: SimpleServerConfig = {
     port: options.port,
     host: options.host ?? "0.0.0.0",
@@ -362,6 +447,11 @@ export function createSyncServer(options: SyncServerOptions) {
           // owns.
           const renamed = await eng.resolveTreeNameCollisions();
           await eng.persistTreeIncremental();
+          for (const node of eng.tree.allNodes()) {
+            if (node.kind !== "binary") continue;
+            const meta = store.getAssetMeta(String(node.treeId));
+            if (meta) await materializeServerAsset(String(node.treeId), meta.sha256);
+          }
           // Docs whose .md couldn't be materialized earlier (their node
           // hadn't reached the mirror yet) can be materialized now that the
           // node exists — see drainPendingDocMirrors.
@@ -415,11 +505,32 @@ export function createSyncServer(options: SyncServerOptions) {
 
       // Ignore fs events during this initial pass (requirement: don't let
       // the watcher react to the boot reconcile's own writes).
+      let bootReport: Awaited<ReturnType<VaultEngine["reconcileMaterialization"]>>;
       bootReconciling = true;
       try {
-        await eng.reconcileMaterialization();
+        bootReport = await eng.reconcileMaterialization();
       } finally {
         bootReconciling = false;
+      }
+      const bootAssetIds = new Set([
+        ...(bootReport.ingested.assetsCreated ?? []),
+        ...(bootReport.ingested.assetsUpdated ?? []),
+      ]);
+      if (bootAssetIds.size > 0) {
+        for (const assetId of bootAssetIds) {
+          const bytes = await eng.readAttachment(assetId as TreeID);
+          if (bytes) recordAssetSave(store, assetDir, assetId, bytes);
+        }
+        recordRoomSave(store, treeRoomId, eng.tree.snapshot(), "tree", server);
+      }
+      // A previous process may have received the asset bytes before the
+      // ordinary Attachments/ file was materialised, or the file may have
+      // been removed while the server was stopped. Rebuild every tracked
+      // binary path from the durable digest-addressed server copy.
+      for (const node of eng.tree.allNodes()) {
+        if (node.kind !== "binary") continue;
+        const meta = store.getAssetMeta(String(node.treeId));
+        if (meta) await materializeServerAsset(String(node.treeId), meta.sha256);
       }
 
       if (options.watch !== false) {
@@ -427,12 +538,14 @@ export function createSyncServer(options: SyncServerOptions) {
           vaultPath: options.vaultPath,
           engine: eng,
           onIngested: (report) => {
-            const total =
-              report.edited.length +
+          const total =
+            report.edited.length +
               report.moved.length +
               report.copied.length +
               report.created.length +
-              report.deleted.length;
+              report.deleted.length +
+              (report.assetsCreated?.length ?? 0) +
+              (report.assetsUpdated?.length ?? 0);
             if (total > 0) {
               console.log(
                 `[sync-server] ingested external change(s): ` +
@@ -451,16 +564,28 @@ export function createSyncServer(options: SyncServerOptions) {
             // see this external edit, no matter how many times it re-syncs.
             recordRoomSave(store, roomId, update, roomId.startsWith("vault:") ? "tree" : "doc", server);
           },
+          onAssetUpdate: (assetId, bytes) => {
+            recordAssetSave(store, assetDir, assetId, bytes);
+          },
           onError: (err) => {
             console.error("[sync-server] vault watcher error:", err);
           },
         });
+        // Do not let callers write into the vault before chokidar has
+        // finished its initial directory scan; otherwise a newly-created
+        // Attachments/ directory can be missed under load.
+        await new Promise<void>((resolve) => watcher!.once("ready", resolve));
       }
 
       await server.start();
       if (httpPort !== undefined) {
         http = createServer(
-          createHttpApi({ store, authToken: options.authToken, assetDir }),
+          createHttpApi({
+            store,
+            authToken: options.authToken,
+            assetDir,
+            onAssetPut: (assetId, digest) => materializeServerAsset(assetId, digest),
+          }),
         );
         await new Promise<void>((resolve) => http!.listen(httpPort, options.host ?? "0.0.0.0", resolve));
       }

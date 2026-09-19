@@ -130,12 +130,16 @@ export interface DiscoveryInput {
   localDirty: string[];
   /** server rows from GET /api/changes?after=<last_server_seq>. */
   serverChanged: string[];
+  /** Asset ids from server change rows whose type is `asset`. */
+  serverChangedBinaries?: string[];
   /** All document IDs present after the merged vault tree (§19 step 5/6). */
   treeDocumentIds: string[];
   /** IDs already known synced; excluded to avoid re-syncing every reconnect. */
   knownSynced: ReadonlySet<string>;
   /** Binary asset IDs known to be missing locally. */
   missingBinaries?: string[];
+  /** Binary asset IDs present locally and eligible for upload. */
+  binaryIds?: string[];
   /** Hard cap applied to the returned set (for bounded concurrency). */
   max?: number;
 }
@@ -159,7 +163,12 @@ export function buildWorkSet(input: DiscoveryInput): {
     if (!input.knownSynced.has(id)) docs.add(id);
   }
   const documents = [...docs].sort();
-  const binaries = (input.missingBinaries ?? [])
+  const binaryIds = new Set([
+    ...(input.binaryIds ?? []),
+    ...(input.missingBinaries ?? []),
+    ...(input.serverChangedBinaries ?? []),
+  ]);
+  const binaries = [...binaryIds]
     .filter((id) => !docs.has(id))
     .sort();
   if (input.max !== undefined) {

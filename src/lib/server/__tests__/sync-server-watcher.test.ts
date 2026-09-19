@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { request } from "http";
@@ -134,6 +134,38 @@ describe("sync-server vault watcher integration", () => {
         if (!sawTreeChange) await new Promise((r) => setTimeout(r, 50));
       }
       expect(sawTreeChange).toBe(true);
+    } finally {
+      await server.stop();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 10000);
+
+  it("adopts an external attachment and publishes its bytes", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "adhd-sync-watch-"));
+    const { wsPort, httpPort } = nextPorts();
+    const server = createSyncServer({
+      port: wsPort,
+      httpPort,
+      vaultPath: tmpDir,
+      authToken: AUTH,
+      saveIntervalMs: 50,
+      vaultId: "assetwatch",
+    });
+    await server.start();
+    try {
+      const bytes = Buffer.from([1, 3, 3, 7]);
+      mkdirSync(join(tmpDir, "Attachments"), { recursive: true });
+      writeFileSync(join(tmpDir, "Attachments", "external.png"), bytes);
+
+      await waitFor(() => {
+        const node = server.getEngine()!.tree.findByName("external.png")[0];
+        return node?.kind === "binary" && server.store.getAssetMeta(String(node.treeId)) !== undefined;
+      });
+
+      const node = server.getEngine()!.tree.findByName("external.png")[0]!;
+      const meta = server.store.getAssetMeta(String(node.treeId))!;
+      expect(meta.size).toBe(bytes.length);
+      expect(readFileSync(join(tmpDir, ".adhd/server/assets", meta.sha256))).toEqual(bytes);
     } finally {
       await server.stop();
       rmSync(tmpDir, { recursive: true, force: true });

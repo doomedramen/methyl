@@ -185,3 +185,76 @@ describe("materialization: CONTENT_KEY round-trip", () => {
     expect(onDisk).toBe(inMemory);
   });
 });
+
+describe("materialization: binary attachments", () => {
+  it("creates, reads, and hashes an attachment under Attachments/", async () => {
+    const { engine, fs } = await newEngine();
+    const bytes = new Uint8Array([0, 1, 2, 255]);
+
+    const node = await engine.createAttachment("pixel.png", bytes);
+
+    expect(node.kind).toBe("binary");
+    expect(node.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(node.size).toBe(bytes.byteLength);
+    expect(node.mime).toBe("image/png");
+    expect(await fs.readFile("Attachments/pixel.png")).toEqual(bytes);
+    expect(await engine.readAttachment(node.treeId)).toEqual(bytes);
+  });
+
+  it("preserves unknown ordinary files during reconciliation", async () => {
+    const { engine, fs } = await newEngine();
+    const bytes = new Uint8Array([5, 4, 3, 2, 1]);
+    await fs.writeFile("exports/data.bin", bytes);
+
+    const result = await engine.reconcileMaterialization();
+
+    expect(result.removed).not.toContain("exports/data.bin");
+    expect(await fs.readFile("exports/data.bin")).toEqual(bytes);
+  });
+
+  it("updates binary metadata when an attachment is edited externally", async () => {
+    const { engine, fs } = await newEngine();
+    const node = await engine.createAttachment("clip.bin", new Uint8Array([1, 2]));
+    const replacement = new Uint8Array([9, 8, 7]);
+    await fs.writeFile("Attachments/clip.bin", replacement);
+
+    const result = await engine.ingestExternalAssets();
+    const updated = engine.tree.getNode(node.treeId)!;
+
+    expect(result.updated).toEqual([String(node.treeId)]);
+    expect(updated.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(updated.size).toBe(replacement.byteLength);
+    expect(await engine.readAttachment(node.treeId)).toEqual(replacement);
+  });
+
+  it("moves and deletes attachment bytes with their tree nodes", async () => {
+    const { engine, fs } = await newEngine();
+    const node = await engine.createAttachment("clip.mp4", new Uint8Array([4, 5, 6]));
+    const folderId = engine.createFolder(undefined, "Projects");
+
+    await engine.moveNode(node.treeId, folderId);
+    expect(await fs.exists("Attachments/clip.mp4")).toBe(false);
+    expect(await fs.exists("Projects/clip.mp4")).toBe(true);
+
+    await engine.renameFolder(folderId, "Media");
+    expect(await fs.exists("Projects/clip.mp4")).toBe(false);
+    expect(await fs.exists("Media/clip.mp4")).toBe(true);
+
+    await engine.deleteAttachment(node.treeId);
+    expect(await fs.exists("Media/clip.mp4")).toBe(false);
+    expect(engine.tree.getNode(node.treeId)).toBeUndefined();
+  });
+
+  it("adopts ordinary files placed in Attachments/ during reconciliation", async () => {
+    const { engine, fs } = await newEngine();
+    const bytes = new Uint8Array([9, 8, 7]);
+    await fs.writeFile("Attachments/from-disk.pdf", bytes);
+
+    const result = await engine.reconcileMaterialization();
+    const node = engine.tree.findByName("from-disk.pdf")[0];
+
+    expect(result.ingested.assetsCreated).toHaveLength(1);
+    expect(node?.kind).toBe("binary");
+    expect(await engine.readAttachment(node!.treeId)).toEqual(bytes);
+  });
+});

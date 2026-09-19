@@ -125,6 +125,27 @@ describe("computeLivePreviewSpecs", () => {
     expect(detectFrontmatter("# Hello\nbody")).toBeNull();
     expect(detectFrontmatter("not frontmatter\n---\n")).toBeNull();
   });
+
+  it("recognizes Obsidian image embeds and resolves their cached URL", () => {
+    const doc = "![A photo](Attachments/photo.png)\n\n![[Attachments/diagram.svg]]";
+    const specs = computeLivePreviewSpecs(doc, cursorAt(0), {
+      resolveAttachment: (target) => `blob:${target}`,
+    });
+    const embeds = specs.filter((spec) => spec.kind === "attachment");
+
+    expect(embeds).toHaveLength(2);
+    expect(embeds).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target: "Attachments/photo.png", url: "blob:Attachments/photo.png" }),
+      expect.objectContaining({ target: "Attachments/diagram.svg", url: "blob:Attachments/diagram.svg" }),
+    ]));
+  });
+
+  it("does not turn fenced-code image syntax into an attachment embed", () => {
+    const specs = computeLivePreviewSpecs("```md\n![[Attachments/photo.png]]\n```", cursorAt(0), {
+      resolveAttachment: () => "blob:photo",
+    });
+    expect(specs.some((spec) => spec.kind === "attachment")).toBe(false);
+  });
 });
 
 describe("wikilink specs", () => {

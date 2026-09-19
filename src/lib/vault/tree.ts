@@ -9,6 +9,15 @@ export interface VaultTreeNode {
   name: string;
   kind: NodeKind;
   documentId?: string;
+  sha256?: string;
+  size?: number;
+  mime?: string;
+}
+
+export interface BinaryFileMetadata {
+  sha256: string;
+  size?: number;
+  mime?: string;
 }
 
 export class VaultTree {
@@ -118,9 +127,22 @@ export class VaultTree {
   addBinaryFile(
     parent: TreeID | undefined,
     name: string,
+    metadata: BinaryFileMetadata,
+    index?: number,
+  ): TreeID;
+  addBinaryFile(
+    parent: TreeID | undefined,
+    name: string,
     sha256: string,
     index?: number,
+  ): TreeID;
+  addBinaryFile(
+    parent: TreeID | undefined,
+    name: string,
+    metadata: string | BinaryFileMetadata,
+    index?: number,
   ): TreeID {
+    const details = typeof metadata === "string" ? { sha256: metadata } : metadata;
     const safe = sanitizeName(name);
     if (!safe) throw new Error(`Invalid name: ${name}`);
     const taken = this.siblingNameSet(parent);
@@ -128,9 +150,23 @@ export class VaultTree {
     const node = this.tree.createNode(parent, index);
     node.data.set("name", final);
     node.data.set("kind", "binary");
-    node.data.set("sha256", sha256);
+    node.data.set("sha256", details.sha256);
+    if (details.size !== undefined) node.data.set("size", details.size);
+    if (details.mime !== undefined) node.data.set("mime", details.mime);
     this.doc.commit();
     return node.id;
+  }
+
+  /** Update binary metadata as a real tree CRDT edit. */
+  updateBinaryMetadata(treeId: TreeID, metadata: Partial<BinaryFileMetadata>): void {
+    const node = this.tree.getNodeByID(treeId);
+    if (!node || node.isDeleted() || node.data.get("kind") !== "binary") {
+      throw new Error(`Binary file not found: ${treeId}`);
+    }
+    for (const [key, value] of Object.entries(metadata)) {
+      if (value !== undefined) node.data.set(key, value);
+    }
+    this.doc.commit();
   }
 
   /**
@@ -226,14 +262,14 @@ export class VaultTree {
             : kind === "binary"
               ? ((node.data.get("sha256") as string) ?? String(node.id))
               : String(node.id);
-        const groupKey = `${parentKey} ${name}`;
+        const groupKey = `${parentKey}\u0000${name}`;
         const arr = groups.get(groupKey) ?? [];
         arr.push({ treeId: node.id, key: stableKey });
         groups.set(groupKey, arr);
         visit(node.children() ?? [], String(node.id));
       }
     };
-    visit(this.tree.roots(), " root");
+    visit(this.tree.roots(), "\u0000root");
 
     const renamed: TreeID[] = [];
     for (const group of groups.values()) {
@@ -341,5 +377,8 @@ function nodeToValue(node: ReturnType<LoroTree["getNodeByID"]> & {}): VaultTreeN
     name: (data.get("name") as string) || "",
     kind: (data.get("kind") as NodeKind) || "binary",
     documentId: (data.get("documentId") as string) || undefined,
+    sha256: (data.get("sha256") as string) || undefined,
+    size: typeof data.get("size") === "number" ? (data.get("size") as number) : undefined,
+    mime: (data.get("mime") as string) || undefined,
   };
 }

@@ -39,6 +39,8 @@ export interface SyncHooks {
   getSyncedRoomIds(): string[];
   getRoomDoc(roomId: string): Promise<LoroDoc | null>;
   getBinaryData(assetId: string): Promise<Uint8Array | null>;
+  writeBinaryData?(assetId: string, data: Uint8Array): Promise<void>;
+  getBinaryIds?(): Promise<string[]>;
   getMissingBinaryIds(): Promise<string[]>;
 }
 
@@ -168,7 +170,7 @@ export class SyncCoordinator {
       const changesRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
       const { changes: serverChanges } = await changesRes.json() as {
         reset?: boolean;
-        changes: Array<{ objectId: string; seq: number }>;
+        changes: Array<{ objectId: string; seq: number; type?: string }>;
       };
       console.log("coord: changes", serverChanges.length);
 
@@ -176,13 +178,20 @@ export class SyncCoordinator {
       const knownSynced = new Set(this.hooks.getSyncedRoomIds());
       console.log("coord: getSyncedRoomIds", knownSynced.size);
       const missingBinaries = await this.hooks.getMissingBinaryIds();
+      const localBinaryIds = await this.hooks.getBinaryIds?.() ?? [];
       console.log("coord: missing binaries", missingBinaries.length);
       console.log("coord: tree ids...", this.hooks.getTreeDocumentRoomIds().length);
       const { documents, binaries } = buildWorkSet({
         localDirty: this.journal.dirty().map((e) => e.roomId),
-        serverChanged: serverChanges.map((c) => c.objectId),
+        serverChanged: serverChanges
+          .filter((change) => change.type !== "asset")
+          .map((c) => c.objectId),
+        serverChangedBinaries: serverChanges
+          .filter((change) => change.type === "asset")
+          .map((c) => c.objectId),
         treeDocumentIds: this.hooks.getTreeDocumentRoomIds(),
         knownSynced,
+        binaryIds: localBinaryIds,
         missingBinaries,
       });
       console.log("coord: work set", documents.length, binaries.length);
@@ -202,7 +211,7 @@ export class SyncCoordinator {
       // the next discovery poll skips everything already durably sent.
       const afterRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
       const { changes: afterChanges } = await afterRes.json() as {
-        changes: Array<{ objectId: string; seq: number }>;
+        changes: Array<{ objectId: string; seq: number; type?: string }>;
       };
       if (afterChanges.length > 0) {
         const maxSeq = Math.max(...afterChanges.map((c) => c.seq));
@@ -287,12 +296,21 @@ export class SyncCoordinator {
       await acquire();
       try {
         const data = await this.hooks.getBinaryData(id);
-        if (!data) return;
-        await fetch(`${httpUrl}/api/assets/${encodeURIComponent(id)}`, {
-          method: "PUT",
-          headers: { ...hdr, "content-type": "application/octet-stream" },
-          body: data.slice().buffer as ArrayBuffer,
+        if (data) {
+          const response = await fetch(`${httpUrl}/api/assets/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            headers: { ...hdr, "content-type": "application/octet-stream" },
+            body: data.slice().buffer as ArrayBuffer,
+          });
+          if (response.ok) count++;
+          return;
+        }
+        if (!this.hooks.writeBinaryData) return;
+        const response = await fetch(`${httpUrl}/api/assets/${encodeURIComponent(id)}`, {
+          headers: hdr,
         });
+        if (!response.ok) return;
+        await this.hooks.writeBinaryData(id, new Uint8Array(await response.arrayBuffer()));
         count++;
       } finally { release(); }
     }));

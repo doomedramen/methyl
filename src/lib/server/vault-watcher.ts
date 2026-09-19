@@ -1,8 +1,9 @@
 import chokidar, { type FSWatcher } from "chokidar";
+import type { TreeID } from "loro-crdt";
 import type { VaultEngine } from "@/lib/vault/engine";
 
 /**
- * Watches a Node filesystem vault for external `.md` changes (edits made
+ * Watches a Node filesystem vault for external Markdown and attachment changes (edits made
  * outside ADHD — another editor, `git checkout`, a sync client writing
  * directly to disk, etc.) and feeds them through
  * `VaultEngine.ingestExternalChanges()` (SPEC §5, §25, §26).
@@ -32,6 +33,8 @@ export interface VaultWatcherOptions {
   debounceMs?: number;
   /** `snapshot` is a full Loro snapshot export of the room, not an incremental update. */
   onRoomUpdate?: (roomId: string, snapshot: Uint8Array) => void;
+  /** Publish bytes for a newly adopted or externally changed attachment. */
+  onAssetUpdate?: (assetId: string, bytes: Uint8Array) => void | Promise<void>;
   onError?: (err: unknown) => void;
   /** Called after each ingest pass completes (useful for tests). */
   onIngested?: (report: Awaited<ReturnType<VaultEngine["ingestExternalChanges"]>>) => void;
@@ -40,7 +43,7 @@ export interface VaultWatcherOptions {
 export function watchVaultForExternalChanges(
   options: VaultWatcherOptions,
 ): FSWatcher {
-  const { vaultPath, engine, debounceMs = 300, onRoomUpdate, onError, onIngested } =
+  const { vaultPath, engine, debounceMs = 300, onRoomUpdate, onAssetUpdate, onError, onIngested } =
     options;
 
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -52,9 +55,12 @@ export function watchVaultForExternalChanges(
       pendingWhileRunning = true;
       return;
     }
-    running = true;
+      running = true;
     try {
       const report = await engine.ingestExternalChanges();
+      const assets = await engine.ingestExternalAssets();
+      if (assets.created.length > 0) report.assetsCreated = assets.created;
+      if (assets.updated.length > 0) report.assetsUpdated = assets.updated;
       onIngested?.(report);
 
       if (onRoomUpdate) {
@@ -71,9 +77,21 @@ export function watchVaultForExternalChanges(
           report.moved.length > 0 ||
           report.copied.length > 0 ||
           report.created.length > 0 ||
-          report.deleted.length > 0;
+          report.deleted.length > 0 ||
+          (report.assetsCreated?.length ?? 0) > 0 ||
+          (report.assetsUpdated?.length ?? 0) > 0;
         if (treeChanged) {
           onRoomUpdate(`vault:${engine.vaultId}`, engine.tree.snapshot());
+        }
+      }
+      if (onAssetUpdate) {
+        const assetIds = new Set([
+          ...(report.assetsCreated ?? []),
+          ...(report.assetsUpdated ?? []),
+        ]);
+        for (const assetId of assetIds) {
+          const bytes = await engine.readAttachment(assetId as TreeID);
+          if (bytes) await onAssetUpdate(assetId, bytes);
         }
       }
     } catch (err) {
@@ -94,13 +112,12 @@ export function watchVaultForExternalChanges(
 
   const watcher = chokidar.watch(vaultPath, {
     // Two-arg form: `stats` lets us tell files from directories, so we
-    // don't accidentally stop chokidar from descending into subfolders
-    // (a directory has no `.md` extension either, but must not be
-    // ignored — only *files* are filtered to markdown-only here).
+    // don't accidentally stop chokidar from descending into subfolders.
     ignored: (path: string, stats?: { isFile: () => boolean }) => {
       if (path.split(/[\\/]/).includes(".adhd")) return true;
       if (path.endsWith(".tmp")) return true;
-      if (stats?.isFile() && !path.endsWith(".md")) return true;
+      const normalized = path.replaceAll("\\", "/");
+      if (stats?.isFile() && !path.endsWith(".md") && !normalized.includes("/Attachments/")) return true;
       return false;
     },
     ignoreInitial: true,
