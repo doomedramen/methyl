@@ -56,6 +56,12 @@ import { useTheme } from "next-themes";
 import { Laptop, Puzzle } from "lucide-react";
 import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
+import {
+  DEFAULT_PLUGIN_FEATURES,
+  getPluginFeatures,
+  isCollectionEnabled,
+  type PluginFeatures,
+} from "@/lib/plugins/features";
 import type { resolveWikilink, listWikilinkCandidates } from "@/lib/vault/wikilink";
 import { PluginsDialog } from "@/components/plugins/PluginsDialog";
 import { TemplatesDialog, type TemplateDialogMode } from "@/components/plugins/TemplatesDialog";
@@ -229,7 +235,7 @@ function VaultPluginBridge({
   onNotesChanged: () => void;
   /** This tab doesn't hold the writer lock (§12) — block wikilink note creation. */
   readOnly: boolean;
-  children: ReactNode;
+  children: (features: PluginFeatures) => ReactNode;
 }) {
   const { toggleSidebar } = useSidebar();
   const { setDialogOpen: setSyncDialogOpen } = useSync();
@@ -238,6 +244,14 @@ function VaultPluginBridge({
   const commandRegistry = useMemo(() => new CommandRegistry(), []);
   const fallbackHost = useMemo(() => new PluginHost(makeNoopApp(), new InMemoryPluginStorage()), []);
   const [host, setHost] = useState<PluginHost | null>(null);
+  const activeHost = host ?? fallbackHost;
+  const [pluginFeatures, setPluginFeatures] = useState<PluginFeatures>(DEFAULT_PLUGIN_FEATURES);
+
+  useEffect(() => {
+    const updateFeatures = () => setPluginFeatures(getPluginFeatures(activeHost.getSnapshot()));
+    updateFeatures();
+    return activeHost.subscribe(updateFeatures);
+  }, [activeHost]);
 
   // `@/lib/vault/wikilink` value-imports `@/lib/vault/engine`, which
   // value-imports `loro-crdt` (WASM) — statically importing it here would
@@ -348,7 +362,10 @@ function VaultPluginBridge({
         createNote: async (options?: NoteCreationOptions) => {
           return (await onCreate({ kind: "note", options })) ?? "";
         },
-        captureThought: onCaptureThought,
+        captureThought: async () => {
+          if (!pluginFeatures.inbox) return "";
+          return onCaptureThought();
+        },
         createGraph: async () => {
           return (await onCreate({ kind: "graph" })) ?? "";
         },
@@ -374,6 +391,7 @@ function VaultPluginBridge({
       notify,
       onCreate,
       onCaptureThought,
+      pluginFeatures.inbox,
       onManagePlugins,
       onManageTemplates,
       onNotesChanged,
@@ -475,7 +493,7 @@ function VaultPluginBridge({
 
   return (
     <PluginHostProvider host={host ?? fallbackHost} commands={commandRegistry} app={app} activeNote={activeNote}>
-      {children}
+      {children(pluginFeatures)}
     </PluginHostProvider>
   );
 }
@@ -1126,18 +1144,32 @@ export function VaultApp() {
   );
 
   const renderWorkspaceTab = useCallback(
-    (tab: WorkspaceTab): ReactNode => {
+    (tab: WorkspaceTab, features: PluginFeatures = DEFAULT_PLUGIN_FEATURES): ReactNode => {
       if (!engine || !tab.resource) return null;
       if (tab.resource.kind === "asset") {
         const node = engine.tree.getNode(tab.resource.treeId as TreeID);
         if (!node || node.kind !== "binary") {
-          return <UnavailableSurface kind="attachment" onAllNotes={() => workspaceStore?.openCollection("notes")} />;
+          return (
+            <UnavailableSurface
+              kind="attachment"
+              actionLabel={features.allNotes ? COLLECTIONS.notes.title : undefined}
+              onAllNotes={features.allNotes ? () => workspaceStore?.openCollection("notes") : undefined}
+            />
+          );
         }
         return <AssetViewer key={tab.id} engine={engine} treeId={node.treeId} title={node.name} />;
       }
       const documentId = tab.resource.documentId;
       const note = notes.find((candidate) => candidate.id === documentId);
-      if (!note) return <UnavailableSurface kind="note" onAllNotes={() => workspaceStore?.openCollection("notes")} />;
+      if (!note) {
+        return (
+          <UnavailableSurface
+            kind="note"
+            actionLabel={features.allNotes ? COLLECTIONS.notes.title : undefined}
+            onAllNotes={features.allNotes ? () => workspaceStore?.openCollection("notes") : undefined}
+          />
+        );
+      }
       if (note.isGraph) {
         return (
           <GraphEditor
@@ -1194,9 +1226,12 @@ export function VaultApp() {
   }, [workspaceStore]);
 
   const renderWorkspaceEmpty = useCallback(
-    (paneId: string, tabId: string): ReactNode => {
+    (paneId: string, tabId: string, features: PluginFeatures = DEFAULT_PLUGIN_FEATURES): ReactNode => {
       const tab = collectTabs(workspaceSnapshot.root).find((candidate) => candidate.id === tabId);
       const collection = tab?.collection ?? "notes";
+      if (!isCollectionEnabled(collection, features)) {
+        return <DisabledCollectionSurface collection={collection} />;
+      }
       return (
         <LibraryView
           collection={collection}
@@ -1239,7 +1274,8 @@ export function VaultApp() {
       onManagePlugins={() => setPluginsDialogOpen(true)}
       onManageTemplates={() => openTemplates("manage")}
       onOpenTemplatePicker={() => openTemplates("create")}
-    >
+    >{(pluginFeatures) => (
+      <>
       <AppSidebar
         rows={rows}
         activeId={activeId}
@@ -1256,8 +1292,11 @@ export function VaultApp() {
         onDeleteAsset={onDeleteAsset}
         onMove={onMove}
         onOpenCommandMenu={() => setCommandOpen(true)}
+        pluginFeatures={pluginFeatures}
         collection={focusedCollection}
-        onOpenCollection={openCollection}
+        onOpenCollection={(collection) => {
+          if (isCollectionEnabled(collection, pluginFeatures)) openCollection(collection);
+        }}
         newFolderOpen={newFolderOpen}
         onNewFolderOpenChange={setNewFolderOpen}
       />
@@ -1320,24 +1359,26 @@ export function VaultApp() {
               </Tooltip>
             )}
             <ModeToggle />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="default"
-                    size="icon-lg"
-                    className="capture-button wco-no-drag size-11 md:size-9"
-                    aria-label="Capture a thought"
-                    title="Capture a thought"
-                    disabled={!engine?.releaseWriterLock || capturePending}
-                    onClick={() => void captureThought()}
-                  >
-                    <Plus />
-                  </Button>
-                }
-              />
-              <TooltipContent>Capture a thought</TooltipContent>
-            </Tooltip>
+            {pluginFeatures.inbox && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="default"
+                      size="icon-lg"
+                      className="capture-button wco-no-drag size-11 md:size-9"
+                      aria-label="Capture a thought"
+                      title="Capture a thought"
+                      disabled={!engine?.releaseWriterLock || capturePending}
+                      onClick={() => void captureThought()}
+                    >
+                      <Plus />
+                    </Button>
+                  }
+                />
+                <TooltipContent>Capture a thought</TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </header>
 
@@ -1351,8 +1392,8 @@ export function VaultApp() {
               snapshot={workspaceSnapshot}
               store={workspaceStore}
               getTabTitle={getTabTitle}
-              renderTab={renderWorkspaceTab}
-              renderEmpty={renderWorkspaceEmpty}
+              renderTab={(tab) => renderWorkspaceTab(tab, pluginFeatures)}
+              renderEmpty={(paneId, tabId) => renderWorkspaceEmpty(paneId, tabId, pluginFeatures)}
               onTabActivated={() => setEditorFocusRequest(null)}
             />
           ) : null}
@@ -1401,7 +1442,8 @@ export function VaultApp() {
         onCreate={onTemplateChosen}
         onManage={() => setTemplateDialogMode("manage")}
       />
-    </VaultPluginBridge>
+      </>
+    )}</VaultPluginBridge>
     </SidebarProvider>
     </SyncProvider>
   );
@@ -1426,12 +1468,26 @@ function GraphLoading() {
   );
 }
 
+function DisabledCollectionSurface({ collection }: { collection: LibraryCollection }) {
+  return (
+    <Empty>
+      <EmptyMedia variant="icon">
+        <FileWarning />
+      </EmptyMedia>
+      <EmptyTitle>{COLLECTIONS[collection].title} is disabled</EmptyTitle>
+      <EmptyDescription>Select a note from the file and folder list in the sidebar.</EmptyDescription>
+    </Empty>
+  );
+}
+
 function UnavailableSurface({
   kind,
+  actionLabel,
   onAllNotes,
 }: {
   kind: "note" | "attachment";
-  onAllNotes: () => void;
+  actionLabel?: string;
+  onAllNotes?: () => void;
 }) {
   return (
     <Empty>
@@ -1439,9 +1495,11 @@ function UnavailableSurface({
         <FileWarning />
       </EmptyMedia>
       <EmptyTitle>{kind === "note" ? "This note is unavailable" : "This attachment is unavailable"}</EmptyTitle>
-      <Button variant="outline" size="lg" onClick={onAllNotes}>
-        All notes
-      </Button>
+      {actionLabel && onAllNotes ? (
+        <Button variant="outline" size="lg" onClick={onAllNotes}>
+          {actionLabel}
+        </Button>
+      ) : null}
     </Empty>
   );
 }

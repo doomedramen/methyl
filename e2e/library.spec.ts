@@ -52,3 +52,36 @@ test("mobile collections close the drawer and reduced motion suppresses the reve
   expect(await page.locator(".library-page").evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+test("collection plugins hide individually and remove the block when all are disabled", async ({ page }) => {
+  await page.goto("/");
+  const collections = page.getByRole("navigation", { name: "Collections" });
+  const pluginDialog = page.getByRole("dialog");
+  const sidebar = page.locator('[data-slot="sidebar-inner"]');
+  const openPlugins = async () => {
+    await sidebar.getByRole("button", { name: "Search notes" }).click();
+    await page.locator('[data-slot="command-input"]').fill("Plugins: Manage");
+    await page.getByRole("option", { name: "Plugins: Manage" }).click();
+    await expect(pluginDialog.getByRole("heading", { name: "Plugins" })).toBeVisible();
+  };
+  const togglePlugin = async (name: string) => {
+    await openPlugins();
+    await pluginDialog.locator("li").filter({ hasText: name }).getByRole("switch").click();
+    await pluginDialog.getByRole("button", { name: "Close" }).click();
+  };
+
+  await togglePlugin("All notes");
+  await expect(collections.getByRole("button", { name: /^All notes/ })).toHaveCount(0);
+
+  await togglePlugin("Inbox");
+  await expect(collections.getByRole("button", { name: /^Inbox/ })).toHaveCount(0);
+
+  await togglePlugin("Graphs");
+  await expect(page.getByRole("navigation", { name: "Collections" })).toHaveCount(0);
+  await expect(sidebar.getByText("Your notes", { exact: true })).toBeVisible();
+
+  await togglePlugin("All notes");
+  await togglePlugin("Inbox");
+  await togglePlugin("Graphs");
+  await expect(page.getByRole("navigation", { name: "Collections" })).toBeVisible();
+});

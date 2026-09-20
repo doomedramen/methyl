@@ -70,6 +70,7 @@ import { cn } from "@/lib/utils";
 import { PwaStatus } from "@/components/pwa/PwaStatus";
 import { CreateMenu } from "./CreateMenu";
 import { COLLECTIONS, type LibraryCollection } from "./LibraryView";
+import { isCollectionEnabled, type PluginFeatures } from "@/lib/plugins/features";
 import { formatHotkey } from "@/lib/plugins/hotkeys";
 import type { CreateHandler } from "./create-actions";
 import {
@@ -143,6 +144,7 @@ interface AppSidebarProps {
   onDeleteAsset: (treeId: TreeID) => void;
   onMove: (target: MoveTarget) => void;
   onOpenCommandMenu: () => void;
+  pluginFeatures: PluginFeatures;
   collection: LibraryCollection | null;
   onOpenCollection: (collection: LibraryCollection) => void;
   newFolderOpen: boolean;
@@ -344,6 +346,7 @@ export function AppSidebar({
   onDeleteAsset,
   onMove,
   onOpenCommandMenu,
+  pluginFeatures,
   collection,
   onOpenCollection,
   newFolderOpen,
@@ -732,6 +735,9 @@ export function AppSidebar({
   // that surface them stay disabled until writing is actually possible.
   const canWrite = Boolean(engine?.releaseWriterLock);
   const platform = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "mac" : "other";
+  const enabledCollections = (Object.keys(COLLECTIONS) as LibraryCollection[]).filter((key) =>
+    isCollectionEnabled(key, pluginFeatures),
+  );
 
   return (
     <Sidebar variant="sidebar" className={cn("methyl-sidebar", activeDragId && "select-none touch-none")}>
@@ -761,22 +767,24 @@ export function AppSidebar({
             Search notes
             <Kbd className="ml-auto">{formatHotkey({ modifiers: ["Mod"], key: "K" }, platform)}</Kbd>
           </Button>
-          <nav aria-label="Collections" className="collection-nav">
-            {(Object.keys(COLLECTIONS) as LibraryCollection[]).map((key) => {
-              const { title, icon: Icon } = COLLECTIONS[key];
-              return (
-                <button
-                  key={key}
-                  className="collection-link"
-                  aria-current={collection === key ? "page" : undefined}
-                  onClick={() => { onOpenCollection(key); setOpenMobile(false); }}
-                >
-                  <Icon aria-hidden="true" className={`collection-${key}`} />
-                  <span>{title}</span>
-                </button>
-              );
-            })}
-          </nav>
+          {enabledCollections.length > 0 && (
+            <nav aria-label="Collections" className="collection-nav">
+              {enabledCollections.map((key) => {
+                const { title, icon: Icon } = COLLECTIONS[key];
+                return (
+                  <button
+                    key={key}
+                    className="collection-link"
+                    aria-current={collection === key ? "page" : undefined}
+                    onClick={() => { onOpenCollection(key); setOpenMobile(false); }}
+                  >
+                    <Icon aria-hidden="true" className={`collection-${key}`} />
+                    <span>{title}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          )}
           <SidebarGroupLabel className="sidebar-section-label">
             Your notes
           </SidebarGroupLabel>
