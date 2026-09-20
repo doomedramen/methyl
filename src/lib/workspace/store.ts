@@ -343,6 +343,11 @@ export class WorkspaceStore {
     const found = findTab(this.snapshot.root, tabId);
     if (!found) return this.getFocusedTab().id;
     const { pane } = found;
+    if (pane.tabs.length === 1 && collectPanes(this.snapshot.root).length > 1) {
+      this.snapshot.focusedPaneId = pane.id;
+      this.closePane(pane.id);
+      return this.getFocusedTab().id;
+    }
     let nextTabId = pane.activeTabId;
     if (pane.tabs.length === 1) {
       pane.tabs[0]!.resource = null;

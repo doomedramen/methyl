@@ -87,6 +87,19 @@ describe("WorkspaceStore", () => {
     expect(store.getFocusedTab().resource).toEqual({ kind: "document", documentId: "a" });
   });
 
+  it("closes a split pane when its last tab closes", () => {
+    const store = new WorkspaceStore({ idFactory: ids() });
+    store.open({ kind: "document", documentId: "a" });
+    store.split();
+    const lastTab = store.getFocusedTab().id;
+
+    const nextTab = store.closeTab(lastTab);
+
+    expect(store.getSnapshot().root.kind).toBe("pane");
+    expect(nextTab).toBe(store.getFocusedTab().id);
+    expect(store.getFocusedTab().resource).toEqual({ kind: "document", documentId: "a" });
+  });
+
   it("keeps recent documents bounded and prunes resources", () => {
     const store = new WorkspaceStore({ idFactory: ids() });
     store.open({ kind: "document", documentId: "a" });
