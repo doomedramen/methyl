@@ -261,6 +261,24 @@ test("create a folder and two notes", async ({ page }) => {
   expect(files).toContain("Note B.md");
 });
 
+test("starts with existing folders collapsed", async ({ page }) => {
+  await createFolder(page, "Folder One");
+  await createNote(page, "Note A", "Folder One");
+
+  const folderButton = rowByName(page, "Folder One").getByRole("button", {
+    name: "Folder One",
+    exact: true,
+  });
+  await expect(folderButton).toHaveAttribute("aria-expanded", "true");
+
+  await page.reload();
+  await expect(sidebar(page).getByRole("button", { name: "Add" })).toBeEnabled();
+  await expect(
+    rowByName(page, "Folder One").getByRole("button", { name: "Folder One", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await expect(rowByName(page, "Note A")).toHaveCount(0);
+});
+
 test("drag a note into a folder nests it and moves the file", async ({ page }) => {
   await createFolder(page, "Folder One");
   await createNote(page, "Note A");

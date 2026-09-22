@@ -384,9 +384,15 @@ export function AppSidebar({
   const [collapsedPreference, setCollapsedPreference] = useState<Set<string> | null>(() =>
     typeof window === "undefined" ? null : loadCollapsed(),
   );
+  const defaultCollapseApplied = useRef(false);
+  useEffect(() => {
+    if (defaultCollapseApplied.current || collapsedPreference !== null || rows.length === 0) return;
+    defaultCollapseApplied.current = true;
+    setCollapsedPreference(collectFolderIds(rows));
+  }, [collapsedPreference, rows]);
   const collapsed = useMemo(
-    () => collapsedPreference ?? collectFolderIds(rows),
-    [collapsedPreference, rows],
+    () => collapsedPreference ?? new Set<string>(),
+    [collapsedPreference],
   );
 
   const toggleCollapsed = useCallback((treeId: TreeID) => {
