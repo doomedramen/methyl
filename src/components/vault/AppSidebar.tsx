@@ -828,9 +828,15 @@ export function AppSidebar({
                         (event.code === "ArrowRight"
                           ? dragOrigin.current.indentPx
                           : -dragOrigin.current.indentPx);
+                      const targetRow = findRow(rows, targetTreeId);
+                      const direction =
+                        event.code === "ArrowRight" && targetRow?.kind === "directory"
+                          ? "down"
+                          : keyboardDirection.current ?? "down";
+                      keyboardDirection.current = direction;
                       applyKeyboardPlacement(
                         targetTreeId,
-                        keyboardDirection.current ?? "down",
+                        direction,
                       );
                       return;
                     }

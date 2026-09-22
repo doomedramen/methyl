@@ -251,6 +251,10 @@ test("create a folder and two notes", async ({ page }) => {
   await expect(rowByName(page, "Folder One")).toBeVisible();
   await expect(rowByName(page, "Note A")).toBeVisible();
   await expect(rowByName(page, "Note B")).toBeVisible();
+  const rows = page.locator('li[data-slot="sidebar-menu-item"] span').filter({
+    hasText: /^(Folder One|Note A|Note B)$/,
+  });
+  await expect(rows).toHaveText(["Folder One", "Note A", "Note B"]);
 
   const files = await listVaultFiles(page);
   expect(files).toContain("Note A.md");
@@ -436,7 +440,7 @@ test("dragging a note out of a folder to the row below it leaves the folder (reg
   expect(files).not.toContain("Folder One/Note A.md");
 });
 
-test("reorder two notes within the same folder, both directions", async ({ page }) => {
+test("keeps files alphabetized after same-folder reorder gestures", async ({ page }) => {
   await createFolder(page, "Folder One");
   await createNote(page, "Note A", "Folder One");
   await createNote(page, "Note B", "Folder One");
@@ -446,14 +450,15 @@ test("reorder two notes within the same folder, both directions", async ({ page 
 
   await expect(rowsIn()).toHaveText(["Note A", "Note B"]);
 
-  // Move B above A.
+  // The gesture is still accepted by the tree interaction, but display order
+  // remains automatic rather than reflecting manual sibling placement.
   await dragRow(page, "Note B", "Note A", "before");
-  await expect(rowsIn()).toHaveText(["Note B", "Note A"]);
+  await expect(rowsIn()).toHaveText(["Note A", "Note B"]);
   await expect
     .poll(async () => rowIndentPx(rowByName(page, "Note B")))
     .toBeGreaterThan(await rowIndentPx(rowByName(page, "Folder One")));
 
-  // Move B back below A.
+  // Moving it back does not change the automatic order either.
   const noteATarget = rowByName(page, "Note A");
   const noteATargetBox = (await noteATarget.boundingBox())!;
   await dragToHold(
@@ -501,7 +506,7 @@ test("refuses dropping a folder into its own descendant", async ({ page }) => {
   expect(childIndentAfter).toBe(childIndentBefore);
 });
 
-test("keyboard pickup uses arrow placement and commits the same move", async ({ page }) => {
+test("keyboard sibling reorder keeps files alphabetized", async ({ page }) => {
   await createNote(page, "Note A");
   await createNote(page, "Note B");
 
@@ -511,14 +516,14 @@ test("keyboard pickup uses arrow placement and commits the same move", async ({ 
   await expect(page.locator('[data-sidebar-drag-preview="true"]')).toBeVisible();
   await noteB.press("ArrowUp");
   await expect(page.locator('[data-sidebar-placement-label="true"]')).toContainText(
-    "after welcome",
+    "before Note A",
   );
   await noteB.press("Space");
 
   const rows = page.locator('li[data-slot="sidebar-menu-item"] span').filter({
     hasText: /^(Note A|Note B)$/,
   });
-  await expect(rows).toHaveText(["Note B", "Note A"]);
+  await expect(rows).toHaveText(["Note A", "Note B"]);
 });
 
 test("keyboard right changes the destination depth", async ({ page }) => {
@@ -528,7 +533,8 @@ test("keyboard right changes the destination depth", async ({ page }) => {
   const garage = rowByName(page, "Garage").locator('[data-sidebar-drag-row="true"]');
   await garage.focus();
   await garage.press("Space");
-  await garage.press("ArrowDown");
+  // Folders are displayed before files, so People is above Garage.
+  await garage.press("ArrowUp");
   await garage.press("ArrowRight");
   await expect(page.locator('[data-sidebar-placement-label="true"]')).toContainText(
     "In People · at end",

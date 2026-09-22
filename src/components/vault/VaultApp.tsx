@@ -34,6 +34,7 @@ import {
 import { NoteEditor } from "@/components/editor/NoteEditor";
 import { detectGraphDocument, emptyGraphMarkdown } from "@/lib/graph/detect";
 import { AppSidebar, type BinaryRow, type FolderRow, type NoteRow, type SidebarRow } from "./AppSidebar";
+import { sortSidebarRows } from "./sidebar-order";
 import { COLLECTIONS, LibraryView, type LibraryCollection } from "./LibraryView";
 import { NoteSurface } from "./NoteSurface";
 import { BacklinksPanel } from "./BacklinksPanel";
@@ -143,7 +144,8 @@ const NOOP_SUBSCRIBE = () => () => {};
 const getEmptyWorkspaceSnapshot = () => EMPTY_WORKSPACE_SNAPSHOT;
 
 /**
- * Build the nested folder/note tree for the sidebar, in stored tree order.
+ * Build the nested folder/note tree for the sidebar, with folders first and
+ * files sorted by their visible name at every level.
  * The displayed title is always the tree node's file name (minus `.md`) —
  * never frontmatter `title:` or an `# H1` in the body. Those can be edited
  * or deleted freely without the note vanishing or being relabeled out from
@@ -183,7 +185,7 @@ function toRow(node: VaultTreeNode, tree: VaultTree, engine: VaultEngine, parent
 }
 
 function buildRootRows(tree: VaultTree, engine: VaultEngine): SidebarRow[] {
-  return tree.roots().map((node) => toRow(node, tree, engine));
+  return sortSidebarRows(tree.roots().map((node) => toRow(node, tree, engine)));
 }
 
 function flattenNotes(rows: SidebarRow[]): NoteRow[] {
