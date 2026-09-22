@@ -521,6 +521,31 @@ export function createSyncServer(options: SyncServerOptions) {
           const bytes = await eng.readAttachment(assetId as TreeID);
           if (bytes) recordAssetSave(store, assetDir, assetId, bytes);
         }
+      }
+
+      // Files and folders that existed before this process started are
+      // ingested by the boot reconciliation above, not by the live watcher.
+      // Publish those mutations into the same durable rooms/change journal as
+      // live filesystem events, otherwise connected browsers have no way to
+      // discover a vault copied in while the server was stopped.
+      const bootIngest = bootReport.ingested;
+      const bootDocIds = new Set([
+        ...bootIngest.edited,
+        ...bootIngest.copied,
+        ...bootIngest.created,
+      ]);
+      for (const docId of bootDocIds) {
+        const doc = eng.getDocument(docId);
+        if (doc) recordRoomSave(store, `doc:${docId}`, doc.snapshot(), "doc", server);
+      }
+      const bootTreeChanged =
+        bootIngest.moved.length > 0 ||
+        bootIngest.copied.length > 0 ||
+        bootIngest.created.length > 0 ||
+        bootIngest.deleted.length > 0 ||
+        (bootIngest.foldersCreated?.length ?? 0) > 0 ||
+        bootAssetIds.size > 0;
+      if (bootTreeChanged) {
         recordRoomSave(store, treeRoomId, eng.tree.snapshot(), "tree", server);
       }
       // A previous process may have received the asset bytes before the

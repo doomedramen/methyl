@@ -41,6 +41,42 @@ function waitFor(check: () => boolean, timeoutMs = 5000, stepMs = 30): Promise<v
 }
 
 describe("sync-server vault watcher integration", () => {
+  it("publishes files already on disk when the server starts", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "adhd-sync-boot-"));
+    mkdirSync(join(tmpDir, "Imported"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, "Imported", "Preexisting.md"),
+      "copied before the server started",
+    );
+    const { wsPort, httpPort } = nextPorts();
+    const server = createSyncServer({
+      port: wsPort,
+      httpPort,
+      vaultPath: tmpDir,
+      authToken: AUTH,
+      saveIntervalMs: 50,
+      vaultId: "bootimport",
+    });
+
+    await server.start();
+    try {
+      const changes = await httpGet(httpPort, "/api/changes?after=0");
+      const parsed = JSON.parse(changes.body) as {
+        changes: Array<{ objectId: string; type: string }>;
+      };
+
+      expect(parsed.changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ objectId: "vault:bootimport", type: "tree" }),
+          expect.objectContaining({ type: "doc" }),
+        ]),
+      );
+    } finally {
+      await server.stop();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 10000);
+
   it("an external .md edit is ingested and shows up in discovery for a reconnecting client", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "adhd-sync-watch-"));
     const { wsPort, httpPort } = nextPorts();
