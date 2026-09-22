@@ -154,16 +154,26 @@ interface AppSidebarProps {
 
 const COLLAPSED_KEY = "adhd.sidebar.collapsedFolders";
 
-function loadCollapsed(): Set<string> {
+function collectFolderIds(rows: SidebarRow[], folderIds = new Set<string>()): Set<string> {
+  for (const row of rows) {
+    if (row.kind !== "directory") continue;
+    folderIds.add(row.treeId);
+    collectFolderIds(row.children, folderIds);
+  }
+  return folderIds;
+}
+
+function loadCollapsed(): Set<string> | null {
   try {
     const raw = window.localStorage.getItem(COLLAPSED_KEY);
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr)) return new Set(arr);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
   } catch {
-    // ignore — falls back to all-expanded
+    // Ignore — falls back to the default collapsed state.
   }
-  return new Set();
+  return null;
 }
 
 function saveCollapsed(set: Set<string>) {
@@ -371,30 +381,34 @@ export function AppSidebar({
     [onNewFolderOpenChange],
   );
 
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    setCollapsed(loadCollapsed());
-  }, []);
+  const [collapsedPreference, setCollapsedPreference] = useState<Set<string> | null>(() =>
+    typeof window === "undefined" ? null : loadCollapsed(),
+  );
+  const collapsed = useMemo(
+    () => collapsedPreference ?? collectFolderIds(rows),
+    [collapsedPreference, rows],
+  );
 
   const toggleCollapsed = useCallback((treeId: TreeID) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
+    setCollapsedPreference((prev) => {
+      const next = new Set(prev ?? collectFolderIds(rows));
       if (next.has(treeId)) next.delete(treeId);
       else next.add(treeId);
       saveCollapsed(next);
       return next;
     });
-  }, []);
+  }, [rows]);
 
   const expand = useCallback((treeId: TreeID) => {
-    setCollapsed((prev) => {
-      if (!prev.has(treeId)) return prev;
-      const next = new Set(prev);
+    setCollapsedPreference((prev) => {
+      const current = prev ?? collectFolderIds(rows);
+      if (!current.has(treeId)) return prev;
+      const next = new Set(current);
       next.delete(treeId);
       saveCollapsed(next);
       return next;
     });
-  }, []);
+  }, [rows]);
 
   const flat = useMemo(() => {
     const out: FlatEntry[] = [];
