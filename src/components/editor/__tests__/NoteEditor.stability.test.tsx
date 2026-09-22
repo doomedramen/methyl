@@ -112,6 +112,25 @@ describe("NoteEditor stability across re-renders", () => {
       Element.prototype.remove = originalRemove;
     }
   });
+
+  it("loads content when the document arrives after its tree row", async () => {
+    const engine = await makeEngine();
+    const documentId = "remote-document-id";
+    engine.tree.addMarkdownDocument(undefined, "remote.md", documentId);
+
+    const { container } = render(
+      <Harness app={makeApp()} engine={engine} documentId={documentId} />,
+    );
+    expect(container.textContent).toContain(`document not loaded: ${documentId}`);
+
+    engine.ensureDocument(documentId).setText("content arrived from sync");
+
+    await waitFor(() => {
+      const content = container.querySelector(".cm-content");
+      if (!content) throw new Error("editor has not booted");
+      expect(content.textContent).toContain("content arrived from sync");
+    });
+  });
 });
 
 describe("forwardingApp identity stability", () => {

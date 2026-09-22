@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
+import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { request } from "http";
 import { createSyncServer } from "@/lib/server/sync-server";
+import { SyncHost } from "@/lib/browser/sync-host";
+import { MemoryVaultFS } from "@/lib/vault/memory-fs";
+import { OpfsDocStore, OpfsVaultTreeStore } from "@/lib/vault/opfs-store";
+import { VaultEngine } from "@/lib/vault/engine";
 
 const AUTH = "watcher-token";
 let portCounter = 24000 + Math.floor(Math.random() * 2000);
@@ -60,6 +64,21 @@ describe("sync-server vault watcher integration", () => {
 
     await server.start();
     try {
+      const clientFs = new MemoryVaultFS();
+      const clientEngine = await VaultEngine.create(
+        new OpfsVaultTreeStore(clientFs),
+        new OpfsDocStore(clientFs),
+        "bootimport",
+      );
+      const host = await SyncHost.create({
+        fs: clientFs,
+        engine: clientEngine,
+        wsUrl: `ws://127.0.0.1:${wsPort}`,
+        httpUrl: `http://127.0.0.1:${httpPort}`,
+        authToken: AUTH,
+        vaultId: "bootimport",
+      });
+
       const changes = await httpGet(httpPort, "/api/changes?after=0");
       const parsed = JSON.parse(changes.body) as {
         changes: Array<{ objectId: string; type: string }>;
@@ -71,6 +90,14 @@ describe("sync-server vault watcher integration", () => {
           expect.objectContaining({ type: "doc" }),
         ]),
       );
+
+      await host.sync();
+      const node = clientEngine.tree.findByName("Preexisting.md")[0];
+      expect(node?.documentId).toBeTruthy();
+      expect(clientEngine.getDocument(node!.documentId!)?.getMarkdown()).toBe(
+        "copied before the server started",
+      );
+      host.disconnect();
     } finally {
       await server.stop();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -125,6 +152,119 @@ describe("sync-server vault watcher integration", () => {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 10000);
+
+  it("a copied .md file reaches a connected client's document content", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "adhd-sync-copy-"));
+    const { wsPort, httpPort } = nextPorts();
+    const vaultId = "copytest";
+    const server = createSyncServer({
+      port: wsPort,
+      httpPort,
+      vaultPath: tmpDir,
+      authToken: AUTH,
+      saveIntervalMs: 50,
+      vaultId,
+    });
+    const clientFs = new MemoryVaultFS();
+    const clientEngine = await VaultEngine.create(
+      new OpfsVaultTreeStore(clientFs),
+      new OpfsDocStore(clientFs),
+      vaultId,
+    );
+    const host = await SyncHost.create({
+      fs: clientFs,
+      engine: clientEngine,
+      wsUrl: `ws://127.0.0.1:${wsPort}`,
+      httpUrl: `http://127.0.0.1:${httpPort}`,
+      authToken: AUTH,
+      vaultId,
+    });
+
+    await server.start();
+    try {
+      await host.sync();
+      mkdirSync(join(tmpDir, "Imported"), { recursive: true });
+      writeFileSync(
+        join(tmpDir, "Imported", "Copied.md"),
+        "content copied into mounted vault",
+      );
+
+      await waitFor(() => {
+        const node = server.getEngine()?.tree.findByName("Copied.md")[0];
+        const changes = server.store.getChangesAfter(0).changes;
+        return node?.documentId !== undefined && changes.some((change) =>
+          change.objectId === `doc:${node.documentId}`,
+        );
+      });
+
+      await host.sync();
+      const node = clientEngine.tree.findByName("Copied.md")[0];
+      expect(node?.documentId).toBeTruthy();
+      expect(clientEngine.getDocument(node!.documentId!)?.getMarkdown()).toBe(
+        "content copied into mounted vault",
+      );
+    } finally {
+      host.disconnect();
+      await server.stop();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("a copy of an existing .md file gets independent content", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "adhd-sync-copy-existing-"));
+    const { wsPort, httpPort } = nextPorts();
+    const vaultId = "copyexistingtest";
+    const server = createSyncServer({
+      port: wsPort,
+      httpPort,
+      vaultPath: tmpDir,
+      authToken: AUTH,
+      saveIntervalMs: 50,
+      vaultId,
+    });
+    const clientFs = new MemoryVaultFS();
+    const clientEngine = await VaultEngine.create(
+      new OpfsVaultTreeStore(clientFs),
+      new OpfsDocStore(clientFs),
+      vaultId,
+    );
+    const host = await SyncHost.create({
+      fs: clientFs,
+      engine: clientEngine,
+      wsUrl: `ws://127.0.0.1:${wsPort}`,
+      httpUrl: `http://127.0.0.1:${httpPort}`,
+      authToken: AUTH,
+      vaultId,
+    });
+
+    await server.start();
+    try {
+      writeFileSync(join(tmpDir, "Original.md"), "original copied content");
+      await waitFor(() => Boolean(server.getEngine()?.tree.findByName("Original.md")[0]?.documentId));
+      await host.sync();
+
+      cpSync(join(tmpDir, "Original.md"), join(tmpDir, "Copied.md"));
+      await waitFor(() => {
+        const node = server.getEngine()?.tree.findByName("Copied.md")[0];
+        const changes = server.store.getChangesAfter(0).changes;
+        return node?.documentId !== undefined && changes.some((change) =>
+          change.objectId === `doc:${node.documentId}`,
+        );
+      });
+
+      await host.sync();
+      const node = clientEngine.tree.findByName("Copied.md")[0];
+      expect(node?.documentId).toBeTruthy();
+      expect(node?.documentId).not.toBe(clientEngine.tree.findByName("Original.md")[0]?.documentId);
+      expect(clientEngine.getDocument(node!.documentId!)?.getMarkdown()).toBe(
+        "original copied content",
+      );
+    } finally {
+      host.disconnect();
+      await server.stop();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 15000);
 
   it("external rename keeps the document id and updates discovery for the tree room", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "adhd-sync-watch-"));

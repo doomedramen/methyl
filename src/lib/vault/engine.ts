@@ -94,6 +94,7 @@ export class VaultEngine {
   /** Optional writer-lock release, wired by the browser host (§12). */
   releaseWriterLock?: () => void;
   private documents = new Map<string, Document>();
+  private documentAvailableListeners = new Map<string, Set<() => void>>();
   /**
    * Last path each doc was materialised at, tracked in memory so a
    * subsequent rename/move can delete the stale file instead of leaving it
@@ -234,7 +235,7 @@ export class VaultEngine {
         await docStore.appendUpdate(id, doc.doc.export({ mode: "update" }));
       }
 
-      engine.documents.set(id, doc);
+      engine.setDocument(id, doc);
 
       // Derive the assumed on-disk path from the tree; reconcileMaterialization()
       // verifies this against reality (missing/stale files, orphaned paths).
@@ -275,6 +276,22 @@ export class VaultEngine {
 
   getDocument(id: string): Document | undefined {
     return this.documents.get(id);
+  }
+
+  /**
+   * Subscribe to a document that may be created by a later sync round.
+   * Tree membership and document content arrive independently, so an editor
+   * can mount while the tree row exists but its Document is not in memory yet.
+   */
+  onDocumentAvailable(documentId: string, listener: () => void): () => void {
+    if (this.documents.has(documentId)) return () => undefined;
+    const listeners = this.documentAvailableListeners.get(documentId) ?? new Set();
+    listeners.add(listener);
+    this.documentAvailableListeners.set(documentId, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.documentAvailableListeners.delete(documentId);
+    };
   }
 
   listDocuments(): Document[] {
@@ -363,7 +380,7 @@ export class VaultEngine {
     const docId = Document.extractLegacyId(markdown) ?? crypto.randomUUID();
     const doc = Document.fromMarkdown(docId, markdown);
     this.tree.addMarkdownDocument(parentTreeId, name, docId);
-    this.documents.set(docId, doc);
+    this.setDocument(docId, doc);
     if (this.searchIndexReady) this.indexSearchDocument(docId);
     return doc;
   }
@@ -952,7 +969,7 @@ export class VaultEngine {
         const parent = this.ensureFolderPath(segments);
         const doc = Document.fromMarkdown(r.id, r.cleanContent);
         this.tree.addMarkdownDocument(parent, fileName, r.id);
-        this.documents.set(r.id, doc);
+        this.setDocument(r.id, doc);
         this.materializedPaths.set(r.id, r.path);
         await this.persistDocumentIncremental(r.id);
         (r.kind === "copy" ? report.copied : report.created).push(r.id);
@@ -1163,9 +1180,17 @@ export class VaultEngine {
     let doc = this.documents.get(documentId);
     if (!doc) {
       doc = new Document(documentId);
-      this.documents.set(documentId, doc);
+      this.setDocument(documentId, doc);
     }
     return doc;
+  }
+
+  private setDocument(documentId: string, document: Document): void {
+    this.documents.set(documentId, document);
+    const listeners = this.documentAvailableListeners.get(documentId);
+    if (!listeners) return;
+    this.documentAvailableListeners.delete(documentId);
+    for (const listener of listeners) listener();
   }
 
   /**

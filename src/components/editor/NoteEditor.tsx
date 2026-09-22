@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
 import type { EditorSession } from "@/lib/editor/session";
@@ -76,6 +76,16 @@ export function NoteEditor({
   // EditorExtensionRegistry to seed and live-reconfigure the compartment.
   const pluginHost = usePluginHost();
   const app = useApp();
+  // A tree row can arrive before its document room. Bump this token when the
+  // missing Document is created so the boot effect gets another chance.
+  const [documentAvailabilityVersion, setDocumentAvailabilityVersion] = useState(0);
+
+  useLayoutEffect(() => {
+    return engine.onDocumentAvailable(documentId, () =>
+      setDocumentAvailabilityVersion((version) => version + 1),
+    );
+  }, [engine, documentId]);
+
   // `app` is rebuilt by VaultPluginBridge whenever the active note or save
   // state changes; read it through a ref so those changes never tear down
   // and recreate the editor (which dropped focus, open completions and undo).
@@ -327,7 +337,7 @@ export function NoteEditor({
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [engine, documentId, pluginHost, readOnly, workspaceTabId]);
+  }, [documentAvailabilityVersion, engine, documentId, pluginHost, readOnly, workspaceTabId]);
 
   return (
     <div className="relative h-full w-full">
