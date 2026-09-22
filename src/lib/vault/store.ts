@@ -37,16 +37,16 @@ export interface PersistedDocStore {
 
   readState(docId: string): Promise<PersistedDocState | null>;
 
-  /** Read a materialised Markdown file (UTF-8 bytes). Returns null if absent. */
+  /** Read a materialised vault file. Returns null if absent. */
   readMaterialized(path: string): Promise<Uint8Array | null>;
 
-  /** Atomically write materialised Markdown via tmp → rename. */
+  /** Atomically write a materialised vault file via tmp → rename. */
   writeMaterializedAtomic(path: string, bytes: Uint8Array): Promise<void>;
 
   /**
    * List every materialised path in the vault (vault-relative, `/`-joined,
    * excludes `.adhd`). Used for boot-time reconciliation — finding on-disk
-   * `.md` files that no longer correspond to any tree node.
+   * files that do not yet correspond to a tree node.
    */
   listMaterializedPaths(): Promise<string[]>;
 

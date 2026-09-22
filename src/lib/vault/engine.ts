@@ -64,6 +64,18 @@ const IGNORED_EXTERNAL_DIRECTORY_SEGMENTS = new Set([
   "node_modules",
 ]);
 
+/** Return whether a materialized path belongs to app/tool metadata. */
+export function isIgnoredExternalPath(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/");
+  return normalized.endsWith(".tmp") || normalized
+    .split("/")
+    .some((segment) => IGNORED_EXTERNAL_DIRECTORY_SEGMENTS.has(segment.toLowerCase()));
+}
+
+function isMarkdownPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".md");
+}
+
 /** Where the sidecar doc index (SPEC §5) lives, relative to the vault root. */
 const DOC_INDEX_PATH = ".adhd/index.json";
 
@@ -466,7 +478,7 @@ export class VaultEngine {
     await this.persistTreeIncremental();
   }
 
-  /** Adopt ordinary files dropped into Attachments/ by an external actor. */
+  /** Adopt ordinary files placed anywhere in the visible vault by an external actor. */
   async ingestExternalAssets(): Promise<AssetIngestReport> {
     const tracked = new Set(
       this.tree.allNodes()
@@ -476,7 +488,7 @@ export class VaultEngine {
     );
     const created: string[] = [];
     for (const path of await this.docStore.listMaterializedPaths()) {
-      if (!path.startsWith(`${ATTACHMENTS_FOLDER_NAME}/`) || path.endsWith(".tmp") || tracked.has(path)) continue;
+      if (isIgnoredExternalPath(path) || isMarkdownPath(path) || tracked.has(path)) continue;
       const bytes = await this.docStore.readMaterialized(path);
       if (!bytes) continue;
       const parts = path.split("/");
@@ -495,7 +507,7 @@ export class VaultEngine {
     for (const node of this.tree.allNodes()) {
       if (node.kind !== "binary") continue;
       const path = buildPathFromNode(this.tree, node);
-      if (!path || !tracked.has(path)) continue;
+      if (!path || isIgnoredExternalPath(path) || !tracked.has(path)) continue;
       const bytes = await this.docStore.readMaterialized(path);
       if (!bytes) continue;
       const sha256 = await sha256Hex(bytes);
@@ -785,7 +797,7 @@ export class VaultEngine {
     const trackedBefore = this.tree.documentIds().length;
     const prevIndex = await this.loadDocIndex();
     let diskPaths = (await this.docStore.listMaterializedPaths()).filter(
-      (p) => p.endsWith(".md") && !p.endsWith(".tmp"),
+      (p) => isMarkdownPath(p) && !isIgnoredExternalPath(p),
     );
 
     // Safety rail #1: never treat "the disk scan came back empty" as "the
@@ -805,7 +817,7 @@ export class VaultEngine {
     const hasSomethingToLose = trackedBefore >= 1 || Object.keys(prevIndex).length > 0;
     if (diskPaths.length === 0 && hasSomethingToLose) {
       const recheck = (await this.docStore.listMaterializedPaths()).filter(
-        (p) => p.endsWith(".md") && !p.endsWith(".tmp"),
+        (p) => isMarkdownPath(p) && !isIgnoredExternalPath(p),
       );
       if (recheck.length > 0) {
         console.warn(
@@ -1014,7 +1026,7 @@ export class VaultEngine {
   }
 
   /**
-   * Boot-time (and on-demand) reconciliation so the on-disk `.md` tree
+   * Boot-time (and on-demand) reconciliation so the on-disk vault tree
    * always mirrors the CRDT tree + content:
    *   - ingest external changes first (see ingestExternalChanges) so an
    *     external edit/move/copy/new-file/delete is absorbed rather than
@@ -1023,7 +1035,7 @@ export class VaultEngine {
    *   - delete any stale materialised `.md` that no longer corresponds to a
    *     tree node (stale path left behind by a rename/move that happened
    *     before this session, e.g. across a crash) — unknown ordinary files
-   *     are preserved, and `.adhd` is never touched
+   *     are adopted as binary nodes or preserved, and `.adhd` is never touched
    */
   /**
    * Resolve any post-merge same-name sibling collisions (VaultTree.
@@ -1090,7 +1102,7 @@ export class VaultEngine {
         // ordinary files are user data (and may be attachments from another
         // tool), so preserve them until the attachment reconciler adopts or
         // explicitly removes them.
-        if (path.toLowerCase().endsWith(".md")) {
+        if (isMarkdownPath(path)) {
           await this.materializedRemove(path);
           removed.push(path);
         } else {

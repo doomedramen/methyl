@@ -52,6 +52,8 @@ describe("sync-server vault watcher integration", () => {
       join(tmpDir, "Imported", "Preexisting.md"),
       "copied before the server started",
     );
+    const assetBytes = Buffer.from([6, 2, 8, 1]);
+    writeFileSync(join(tmpDir, "Imported", "diagram.png"), assetBytes);
     const { wsPort, httpPort } = nextPorts();
     const server = createSyncServer({
       port: wsPort,
@@ -97,6 +99,9 @@ describe("sync-server vault watcher integration", () => {
       expect(clientEngine.getDocument(node!.documentId!)?.getMarkdown()).toBe(
         "copied before the server started",
       );
+      const assetNode = clientEngine.tree.resolvePath(["Imported", "diagram.png"]);
+      expect(clientEngine.tree.getNode(assetNode!)?.kind).toBe("binary");
+      expect(await clientEngine.readAttachment(assetNode!)).toEqual(new Uint8Array(assetBytes));
       host.disconnect();
     } finally {
       await server.stop();

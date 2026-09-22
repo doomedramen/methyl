@@ -201,14 +201,17 @@ describe("materialization: binary attachments", () => {
     expect(await engine.readAttachment(node.treeId)).toEqual(bytes);
   });
 
-  it("preserves unknown ordinary files during reconciliation", async () => {
+  it("adopts ordinary files during reconciliation", async () => {
     const { engine, fs } = await newEngine();
     const bytes = new Uint8Array([5, 4, 3, 2, 1]);
     await fs.writeFile("exports/data.bin", bytes);
 
     const result = await engine.reconcileMaterialization();
+    const treeId = engine.tree.resolvePath(["exports", "data.bin"]);
 
     expect(result.removed).not.toContain("exports/data.bin");
+    expect(result.ingested.assetsCreated).toHaveLength(1);
+    expect(engine.tree.getNode(treeId!)?.kind).toBe("binary");
     expect(await fs.readFile("exports/data.bin")).toEqual(bytes);
   });
 
@@ -256,5 +259,25 @@ describe("materialization: binary attachments", () => {
     expect(result.ingested.assetsCreated).toHaveLength(1);
     expect(node?.kind).toBe("binary");
     expect(await engine.readAttachment(node!.treeId)).toEqual(bytes);
+  });
+
+  it("adopts ordinary files anywhere in the vault during startup reconciliation", async () => {
+    const { engine, fs } = await newEngine();
+    const textBytes = new TextEncoder().encode("exported data");
+    const imageBytes = new Uint8Array([1, 4, 9]);
+    await fs.writeFile("exports/data.txt", textBytes);
+    await fs.writeFile("Projects/diagram.png", imageBytes);
+    await fs.writeFile(".obsidian/app.json", new TextEncoder().encode("metadata"));
+
+    const result = await engine.reconcileMaterialization();
+    const textId = engine.tree.resolvePath(["exports", "data.txt"]);
+    const imageId = engine.tree.resolvePath(["Projects", "diagram.png"]);
+
+    expect(result.ingested.assetsCreated).toHaveLength(2);
+    expect(engine.tree.getNode(textId!)?.kind).toBe("binary");
+    expect(engine.tree.getNode(textId!)?.size).toBe(textBytes.byteLength);
+    expect(engine.tree.getNode(imageId!)?.mime).toBe("image/png");
+    expect(await engine.readAttachment(imageId!)).toEqual(imageBytes);
+    expect(engine.tree.resolvePath([".obsidian", "app.json"])).toBeUndefined();
   });
 });

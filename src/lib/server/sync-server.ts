@@ -20,8 +20,8 @@ export interface SyncServerOptions {
   authToken: string;
   saveIntervalMs?: number;
   /**
-   * Watch `vaultPath` for external `.md` changes and ingest them (SPEC §5,
-   * §25, §26) — default true. Set false in tests that don't want a
+   * Watch `vaultPath` for external Markdown and ordinary-file changes and
+   * ingest them (SPEC §5, §25, §26) — default true. Set false in tests that don't want a
    * filesystem watcher running (or that manage their own tmp-dir timing).
    */
   watch?: boolean;

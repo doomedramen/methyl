@@ -124,4 +124,34 @@ describe("watchVaultForExternalChanges (Node fs vault)", () => {
     );
     expect(reports.some((report) => report.foldersCreated?.includes("Projects"))).toBe(true);
   }, 10000);
+
+  it("picks up an externally created ordinary file outside Attachments", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "adhd-watcher-"));
+    const treeStore = new NodeVaultTreeStore(tmp);
+    const docStore = new NodeFSStore(tmp);
+    const engine = await VaultEngine.create(treeStore, docStore);
+
+    const reports: Array<Awaited<ReturnType<VaultEngine["ingestExternalChanges"]>>> = [];
+    watcher = watchVaultForExternalChanges({
+      vaultPath: tmp,
+      engine,
+      debounceMs: 50,
+      onIngested: (report) => reports.push(report),
+    });
+
+    await new Promise((r) => setTimeout(r, 150));
+    const bytes = new Uint8Array([2, 7, 1, 8]);
+    mkdirSync(join(tmp, "exports"));
+    writeFileSync(join(tmp, "exports", "data.bin"), bytes);
+
+    await waitFor(() =>
+      engine.tree.resolvePath(["exports", "data.bin"]) !== undefined &&
+      reports.some((report) => report.assetsCreated?.length === 1),
+    );
+
+    const treeId = engine.tree.resolvePath(["exports", "data.bin"]);
+    expect(engine.tree.getNode(treeId!)?.kind).toBe("binary");
+    expect(await engine.readAttachment(treeId!)).toEqual(bytes);
+    expect(reports.some((report) => report.assetsCreated?.length === 1)).toBe(true);
+  }, 10000);
 });

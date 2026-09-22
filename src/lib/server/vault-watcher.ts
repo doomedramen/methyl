@@ -1,16 +1,16 @@
 import chokidar, { type FSWatcher } from "chokidar";
 import type { TreeID } from "loro-crdt";
-import type { VaultEngine } from "@/lib/vault/engine";
+import { isIgnoredExternalPath, type VaultEngine } from "@/lib/vault/engine";
 
 /**
- * Watches a Node filesystem vault for external Markdown and attachment changes (edits made
+ * Watches a Node filesystem vault for external Markdown and ordinary-file changes (edits made
  * outside ADHD — another editor, `git checkout`, a sync client writing
  * directly to disk, etc.) and feeds them through
  * `VaultEngine.ingestExternalChanges()` (SPEC §5, §25, §26).
  *
- * - Ignores `.adhd/**` (CRDT storage + the sidecar doc index) and `*.tmp`
- *   (the atomic-write staging file every materialize goes through) so the
- *   app's own bookkeeping never triggers a re-ingest of itself.
+ * - Ignores `.adhd/**`, tool metadata directories (`.git`, `.obsidian`,
+ *   `.trash`, `node_modules`), and `*.tmp` (the atomic-write staging file
+ *   every materialize goes through) so bookkeeping never enters the vault.
  * - Ignores the app's *own* `.md` writes too, but via a different
  *   mechanism: every `materializeDocument`/`materializeToTreePath`/
  *   `repairDocument` call updates the sidecar index (`.adhd/index.json`)
@@ -114,15 +114,7 @@ export function watchVaultForExternalChanges(
   };
 
   const watcher = chokidar.watch(vaultPath, {
-    // Two-arg form: `stats` lets us tell files from directories, so we
-    // don't accidentally stop chokidar from descending into subfolders.
-    ignored: (path: string, stats?: { isFile: () => boolean }) => {
-      if (path.split(/[\\/]/).includes(".adhd")) return true;
-      if (path.endsWith(".tmp")) return true;
-      const normalized = path.replaceAll("\\", "/");
-      if (stats?.isFile() && !path.endsWith(".md") && !normalized.includes("/Attachments/")) return true;
-      return false;
-    },
+    ignored: (path: string) => isIgnoredExternalPath(path),
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 30 },
   });
