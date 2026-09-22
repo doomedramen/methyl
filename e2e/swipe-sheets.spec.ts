@@ -31,6 +31,7 @@ test("swiping inward from the left edge opens the mobile sidebar", async ({ page
   await page.goto("/");
 
   const sidebar = page.locator('[data-sidebar="sidebar"][data-mobile="true"]');
+  await expect(page.locator('[data-slot="sidebar-trigger"]')).toBeVisible();
   await expect(sidebar).not.toBeVisible();
 
   await swipe(page, 8, 420, 72, 428);
