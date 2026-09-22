@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreHorizontal, Plus, Rows2, Columns2, X } from "lucide-react";
+import { Check, ChevronDown, MoreHorizontal, Plus, Rows2, Columns2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode, type KeyboardEvent } from "react";
 import {
   ResizableHandle,
@@ -27,6 +27,7 @@ import {
   DEFAULT_WORKSPACE_TAB_LIMIT,
   maxWorkspaceTabsForWidth,
 } from "@/lib/workspace/tab-limit";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export interface WorkspaceViewProps {
   snapshot: WorkspaceSnapshot;
@@ -46,6 +47,9 @@ export function WorkspaceView({
   onTabActivated,
 }: WorkspaceViewProps) {
   const tabLimit = useResponsiveTabLimit();
+  const isMobile = useIsMobile();
+  const panes = flattenPanes(snapshot.root);
+  const focusedPane = panes.find((pane) => pane.id === snapshot.focusedPaneId) ?? panes[0]!;
 
   useEffect(() => {
     store.setTabLimit(tabLimit);
@@ -53,16 +57,99 @@ export function WorkspaceView({
 
   return (
     <div className="flex h-full min-h-0 w-full" data-workspace-root="true">
-      <WorkspaceNodeView
-        node={snapshot.root}
-        snapshot={snapshot}
-        store={store}
-        getTabTitle={getTabTitle}
-        renderTab={renderTab}
-        renderEmpty={renderEmpty}
-        onTabActivated={onTabActivated}
-        tabLimit={tabLimit}
-      />
+      {isMobile && panes.length > 1 ? (
+        <div className="workspace-mobile flex min-h-0 min-w-0 flex-1 flex-col">
+          <MobilePanePicker
+            panes={panes}
+            focusedPane={focusedPane}
+            getTabTitle={getTabTitle}
+            onSelect={(paneId) => {
+              store.focusPane(paneId);
+              const pane = panes.find((candidate) => candidate.id === paneId);
+              if (pane) onTabActivated?.(pane.activeTabId);
+            }}
+          />
+          <WorkspacePaneView
+            pane={focusedPane}
+            focused
+            canClosePane
+            store={store}
+            getTabTitle={getTabTitle}
+            renderTab={renderTab}
+            renderEmpty={renderEmpty}
+            onTabActivated={onTabActivated}
+            tabLimit={tabLimit}
+          />
+        </div>
+      ) : (
+        <WorkspaceNodeView
+          node={snapshot.root}
+          snapshot={snapshot}
+          store={store}
+          getTabTitle={getTabTitle}
+          renderTab={renderTab}
+          renderEmpty={renderEmpty}
+          onTabActivated={onTabActivated}
+          tabLimit={tabLimit}
+        />
+      )}
+    </div>
+  );
+}
+
+function MobilePanePicker({
+  panes,
+  focusedPane,
+  getTabTitle,
+  onSelect,
+}: {
+  panes: WorkspacePane[];
+  focusedPane: WorkspacePane;
+  getTabTitle: (tab: WorkspaceTab) => string;
+  onSelect: (paneId: string) => void;
+}) {
+  const focusedIndex = panes.findIndex((pane) => pane.id === focusedPane.id);
+  const activeTab = focusedPane.tabs.find((tab) => tab.id === focusedPane.activeTabId) ?? focusedPane.tabs[0]!;
+  const activeTitle = getTabTitle(activeTab);
+
+  return (
+    <div className="workspace-mobile-pane-picker shrink-0">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              className="workspace-pane-picker min-h-11 min-w-0 max-w-full justify-start gap-2 px-2.5 text-left"
+              aria-label={`Switch pane, ${activeTitle}`}
+            >
+              <Columns2 aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">
+                Pane {focusedIndex + 1} <span className="text-muted-foreground">· {activeTitle}</span>
+              </span>
+              <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="start" className="min-w-[min(20rem,calc(100vw-1rem))]">
+          {panes.map((pane, index) => {
+            const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId) ?? pane.tabs[0]!;
+            const title = getTabTitle(tab);
+            const selected = pane.id === focusedPane.id;
+            return (
+              <DropdownMenuItem
+                key={pane.id}
+                className="min-h-11 gap-2"
+                data-active={selected ? "true" : undefined}
+                onClick={() => onSelect(pane.id)}
+              >
+                {selected ? <Check data-icon="inline-start" /> : <span aria-hidden="true" className="size-4 shrink-0" />}
+                <span className="shrink-0">Pane {index + 1}</span>
+                <span className="min-w-0 truncate text-muted-foreground">{title}</span>
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

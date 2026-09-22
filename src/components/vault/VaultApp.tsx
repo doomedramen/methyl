@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import type { TreeID } from "loro-crdt";
-import { Check, Circle, FileWarning, Link2, Plus, TriangleAlert } from "lucide-react";
+import { Check, Circle, FileWarning, Link2, Plus, Search, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import type { VaultTree, VaultTreeNode } from "@/lib/vault/tree";
 import { Button } from "@/components/ui/button";
@@ -1384,6 +1384,25 @@ export function VaultApp() {
                 <TooltipContent>Show backlinks</TooltipContent>
               </Tooltip>
             )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-lg"
+                    className="header-find wco-no-drag size-11 md:hidden"
+                    aria-label="Find notes"
+                    aria-expanded={commandOpen}
+                    aria-haspopup="dialog"
+                    title="Find notes"
+                    onClick={() => setCommandOpen(true)}
+                  >
+                    <Search />
+                  </Button>
+                }
+              />
+              <TooltipContent>Find notes</TooltipContent>
+            </Tooltip>
             <ModeToggle />
             {pluginFeatures.inbox && (
               <Tooltip>

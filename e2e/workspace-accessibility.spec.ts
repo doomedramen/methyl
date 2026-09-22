@@ -34,3 +34,17 @@ test("pane actions stay behind one options menu", async ({ page }) => {
   await expect(page.getByRole("menuitem", { name: "Close pane" })).toHaveCount(0);
   await page.keyboard.press("Escape");
 });
+
+test("mobile presents split panes through an accessible picker", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Pane options" }).click();
+  await page.getByRole("menuitem", { name: "Split right" }).click();
+
+  await expect(page.locator("[data-workspace-pane]")).toHaveCount(1);
+  const picker = page.getByRole("button", { name: /^Switch pane/ });
+  await expect(picker).toBeVisible();
+  await picker.click();
+  await expect(page.getByRole("menuitem", { name: /Pane 1/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Pane 2/ })).toBeVisible();
+});

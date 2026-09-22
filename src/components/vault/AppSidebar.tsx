@@ -17,6 +17,7 @@ import {
   Search,
   Trash2,
   Workflow,
+  X,
 } from "lucide-react";
 import {
   DndContext,
@@ -373,6 +374,20 @@ export function AppSidebar({
   const [deleteAssetTarget, setDeleteAssetTarget] = useState<BinaryRow | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<TreeID | undefined>(undefined);
 
+  const previousOpenMobile = useRef(false);
+  useEffect(() => {
+    if (previousOpenMobile.current && !openMobile) {
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLButtonElement>('[data-slot="sidebar-trigger"]')?.focus();
+      });
+    }
+    previousOpenMobile.current = openMobile;
+  }, [openMobile]);
+
+  const closeMobileSidebar = useCallback(() => {
+    setOpenMobile(false);
+  }, [setOpenMobile]);
+
   const requestNewFolder = useCallback(
     (parentTreeId?: TreeID) => {
       setNewFolderParent(parentTreeId);
@@ -444,12 +459,12 @@ export function AppSidebar({
 
   const pick = (id: string) => {
     onSelect(id);
-    setOpenMobile(false);
+    closeMobileSidebar();
   };
 
   const pickAsset = (treeId: TreeID) => {
     onSelectAsset(treeId);
-    setOpenMobile(false);
+    closeMobileSidebar();
   };
 
   // --- drag and drop -----------------------------------------------------
@@ -768,7 +783,7 @@ export function AppSidebar({
           <img src="/icon.svg" alt="" className="size-6 shrink-0 rounded-md" />
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <CreateMenu
             onCreate={onCreate}
             onRequestNewFolder={() => requestNewFolder()}
@@ -776,6 +791,16 @@ export function AppSidebar({
             disabled={!canWrite}
             className="size-11 text-muted-foreground md:size-8"
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-lg"
+            className="mobile-sidebar-close size-11 md:hidden"
+            aria-label="Close sidebar"
+            onClick={closeMobileSidebar}
+          >
+            <X aria-hidden="true" />
+          </Button>
         </div>
       </SidebarHeader>
 
@@ -799,7 +824,7 @@ export function AppSidebar({
                     key={key}
                     className="collection-link"
                     aria-current={collection === key ? "page" : undefined}
-                    onClick={() => { onOpenCollection(key); setOpenMobile(false); }}
+                    onClick={() => { onOpenCollection(key); closeMobileSidebar(); }}
                   >
                     <Icon aria-hidden="true" className={`collection-${key}`} />
                     <span>{title}</span>

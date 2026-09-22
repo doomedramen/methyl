@@ -41,6 +41,18 @@ test.describe("mobile quality", () => {
       page.locator("header").getByRole("button", { name: "Capture a thought" }),
       "capture",
     );
+    const find = page.locator("header").getByRole("button", { name: "Find notes" });
+    await expectTouchTarget(find, "find notes");
+    await find.click();
+    await expect(page.locator('[data-slot="command-input"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expectNoHorizontalOverflow(page);
+
+    await page.setViewportSize({ width: 320, height: 568 });
+    await expectTouchTarget(
+      page.locator("header").getByRole("button", { name: "Capture a thought" }),
+      "capture at 320px",
+    );
     await expectNoHorizontalOverflow(page);
   });
 
@@ -58,7 +70,18 @@ test.describe("mobile quality", () => {
     await sidebar.getByRole("button", { name: "Add" }).click();
     await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
 
-    await expect(sidebar.locator('button[aria-label="Close sidebar"]')).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    const close = sidebar.locator('button[aria-label="Close sidebar"]');
+    await expectTouchTarget(close, "close sidebar");
+    await close.click();
+    await expect(sidebar).toBeHidden();
+    await expect(page.locator('[data-slot="sidebar-trigger"]')).toBeFocused();
+
+    await page.locator('[data-slot="sidebar-trigger"]').click();
+    await expect(sidebar).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sidebar).toBeHidden();
+    await expect(page.locator('[data-slot="sidebar-trigger"]')).toBeFocused();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -70,6 +93,11 @@ test.describe("mobile quality", () => {
     const editor = page.locator(".cm-content");
     await expect(editor).toBeVisible();
     await editor.fill("A mobile note with enough content to exercise the editor width.");
+    const titleBox = await page.locator(".note-title").boundingBox();
+    const lineBox = await page.locator(".cm-line").first().boundingBox();
+    expect(titleBox).not.toBeNull();
+    expect(lineBox).not.toBeNull();
+    expect(Math.abs((titleBox?.x ?? 0) - (lineBox?.x ?? 0))).toBeLessThanOrEqual(1);
     await expectNoHorizontalOverflow(page);
 
     await page.setViewportSize({ width: 844, height: 390 });

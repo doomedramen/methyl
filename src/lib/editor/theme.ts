@@ -22,7 +22,7 @@ export const amoledMinimal = EditorView.theme({
     // Centered reading column; auto margins work inside the flex scroller.
     boxSizing: "border-box",
     width: "100%",
-    maxWidth: "var(--note-page-width, 1100px)",
+    maxWidth: "var(--note-page-width, min(1100px, calc(72ch + (2 * var(--note-page-gutter, 48px)))))",
     margin: "0 auto",
     padding: "16px var(--note-page-gutter, 48px) 35vh",
     lineHeight: "1.7",
