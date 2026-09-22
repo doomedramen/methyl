@@ -14,7 +14,7 @@ const COPY: Record<
   idle: {
     title: "Sync not set up",
     badge: "Not set up",
-    description: "Connect a Methyl server so notes sync between your devices.",
+    description: "Connect a Methyl server to pick up files copied into its mounted vault.",
   },
   connecting: {
     title: "Connecting…",

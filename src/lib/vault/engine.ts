@@ -45,6 +45,8 @@ export interface IngestReport {
   assetsCreated?: string[];
   /** Tracked binary files whose bytes changed outside the app. */
   assetsUpdated?: string[];
+  /** Ordinary folders created outside the app and adopted into the tree. */
+  foldersCreated?: string[];
 }
 
 export interface AssetIngestReport {
@@ -53,6 +55,14 @@ export interface AssetIngestReport {
 }
 
 export const ATTACHMENTS_FOLDER_NAME = "Attachments";
+
+const IGNORED_EXTERNAL_DIRECTORY_SEGMENTS = new Set([
+  ".adhd",
+  ".git",
+  ".obsidian",
+  ".trash",
+  "node_modules",
+]);
 
 /** Where the sidecar doc index (SPEC §5) lives, relative to the vault root. */
 const DOC_INDEX_PATH = ".adhd/index.json";
@@ -483,6 +493,34 @@ export class VaultEngine {
     }
     if (created.length > 0 || updated.length > 0) await this.persistTree();
     return { created, updated };
+  }
+
+  /**
+   * Adopt ordinary directories created outside the app. Files are still the
+   * portable source of truth for notes, but a filesystem can also contain an
+   * intentionally empty folder, so directory events need their own pass.
+   * Metadata/dependency directories remain invisible just like an Obsidian
+   * import's skipped folders.
+   */
+  async ingestExternalFolders(): Promise<{ created: string[] }> {
+    const listDirectories = this.docStore.listMaterializedDirectories;
+    if (!listDirectories) return { created: [] };
+
+    const created: string[] = [];
+    const paths = (await listDirectories.call(this.docStore))
+      .map((path) => path.replaceAll("\\", "/").split("/").filter(Boolean))
+      .filter((segments) =>
+        segments.length > 0 &&
+        !segments.some((segment) => IGNORED_EXTERNAL_DIRECTORY_SEGMENTS.has(segment.toLowerCase())),
+      )
+      .sort((a, b) => a.length - b.length);
+
+    for (const segments of paths) {
+      this.ensureFolderPath(segments, created);
+    }
+
+    if (created.length > 0) await this.persistTree();
+    return { created };
   }
 
   private ensureAttachmentsFolder(): TreeID {
@@ -938,13 +976,22 @@ export class VaultEngine {
   }
 
   /** Find or create the folder chain for `segments`, returning its final TreeID. */
-  private ensureFolderPath(segments: string[]): TreeID | undefined {
+  private ensureFolderPath(segments: string[], created?: string[]): TreeID | undefined {
     let parent: TreeID | undefined;
+    let path = "";
     for (const seg of segments) {
       if (!seg) continue;
+      path = path ? `${path}/${seg}` : seg;
       const siblings = parent ? this.tree.children(parent) : this.tree.roots();
-      const existing = siblings.find((n) => n.kind === "directory" && n.name === seg);
-      parent = existing ? existing.treeId : this.tree.addDirectory(parent, seg);
+      const existing = siblings.find(
+        (n) => n.kind === "directory" && n.name.toLowerCase() === seg.toLowerCase(),
+      );
+      if (existing) {
+        parent = existing.treeId;
+      } else {
+        parent = this.tree.addDirectory(parent, seg);
+        created?.push(path);
+      }
     }
     return parent;
   }
@@ -989,7 +1036,9 @@ export class VaultEngine {
     removed: string[];
   }> {
     await this.resolveTreeNameCollisions();
+    const folders = await this.ingestExternalFolders();
     const ingested = await this.ingestExternalChanges();
+    if (folders.created.length > 0) ingested.foldersCreated = folders.created;
     const assets = await this.ingestExternalAssets();
     if (assets.created.length > 0) ingested.assetsCreated = assets.created;
     if (assets.updated.length > 0) ingested.assetsUpdated = assets.updated;

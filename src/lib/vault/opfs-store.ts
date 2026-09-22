@@ -107,6 +107,21 @@ class OpfsPersistBackend {
     return out;
   }
 
+  async listMaterializedDirectories(): Promise<string[]> {
+    const out: string[] = [];
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      const { dirs } = await this.fs.readdir(dir);
+      for (const name of dirs) {
+        if (rel === "" && name === ".adhd") continue;
+        const path = rel ? `${rel}/${name}` : name;
+        out.push(path);
+        await walk(path, path);
+      }
+    };
+    await walk("", "");
+    return out;
+  }
+
   async removeMaterialized(path: string): Promise<void> {
     await this.fs.delete(path);
     // Directories are implicit in OPFS's own tree; no explicit pruning is
@@ -200,6 +215,10 @@ export class OpfsDocStore implements PersistedDocStore {
 
   listMaterializedPaths(): Promise<string[]> {
     return this.backend.listMaterializedPaths();
+  }
+
+  listMaterializedDirectories(): Promise<string[]> {
+    return this.backend.listMaterializedDirectories();
   }
 
   removeMaterialized(path: string): Promise<void> {

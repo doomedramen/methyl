@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { createSyncServer } from "@/lib/server/sync-server";
@@ -402,5 +402,38 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
     expect(clientText).toBe("original content\nedited on disk\n");
 
     host.disconnect();
+  }, 30000);
+
+  it("wakes quickly when a new disk note or empty folder appears", async () => {
+    const fs = new MemoryVaultFS();
+    const engine = await makeVaultOn(fs);
+    const host = await SyncHost.create({
+      fs,
+      engine,
+      wsUrl: `ws://127.0.0.1:${diskWsPort}`,
+      httpUrl: `http://127.0.0.1:${diskHttpPort}`,
+      authToken: DISK_AUTH,
+      vaultId: DISK_VAULT,
+      intervalMs: 60_000,
+    });
+
+    await host.sync();
+    host.start();
+    try {
+      mkdirSync(join(tmp, "External Folder"));
+      writeFileSync(join(tmp, "External Folder", "new-note.md"), "created outside the app\n");
+
+      await waitFor(
+        () =>
+          engine.tree.findByName("External Folder").some((node) => node.kind === "directory") &&
+          engine.tree.findByName("new-note.md").some((node) => node.kind === "markdown"),
+        12_000,
+      );
+    } finally {
+      host.stop();
+    }
+
+    expect(engine.tree.findByName("External Folder")).toHaveLength(1);
+    expect(engine.tree.findByName("new-note.md")).toHaveLength(1);
   }, 30000);
 });

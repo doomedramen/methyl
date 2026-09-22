@@ -113,6 +113,13 @@ Once a server is running (above), point each browser at it:
 4. Save. Only the tab holding the vault's writer lock (SPEC §12) opens a sync
    connection; other tabs stay read-only and don't duplicate it.
 
+The browser vault and the server's mounted folder are separate local copies.
+After connecting Sync, copying a `.md` file or creating a folder in the mounted
+folder is detected by the server and appears in the browser automatically;
+empty folders are supported too. Without Sync configured, use **Import Obsidian
+vault** in the app instead — changing the server's folder cannot change an
+offline browser vault.
+
 The server URL and access token are saved in this browser's `localStorage` — not a
 cookie — so treat them like any other locally-stored secret: anyone with access to this
 browser profile/device can read the token. This is fine for the intended deployment (a

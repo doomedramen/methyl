@@ -7,6 +7,7 @@ import { maybeDropUntouchedSeed } from "@/lib/browser/seed-marker";
 import type { TreeID } from "loro-crdt";
 
 const JOURNAL_PATH = ".adhd/sync/journal.json";
+const DISCOVERY_POLL_MS = 2_000;
 
 export interface JournalSnapshot {
   entries: DirtyEntry[];
@@ -37,6 +38,8 @@ export class SyncHost {
   private statusListeners = new Set<(status: SyncStatus) => void>();
   private changeListeners = new Set<(report: SyncReport) => void>();
   private lastStatus: SyncStatus = { kind: "idle" };
+  private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private discoveryRunning = false;
 
   private readonly httpUrl: string;
   private readonly authToken: string;
@@ -106,11 +109,13 @@ export class SyncHost {
   /** Start the reconnect/backoff loop (§34). Idempotent. */
   start(): void {
     this.scheduler.start();
+    this.scheduleDiscoveryPoll(0);
   }
 
   /** Stop the reconnect loop and disconnect any open WS. */
   stop(): void {
     this.scheduler.stop();
+    this.stopDiscoveryPoll();
     this.disconnect();
     this.emitStatus({ kind: "idle" });
   }
@@ -141,7 +146,53 @@ export class SyncHost {
   }
 
   disconnect(): void {
+    this.stopDiscoveryPoll();
     this.coordinator.disconnect();
+  }
+
+  /**
+   * Discovery is intentionally much cheaper than a sync round: it only polls
+   * the server's change log. When a mounted vault changes outside the app,
+   * this wakes the normal CRDT round immediately instead of making the user
+   * wait for the scheduler's 15-second cadence.
+   */
+  private scheduleDiscoveryPoll(delayMs: number): void {
+    this.stopDiscoveryPoll();
+    if (!this.scheduler.isRunning) return;
+    this.discoveryTimer = setTimeout(() => {
+      this.discoveryTimer = null;
+      void this.pollDiscovery();
+    }, delayMs);
+  }
+
+  private stopDiscoveryPoll(): void {
+    if (this.discoveryTimer === null) return;
+    clearTimeout(this.discoveryTimer);
+    this.discoveryTimer = null;
+  }
+
+  private async pollDiscovery(): Promise<void> {
+    if (!this.scheduler.isRunning || this.discoveryRunning) return;
+    this.discoveryRunning = true;
+    try {
+      const response = await fetch(
+        `${this.httpUrl}/api/changes?after=${this.journal.getLastServerSeq()}`,
+        { headers: { authorization: `Bearer ${this.authToken}` } },
+      );
+      if (response.ok) {
+        const body = await response.json() as { changes?: unknown[] };
+        if (Array.isArray(body.changes) && body.changes.length > 0) {
+          this.scheduler.kick();
+        }
+      }
+    } catch {
+      // The scheduler owns connection-error reporting and retry backoff. A
+      // discovery probe is only an acceleration path, so a failed probe is
+      // deliberately silent.
+    } finally {
+      this.discoveryRunning = false;
+      this.scheduleDiscoveryPoll(DISCOVERY_POLL_MS);
+    }
   }
 
   async persistJournal(): Promise<void> {

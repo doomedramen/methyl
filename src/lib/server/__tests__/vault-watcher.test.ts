@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { FSWatcher } from "chokidar";
@@ -98,5 +98,30 @@ describe("watchVaultForExternalChanges (Node fs vault)", () => {
     expect(stillOneDoc).toEqual([doc.id]);
     expect(engine.getDocument(doc.id)!.getMarkdown()).toBe("hello");
     void ingestCount;
+  }, 10000);
+
+  it("picks up an externally created empty folder", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "adhd-watcher-"));
+    const treeStore = new NodeVaultTreeStore(tmp);
+    const docStore = new NodeFSStore(tmp);
+    const engine = await VaultEngine.create(treeStore, docStore);
+
+    const reports: Array<Awaited<ReturnType<VaultEngine["ingestExternalChanges"]>>> = [];
+    watcher = watchVaultForExternalChanges({
+      vaultPath: tmp,
+      engine,
+      debounceMs: 50,
+      onIngested: (report) => reports.push(report),
+    });
+
+    await new Promise((r) => setTimeout(r, 150));
+    mkdirSync(join(tmp, "Projects"));
+
+    await waitFor(
+      () =>
+        reports.length > 0 &&
+        engine.tree.findByName("Projects").some((node) => node.kind === "directory"),
+    );
+    expect(reports.some((report) => report.foldersCreated?.includes("Projects"))).toBe(true);
   }, 10000);
 });

@@ -49,11 +49,12 @@ export class MemoryVaultFS implements VaultFileSystem {
 
   async readdir(path: string): Promise<{ dirs: string[]; files: string[] }> {
     const prefix = normalizeFilePath(path);
+    const base = prefix ? `${prefix}/` : "";
     const dirs = new Set<string>();
     const files = new Set<string>();
     for (const key of this.files.keys()) {
-      if (!key.startsWith(prefix + "/")) continue;
-      const rest = key.slice(prefix.length + 1);
+      if (!key.startsWith(base)) continue;
+      const rest = key.slice(base.length);
       const slash = rest.indexOf("/");
       if (slash === -1) files.add(rest);
       else dirs.add(rest.slice(0, slash));

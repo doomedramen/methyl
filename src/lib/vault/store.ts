@@ -50,6 +50,9 @@ export interface PersistedDocStore {
    */
   listMaterializedPaths(): Promise<string[]>;
 
+  /** List ordinary vault directories, excluding the reserved `.adhd` tree. */
+  listMaterializedDirectories?(): Promise<string[]>;
+
   /**
    * Remove one materialised file (e.g. the old path after a rename/move, or
    * a file whose tree node is gone). Best-effort cleanup of now-empty

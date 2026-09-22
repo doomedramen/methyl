@@ -195,6 +195,28 @@ class NodePersistBackend {
     return out;
   }
 
+  async listMaterializedDirectories(): Promise<string[]> {
+    const out: string[] = [];
+    const walk = async (dir: string, rel: string) => {
+      let entries: import("fs").Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw err;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (rel === "" && entry.name === ".adhd") continue;
+        const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+        out.push(relPath);
+        await walk(join(dir, entry.name), relPath);
+      }
+    };
+    await walk(this.root, "");
+    return out;
+  }
+
   async removeMaterialized(path: string): Promise<void> {
     const full = join(this.root, path);
     await this.withLock(full, async () => {
@@ -295,6 +317,10 @@ export class NodeFSStore implements PersistedDocStore {
 
   listMaterializedPaths(): Promise<string[]> {
     return this.backend.listMaterializedPaths();
+  }
+
+  listMaterializedDirectories(): Promise<string[]> {
+    return this.backend.listMaterializedDirectories();
   }
 
   removeMaterialized(path: string): Promise<void> {

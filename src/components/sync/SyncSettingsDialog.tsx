@@ -81,8 +81,9 @@ export function SyncSettingsDialog() {
         <DialogHeader>
           <DialogTitle>Sync</DialogTitle>
           <DialogDescription>
-            Connect this device to a Methyl server so your notes sync between devices. The
-            server address and access token are saved in this browser only.
+            The browser keeps its own local vault. Connect this device to a Methyl server so notes
+            — including files copied into the server&apos;s mounted vault — sync here. The server
+            address and access token are saved in this browser only.
           </DialogDescription>
         </DialogHeader>
 

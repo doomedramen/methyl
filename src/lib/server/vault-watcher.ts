@@ -57,7 +57,9 @@ export function watchVaultForExternalChanges(
     }
       running = true;
     try {
+      const folders = await engine.ingestExternalFolders();
       const report = await engine.ingestExternalChanges();
+      if (folders.created.length > 0) report.foldersCreated = folders.created;
       const assets = await engine.ingestExternalAssets();
       if (assets.created.length > 0) report.assetsCreated = assets.created;
       if (assets.updated.length > 0) report.assetsUpdated = assets.updated;
@@ -78,6 +80,7 @@ export function watchVaultForExternalChanges(
           report.copied.length > 0 ||
           report.created.length > 0 ||
           report.deleted.length > 0 ||
+          (report.foldersCreated?.length ?? 0) > 0 ||
           (report.assetsCreated?.length ?? 0) > 0 ||
           (report.assetsUpdated?.length ?? 0) > 0;
         if (treeChanged) {
@@ -124,7 +127,12 @@ export function watchVaultForExternalChanges(
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 30 },
   });
 
-  watcher.on("add", schedule).on("change", schedule).on("unlink", schedule);
+  watcher
+    .on("add", schedule)
+    .on("change", schedule)
+    .on("unlink", schedule)
+    .on("addDir", schedule)
+    .on("unlinkDir", schedule);
 
   return watcher;
 }
