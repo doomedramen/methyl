@@ -81,6 +81,13 @@ import {
 import { findActiveTab, WorkspaceView } from "./WorkspaceView";
 import { AssetViewer } from "./AssetViewer";
 import { AttachmentPreviewCache } from "@/lib/vault/attachments";
+import { ObsidianImportDialog } from "./ObsidianImportDialog";
+import {
+  importObsidianVault,
+  type ObsidianImportEntry,
+  type ObsidianImportProgress,
+  type ObsidianImportReport,
+} from "@/lib/vault/obsidian-import";
 
 /**
  * File System Access API's launch-on-open surface. Not in lib.dom yet, so
@@ -552,6 +559,7 @@ export function VaultApp() {
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
+  const [obsidianImportOpen, setObsidianImportOpen] = useState(false);
   const [templateDialogMode, setTemplateDialogMode] = useState<TemplateDialogMode | null>(null);
   const [templateParentTreeId, setTemplateParentTreeId] = useState<TreeID | undefined>(undefined);
   const [saveRequest, setSaveRequest] = useState<{ nonce: number; documentId: string } | null>(null);
@@ -836,6 +844,7 @@ export function VaultApp() {
     backlinksOpen ||
     newFolderOpen ||
     pluginsDialogOpen ||
+    obsidianImportOpen ||
     templateDialogMode !== null;
   const activeEditorFocusRequest =
     editorFocusRequest && focusedTabId === editorFocusRequest.tabId && !modalOwnsFocus
@@ -915,6 +924,20 @@ export function VaultApp() {
       return createNote(request.parentTreeId, request.options);
     },
     [createFolder, createGraph, createNote, openTemplates],
+  );
+
+  const runObsidianImport = useCallback(
+    async (
+      entries: ObsidianImportEntry[],
+      onProgress: (progress: ObsidianImportProgress) => void,
+    ): Promise<ObsidianImportReport> => {
+      if (!engine) throw new Error("Vault is not ready");
+      if (!requireWriter()) throw new Error("Vault is read-only");
+      const report = await importObsidianVault(engine, entries, onProgress);
+      refreshNotes(engine);
+      return report;
+    },
+    [engine, refreshNotes, requireWriter],
   );
 
   // OS capture entry points (SPEC: shortcuts, share target, file handlers)
@@ -1282,6 +1305,7 @@ export function VaultApp() {
         activeResourceKey={activeResourceKey}
         engine={engine}
         onCreate={onCreate}
+        onRequestImport={() => setObsidianImportOpen(true)}
         onSelect={openDocument}
         onSelectAsset={openAsset}
         onRenameNote={onRenameNote}
@@ -1430,6 +1454,11 @@ export function VaultApp() {
         />
       )}
       <PluginsDialog open={pluginsDialogOpen} onOpenChange={setPluginsDialogOpen} />
+      <ObsidianImportDialog
+        open={obsidianImportOpen}
+        onOpenChange={setObsidianImportOpen}
+        onImport={runObsidianImport}
+      />
       <TemplatesDialog
         open={templateDialogMode !== null}
         mode={templateDialogMode ?? "create"}

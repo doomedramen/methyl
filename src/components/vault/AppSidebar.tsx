@@ -134,6 +134,7 @@ interface AppSidebarProps {
   /** Passed through to the footer status popover for the diagnostics copy action. */
   engine: VaultEngine | null;
   onCreate: CreateHandler;
+  onRequestImport: () => void;
   onSelect: (id: string) => void;
   onSelectAsset: (treeId: TreeID) => void;
   onRenameNote: (id: string, title: string) => Promise<void>;
@@ -336,6 +337,7 @@ export function AppSidebar({
   activeResourceKey = null,
   engine,
   onCreate,
+  onRequestImport,
   onSelect,
   onSelectAsset,
   onRenameNote,
@@ -750,6 +752,7 @@ export function AppSidebar({
           <CreateMenu
             onCreate={onCreate}
             onRequestNewFolder={() => requestNewFolder()}
+            onRequestImport={onRequestImport}
             disabled={!canWrite}
             className="size-11 text-muted-foreground md:size-8"
           />

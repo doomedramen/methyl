@@ -1,6 +1,6 @@
 "use client";
 
-import { FilePlus, FileText, FolderPlus, Plus, Workflow } from "lucide-react";
+import { FileInput, FilePlus, FileText, FolderPlus, Plus, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,6 +17,7 @@ interface CreateMenuProps {
   onCreate: CreateHandler;
   /** Opens the naming dialog; the actual folder mutation still uses onCreate. */
   onRequestNewFolder?: () => void;
+  onRequestImport?: () => void;
   disabled?: boolean;
   className?: string;
   variant?: "default" | "outline" | "secondary" | "ghost" | "destructive" | "link";
@@ -26,6 +27,7 @@ interface CreateMenuProps {
 export function CreateMenu({
   onCreate,
   onRequestNewFolder,
+  onRequestImport,
   disabled,
   className,
   variant = "ghost",
@@ -76,6 +78,12 @@ export function CreateMenu({
           <Workflow data-icon="inline-start" />
           New graph
         </DropdownMenuItem>
+        {onRequestImport ? (
+          <DropdownMenuItem onClick={onRequestImport}>
+            <FileInput data-icon="inline-start" />
+            Import Obsidian vault
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

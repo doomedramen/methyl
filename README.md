@@ -19,6 +19,7 @@ Markdown is the portable truth, Loro is the sync/history format, everything else
 - Folder tree sidebar with drag-and-drop moves and manual ordering
 - Command palette (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>) for notes and actions
 - Rename / delete for notes and folders; titles come from file names
+- Import Obsidian vaults with folders, Markdown notes, and attachments preserved
 - 7 themes (Light, Dark, Obsidian, Obsidian Light, Nord, Catppuccin Mocha, Rosé Pine Dawn) plus System
 - Installable PWA with storage-persistence and quota status
 - Note identity kept outside the files (vault tree + `.adhd/index.json`), so renames and moves keep history

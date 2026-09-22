@@ -371,9 +371,13 @@ export class VaultEngine {
     return path ? this.docStore.readMaterialized(path) : null;
   }
 
-  /** Create an attachment under the root Attachments/ directory. */
-  async createAttachment(name: string, bytes: Uint8Array): Promise<VaultTreeNode> {
-    const parent = this.ensureAttachmentsFolder();
+  /** Create an attachment under Attachments/ or an explicit folder. */
+  async createAttachment(
+    name: string,
+    bytes: Uint8Array,
+    parentTreeId?: TreeID,
+  ): Promise<VaultTreeNode> {
+    const parent = parentTreeId ?? this.ensureAttachmentsFolder();
     const sha256 = await sha256Hex(bytes);
     const treeId = this.tree.addBinaryFile(parent, name, {
       sha256,
