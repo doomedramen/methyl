@@ -48,3 +48,13 @@ test("mobile presents split panes through an accessible picker", async ({ page }
   await expect(page.getByRole("menuitem", { name: /Pane 1/ })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: /Pane 2/ })).toBeVisible();
 });
+
+test("768px keeps split panes in the desktop workspace layout", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Pane options" }).click();
+  await page.getByRole("menuitem", { name: "Split right" }).click();
+
+  await expect(page.locator("[data-workspace-pane]")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: /^Switch pane/ })).toHaveCount(0);
+});
