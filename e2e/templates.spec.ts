@@ -20,7 +20,7 @@ test("defines a template and creates a note from it", async ({ page }) => {
   await sidebar.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menuitem", { name: "From template" }).click();
   await expect(page.getByRole("heading", { name: "New note from template" })).toBeVisible();
-  await page.getByRole("option", { name: "Daily note" }).click();
+  await page.getByRole("button", { name: "Daily note" }).click();
   await page.getByRole("button", { name: "Create note" }).click();
 
   await expect(page.locator(".cm-content")).toContainText("# Daily note");
