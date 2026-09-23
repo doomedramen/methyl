@@ -339,14 +339,16 @@ function WorkspacePaneView({
                 </button>
                 <button
                   type="button"
-                  className="workspace-tab-close flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:opacity-100"
+                  className="workspace-tab-close relative flex size-8 shrink-0 items-center justify-center text-muted-foreground focus-visible:opacity-100"
                   aria-label={`Close ${tabTitle}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     closeTab(tab.id);
                   }}
                 >
-                  <X className="size-3.5" />
+                  <span className="workspace-tab-close-visual grid size-6 place-items-center rounded-sm hover:bg-muted hover:text-foreground">
+                    <X className="size-3.5" />
+                  </span>
                 </button>
               </div>
             );
