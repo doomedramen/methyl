@@ -10,7 +10,7 @@ const THEMES = [
   "Catppuccin Mocha",
 ] as const;
 
-test("theme palettes preserve active collection hierarchy", async ({ page }) => {
+test("theme palettes preserve active collection hierarchy without an edge stripe", async ({ page }) => {
   await page.goto("/");
   const themeButton = page.getByRole("button", { name: "Toggle theme" });
   const activeCollection = page.locator('.collection-link[aria-current="page"]');
@@ -26,13 +26,13 @@ test("theme palettes preserve active collection hierarchy", async ({ page }) => 
         background: styles.backgroundColor,
         color: styles.color,
         fontWeight: styles.fontWeight,
-        indicator: styles.boxShadow,
+        boxShadow: styles.boxShadow,
       };
     });
 
     expect(state.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(state.color).not.toBe("rgba(0, 0, 0, 0)");
     expect(state.fontWeight).toBe("600");
-    expect(state.indicator).toContain("inset");
+    expect(state.boxShadow).toBe("none");
   }
 });
