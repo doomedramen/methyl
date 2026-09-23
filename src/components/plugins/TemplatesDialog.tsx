@@ -128,14 +128,13 @@ function TemplatePickerDialog({
           </div>
         ) : (
           <div className="grid min-h-64 gap-4 sm:grid-cols-[minmax(10rem,0.75fr)_minmax(0,1.5fr)]">
-            <div className="flex flex-col gap-2" role="listbox" aria-label="Templates">
+            <div className="flex flex-col gap-2" role="group" aria-label="Templates">
               {templates.map((template) => (
                 <button
                   key={template.id}
                   type="button"
-                  role="option"
-                  aria-selected={template.id === selectedTemplateId}
-                  className="rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-muted aria-selected:border-primary aria-selected:bg-muted"
+                  aria-pressed={template.id === selectedTemplateId}
+                  className="rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-muted aria-pressed:border-primary aria-pressed:bg-muted"
                   onClick={() => setSelectedId(template.id)}
                 >
                   <span className="flex items-center gap-2 font-medium">
