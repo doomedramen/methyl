@@ -54,7 +54,7 @@ import type { App, NoteContext, NoteCreationOptions } from "@/lib/plugins/api";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSync } from "@/lib/browser/sync-context";
 import { useTheme } from "next-themes";
-import { Laptop, Puzzle } from "lucide-react";
+import { Archive, Download, Laptop, Puzzle } from "lucide-react";
 import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
 import {
@@ -451,6 +451,20 @@ function VaultPluginBridge({
   useEffect(() => {
     const disposers = [
       commandRegistry.add("core-commands", {
+        id: "export-vault",
+        name: "Export vault (Markdown and attachments)",
+        icon: Download,
+        keywords: ["zip", "download", "portable"],
+        callback: () => void downloadVaultExport("portable"),
+      }),
+      commandRegistry.add("core-commands", {
+        id: "export-backup",
+        name: "Export full backup",
+        icon: Archive,
+        keywords: ["zip", "download", "history", "restore"],
+        callback: () => void downloadVaultExport("full"),
+      }),
+      commandRegistry.add("core-commands", {
         id: "manage-plugins",
         name: "Plugins: Manage",
         icon: Puzzle,
@@ -505,6 +519,33 @@ function VaultPluginBridge({
       {children(pluginFeatures)}
     </PluginHostProvider>
   );
+}
+
+/**
+ * Build a vault export (SPEC §40) and hand it to the browser as a download.
+ * "portable" is the notes and attachments; "full" adds the `.adhd/`
+ * metadata so a restore keeps note identity and history.
+ */
+async function downloadVaultExport(mode: "portable" | "full"): Promise<void> {
+  const pending = toast.loading(mode === "full" ? "Preparing full backup…" : "Preparing export…");
+  try {
+    const [{ exportVaultZip, exportFileName }, { getVaultFileSystem }] = await Promise.all([
+      import("@/lib/vault/export"),
+      import("@/lib/browser/vault"),
+    ]);
+    const blob = await exportVaultZip(getVaultFileSystem(), mode);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = exportFileName(mode);
+    anchor.click();
+    // Give the download a moment to start before releasing the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    toast.success(mode === "full" ? "Full backup downloaded" : "Vault exported", { id: pending });
+  } catch (error) {
+    console.error("[export] failed", error);
+    toast.error("Export failed — see the console for details", { id: pending });
+  }
 }
 
 /**

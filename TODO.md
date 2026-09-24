@@ -8,10 +8,18 @@ limits) live there, not here — only their *deviations* are listed below.
 ## Bugs
 
 - [ ] **Vault wipe, cause unconfirmed.** A browser vault once lost its tree and
-      every CRDT file under `.adhd/crdt`. Never reproduced. Safety rails (empty-scan
-      guard, index rebuild, mass-deletion refusal, reserved-path guard) and a
-      diagnostics ring buffer are in place; if it recurs, read the buffer via
-      "Copy diagnostics" in the status popover.
+      every CRDT file under `.adhd/crdt`. Never reproduced. Since then: every browser
+      delete was recursive (now opt-in, and the vault root and `.adhd/crdt` dirs are
+      refused outright); read-only and lock-stolen tabs could write (now gated on the
+      writer lock at the file-system level); and several sync paths lost edits (fixed,
+      see the spec's §7.6). A model-based fuzz test
+      (`src/lib/vault/__tests__/engine-fuzz.test.ts`, `FUZZ_RUNS`/`FUZZ_SEED`) covers
+      in-app, external and synced changes plus restarts, and hasn't reproduced a wipe.
+      If it recurs, read the diagnostics buffer via "Copy diagnostics".
+- [ ] **Delete vs. external edit conflict.** A note deleted on another device while
+      its file is edited on the server's disk keeps the file until the next restart,
+      whose orphan sweep removes it; the external edit survives only in the CRDT. Decide
+      whether the edit should resurrect the note.
 - [x] **`src/lib/vault/tree.ts` reads as binary** — no longer: `file` reports
       UTF-8 text and there are no control bytes left in it.
 - [x] **Lint** is clean and runs in CI and pre-commit with `--max-warnings=0`.

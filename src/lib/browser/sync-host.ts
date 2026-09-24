@@ -89,10 +89,13 @@ export class SyncHost {
       // later one.
       await this.engine.resolveTreeNameCollisions();
       await this.engine.persistTreeIncremental();
+      await this.engine.applyTreeToDisk();
     }
     for (const roomId of report.touchedRoomIds) {
       if (!roomId.startsWith("doc:")) continue;
       const docId = roomId.slice(4);
+      // A note the merged tree just deleted has nothing left to persist.
+      if (!this.engine.getDocument(docId)) continue;
       try {
         await this.engine.persistDocumentIncremental(docId);
       } catch (err) {

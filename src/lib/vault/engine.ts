@@ -1423,6 +1423,47 @@ export class VaultEngine {
     await this.diag("delete-document", { detail: `${documentId} ${oldPath ?? ""}`.trim() });
   }
 
+  /**
+   * After a tree change merged in from sync, make the files on disk follow
+   * the tree: remove the file of a note the tree no longer has, and move
+   * the file of a note that was renamed or moved. Without this they only
+   * caught up at the next boot's reconcile. A file holding an external edit
+   * that hasn't been ingested is left alone for the ingest to handle.
+   */
+  async applyTreeToDisk(): Promise<{ removed: string[]; moved: string[] }> {
+    const removed: string[] = [];
+    const moved: string[] = [];
+    const live = new Set(this.tree.documentIds());
+    for (const [documentId, path] of [...this.materializedPaths]) {
+      if (live.has(documentId)) continue;
+      if (await this.externalEditPendingAt(path)) {
+        await this.deferWriteForExternalEdit(documentId, path);
+        continue;
+      }
+      await this.materializedRemove(path);
+      await this.dropIndexEntry(path);
+      this.materializedPaths.delete(documentId);
+      this.documents.delete(documentId);
+      await this.updateIndexesForDocument(documentId);
+      removed.push(path);
+    }
+    for (const documentId of live) {
+      if (!this.documents.has(documentId)) continue;
+      const node = this.tree.findByDocumentId(documentId);
+      const path = node ? buildPathFromNode(this.tree, node) : null;
+      const current = this.materializedPaths.get(documentId);
+      if (!path || !current || current === path) continue;
+      if (await this.materializeToTreePath(documentId)) moved.push(path);
+    }
+    if (removed.length > 0 || moved.length > 0) {
+      await this.diag("apply-tree-to-disk", {
+        counts: { removed: removed.length, moved: moved.length },
+        detail: [...removed, ...moved].slice(0, 10).join(","),
+      });
+    }
+    return { removed, moved };
+  }
+
   /** Record a dirty room for tracking sync status. */
   async markDirty(documentId: string): Promise<DirtyRoom> {
     const doc = this.documents.get(documentId);

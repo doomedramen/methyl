@@ -95,8 +95,30 @@ certificate (Caddy, Traefik, nginx) or expose it through Tailscale.
 docker compose pull && docker compose up -d
 ```
 
-**Backup:** back up the whole `./vault` directory, including `.adhd/` — that's what lets
-devices resume sync without a full resend.
+**Backup:** the server can back itself up while it runs. The backup is a folder holding the
+whole vault — notes, attachments and the `.adhd/` metadata that lets devices resume sync
+without a full resend — with the sync database copied through SQLite's online backup, so
+it's consistent mid-write:
+
+```bash
+docker compose exec methyl node dist/server.cjs backup /vault-backups/$(date +%F)
+```
+
+(mount a `/vault-backups` volume for that, or back up to any path in the container and copy
+it out). A nightly cron entry running the same command is enough for most setups.
+
+**Restore:** stop the server, move the damaged vault folder aside, then restore into the
+now-empty folder and start the server again:
+
+```bash
+docker compose run --rm methyl node dist/server.cjs restore /vault-backups/2026-09-24
+docker compose up -d
+```
+
+Restore refuses to write into a vault folder that isn't empty.
+
+In the browser, **Export vault** (Markdown and attachments, opens anywhere) and **Export full
+backup** (adds the `.adhd/` metadata) are in the command menu (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>).
 
 ### Connecting to a sync server
 

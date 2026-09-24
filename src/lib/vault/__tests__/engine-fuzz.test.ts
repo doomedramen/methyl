@@ -84,6 +84,7 @@ class Harness {
       [2, () => this.externalCreate()],
       [1, () => this.externalDelete()],
       [2, () => this.restart()],
+      [3, () => this.peerChange()],
     ];
     const total = ops.reduce((n, [w]) => n + w, 0);
     let roll = this.rand() * total;
@@ -192,6 +193,74 @@ class Harness {
     expect(report.deleted, `external delete of ${note.path} was not applied`).toContain(id);
     this.notes.delete(id);
     this.log.push(`external delete ${note.path}`);
+  }
+
+  private peer: VaultEngine | null = null;
+
+  /**
+   * Another device changes the vault and the change arrives by sync. The
+   * peer pulls this vault's state, makes one change, and this engine then
+   * imports the peer's tree and documents and runs exactly what SyncHost
+   * runs after a round (resolve name collisions, persist the tree, persist
+   * each touched document).
+   */
+  private async peerChange(): Promise<void> {
+    if (!this.peer) {
+      const peerFs = new MemoryVaultFS();
+      this.peer = await VaultEngine.create(new OpfsVaultTreeStore(peerFs), new OpfsDocStore(peerFs), "local");
+    }
+    const peer = this.peer;
+    peer.tree.doc.import(this.engine.tree.doc.export({ mode: "snapshot" }));
+    for (const id of this.engine.tree.documentIds()) {
+      const doc = this.engine.getDocument(id);
+      if (doc) peer.ensureDocument(id).doc.import(doc.doc.export({ mode: "snapshot" }));
+    }
+
+    const ids = [...this.notes.keys()];
+    const roll = this.rand();
+    if (roll < 0.35 && ids.length > 0) {
+      const id = this.pick(ids)!;
+      const addition = this.text();
+      peer.getDocument(id)!.getText(CONTENT_KEY).insert(0, addition);
+      peer.getDocument(id)!.doc.commit();
+      this.notes.get(id)!.content = addition + this.notes.get(id)!.content;
+      this.log.push(`peer edit ${this.notes.get(id)!.path}`);
+    } else if (roll < 0.6 || ids.length === 0) {
+      const name = `${this.next("p")}.md`;
+      const content = this.text();
+      const doc = peer.createDocument(undefined, name, content);
+      doc.doc.commit();
+      this.notes.set(doc.id, { path: name, content });
+      this.log.push(`peer create ${name}`);
+    } else if (roll < 0.8) {
+      const id = this.pick(ids)!;
+      const name = this.next("pr");
+      const node = peer.tree.findByDocumentId(id)!;
+      peer.tree.rename(node.treeId, `${name}.md`);
+      const note = this.notes.get(id)!;
+      const folder = this.folderFor(note.path);
+      this.log.push(`peer rename ${note.path} -> ${name}.md`);
+      note.path = folder ? `${folder}/${name}.md` : `${name}.md`;
+    } else {
+      const id = this.pick(ids)!;
+      peer.tree.delete(peer.tree.findByDocumentId(id)!.treeId);
+      this.log.push(`peer delete ${this.notes.get(id)!.path}`);
+      this.notes.delete(id);
+    }
+    peer.tree.doc.commit();
+
+    this.engine.tree.doc.import(peer.tree.doc.export({ mode: "snapshot" }));
+    const touched = peer.tree.documentIds();
+    for (const id of touched) {
+      const doc = peer.getDocument(id);
+      if (doc) await this.engine.importDocumentUpdate(id, doc.doc.export({ mode: "snapshot" }));
+    }
+    await this.engine.resolveTreeNameCollisions();
+    await this.engine.persistTreeIncremental();
+    await this.engine.applyTreeToDisk();
+    for (const id of touched) {
+      if (this.engine.tree.findByDocumentId(id)) await this.engine.persistDocumentIncremental(id);
+    }
   }
 
   private async restart(): Promise<void> {

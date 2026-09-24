@@ -1,0 +1,61 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import { ServerStore } from "@/lib/server/store";
+import { backupVault, restoreVault } from "../backup";
+
+const dirs: string[] = [];
+const tmp = (name: string) => {
+  const dir = mkdtempSync(join(tmpdir(), `methyl-${name}-`));
+  dirs.push(dir);
+  return dir;
+};
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("server backup and restore", () => {
+  it("copies notes and metadata, and takes the live database through the backup API", async () => {
+    const vault = tmp("vault");
+    writeFileSync(join(vault, "Home.md"), "home\n");
+    mkdirSync(join(vault, ".adhd", "crdt"), { recursive: true });
+    writeFileSync(join(vault, ".adhd", "crdt", "state.json"), "{}");
+    writeFileSync(join(vault, "Home.md.tmp"), "half");
+    // A store held open, as by a running server, with an uncheckpointed WAL.
+    const store = new ServerStore(join(vault, ".adhd", "server", "sync.sqlite"));
+    store.recordChange(store.getNextSeq(), "doc:a", "doc");
+
+    const backup = join(tmp("backup"), "out");
+    await backupVault(vault, backup);
+    store.close();
+
+    expect(readFileSync(join(backup, "Home.md"), "utf8")).toBe("home\n");
+    expect(existsSync(join(backup, ".adhd", "crdt", "state.json"))).toBe(true);
+    expect(existsSync(join(backup, "Home.md.tmp"))).toBe(false);
+    expect(existsSync(join(backup, ".adhd", "server", "sync.sqlite-wal"))).toBe(false);
+    const copy = new ServerStore(join(backup, ".adhd", "server", "sync.sqlite"));
+    expect(copy.getChangesAfter(0).changes.map((c) => c.objectId)).toEqual(["doc:a"]);
+    copy.close();
+  });
+
+  it("refuses to back up into a non-empty folder or restore over an existing vault", async () => {
+    const vault = tmp("vault");
+    writeFileSync(join(vault, "Home.md"), "home\n");
+    const occupied = tmp("occupied");
+    writeFileSync(join(occupied, "keep.txt"), "x");
+    await expect(backupVault(vault, occupied)).rejects.toThrow(/not empty/);
+    await expect(restoreVault(occupied, vault)).rejects.toThrow(/not empty/);
+    expect(readFileSync(join(vault, "Home.md"), "utf8")).toBe("home\n");
+  });
+
+  it("restores a backup into an empty vault folder", async () => {
+    const vault = tmp("vault");
+    writeFileSync(join(vault, "Home.md"), "home\n");
+    const backup = join(tmp("backup"), "out");
+    await backupVault(vault, backup);
+    const fresh = join(tmp("fresh"), "vault");
+    await restoreVault(backup, fresh);
+    expect(readFileSync(join(fresh, "Home.md"), "utf8")).toBe("home\n");
+  });
+});

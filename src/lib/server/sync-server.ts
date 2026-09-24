@@ -505,6 +505,9 @@ export function createSyncServer(options: SyncServerOptions) {
           // owns.
           const renamed = await eng.resolveTreeNameCollisions();
           await eng.persistTreeIncremental();
+          // Deleted, renamed and moved notes: the vault folder follows now,
+          // not at the next restart.
+          await eng.applyTreeToDisk();
           for (const node of eng.tree.allNodes()) {
             if (node.kind !== "binary") continue;
             const meta = store.getAssetMeta(String(node.treeId));

@@ -4,6 +4,7 @@ import { join } from "path";
 import next from "next";
 import { createSyncServer, createHttpApi } from "@/lib/server/sync-server";
 import { AuthLimiter, clientAddress } from "@/lib/server/auth";
+import { runBackupCommand } from "./backup";
 
 const PORT = Number(process.env.METHYL_PORT ?? 8080);
 const HOST = process.env.METHYL_HOST ?? "0.0.0.0";
@@ -39,7 +40,8 @@ function applyCors(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
 }
 
-if (!AUTH_TOKEN) {
+function requireAuthToken(): void {
+  if (AUTH_TOKEN) return;
   console.error(
     "[methyl] METHYL_AUTH_TOKEN is required. Set it to a long random secret " +
       "(e.g. `openssl rand -hex 32`) — clients and this server must agree on it.",
@@ -167,7 +169,13 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
-main().catch((err) => {
-  console.error("[methyl] fatal error during startup:", err);
-  process.exit(1);
-});
+const command = process.argv[2];
+if (command === "backup" || command === "restore") {
+  void runBackupCommand(command, process.argv.slice(3), VAULT_PATH).then((code) => process.exit(code));
+} else {
+  requireAuthToken();
+  main().catch((err) => {
+    console.error("[methyl] fatal error during startup:", err);
+    process.exit(1);
+  });
+}
