@@ -6,6 +6,7 @@ import { createServer, request, type Server } from "http";
 import type { AddressInfo } from "net";
 import { ServerStore } from "@/lib/server/store";
 import { createHttpApi } from "@/lib/server/sync-server";
+import { subscribeToChanges } from "@/lib/sync/events";
 
 const AUTH = "test-token";
 let tmpDir: string;
@@ -56,5 +57,30 @@ describe("HTTP API auth", () => {
     expect((await get("/api/changes?after=-1", AUTH)).status).toBe(400);
     expect((await get("/api/changes?after=3", AUTH)).status).toBe(200);
     expect((await get("/api/durable/doc:unknown", AUTH)).status).toBe(404);
+  });
+
+  it("streams recorded changes on /api/events to an authenticated client", async () => {
+    const seqs: number[] = [];
+    const abort = new AbortController();
+    let connected = false;
+    const done = subscribeToChanges({
+      url: `http://127.0.0.1:${port}/api/events`,
+      headers: { authorization: `Bearer ${AUTH}` },
+      onConnect: () => (connected = true),
+      onChange: (e) => seqs.push(e.seq),
+      signal: abort.signal,
+    });
+    const start = Date.now();
+    while (!connected && Date.now() - start < 3000) await new Promise((r) => setTimeout(r, 10));
+    store.recordChange(store.getNextSeq(), "doc:a", "doc");
+    store.recordChange(store.getNextSeq(), "doc:b", "doc");
+    while (seqs.length < 2 && Date.now() - start < 3000) await new Promise((r) => setTimeout(r, 10));
+    expect(seqs).toEqual([1, 2]);
+    abort.abort();
+    await done;
+  });
+
+  it("refuses /api/events without the token", async () => {
+    expect((await get("/api/events")).status).toBe(401);
   });
 });

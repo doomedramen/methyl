@@ -75,6 +75,26 @@ describe("SyncScheduler", () => {
     s.stop();
   });
 
+  it("a kick during a running round runs another round right after it", async () => {
+    let finish!: () => void;
+    const run = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)))
+      .mockResolvedValue(undefined);
+    const s = new SyncScheduler({ run, intervalMs: 60_000 });
+    s.start();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    s.kick(); // e.g. a change event arrives mid-round
+    expect(run).toHaveBeenCalledTimes(1);
+    finish();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(2);
+    // ...and then back to the normal interval.
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    s.stop();
+  });
+
   it("stop() prevents further scheduled runs", async () => {
     const run = vi.fn().mockResolvedValue(undefined);
     const s = new SyncScheduler({ run, intervalMs: 1000 });

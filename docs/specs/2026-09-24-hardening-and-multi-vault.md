@@ -131,6 +131,8 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 
 **Acceptance.** Extend `src/lib/server/__tests__/sync-server.e2e.test.ts`: two clients in one room see each other's edits in under 1 s; an external disk edit reaches an already-open client in under 2 s (watcher debounce 300 ms plus margin); a rejoining client gets the latest snapshot. Tick the "Sync isn't live" entry in `TODO.md` and update SPEC §18–20 and §33.
 
+**As built.** `src/lib/server/room-server.ts` implements the protocol on `ws` + `loro-protocol` + `loro-crdt` (one live `LoroDoc` per open room), attached to the app's HTTP server; `main.ts` hands it upgrades directly. `recordRoomSave` pushes server-side changes into open rooms. Because clients join rooms only for a sync round, "live" also needs a nudge for idle clients: `GET /api/events` streams a Server-Sent Event per recorded change, and `SyncHost` runs a round when one arrives (read with `fetch` so it carries the auth header). Discovery polling drops to every 30 s while the stream is connected. Two bugs fixed on the way: `SyncScheduler.kick()` during a running round was dropped (now it runs again right after), and saves no longer lose updates that arrive mid-save. The multi-vault server routes (`/api/v/<vaultId>/…`, `/sync/<vaultId>`) are still to do.
+
 ### 4.2 Report the `loro-codemirror` bug upstream (item 8)
 
 **Problem.** `LoroSyncPluginValue` swallows the first view update when the initial content already matches. `NoteEditor.tsx` works around it. The repro is `src/lib/editor/__tests__/loro-codemirror-swallow.test.ts`.

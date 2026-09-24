@@ -33,10 +33,10 @@ limits) live there, not here — only their *deviations* are listed below.
       content through the MiniSearch index.
 - [x] **Backlinks.** A "what links here" panel lists notes that link to the
       active note and opens them on selection.
-- [ ] **Sync isn't live.** Remote changes arrive on the next discovery round
-      (~15s), not pushed: `loro-websocket`'s `SimpleServer` has no public API to
-      broadcast into an already-joined room. Fixing it means patching the
-      vendored package.
+- [x] **Sync is live.** The server's own room server (replacing loro-websocket's
+      SimpleServer) pushes server-side changes into open rooms, and `/api/events`
+      tells running clients to sync the moment anything changes; polling is a
+      30-second fallback.
 - [ ] **Sync token is stored in `localStorage`.** Fine for a LAN deployment,
       readable by anything with access to the browser profile. SPEC §31 describes
       a pairing flow that isn't implemented.

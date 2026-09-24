@@ -59,6 +59,21 @@ function bounded(limit: number): [acquire: () => Promise<void>, release: () => v
   ];
 }
 
+/**
+ * The loro client's constructor starts connecting with a bare
+ * `this.connect()`, whose promise nobody observes. Destroying the client
+ * before that connection settles (a round stopped mid-connect) then rejects
+ * it with "Destroyed" as an unhandled rejection. Mark every connect()
+ * promise handled; callers still get the same promise and see its outcome.
+ */
+export class SyncClient extends LoroWebsocketClient {
+  override connect(...args: Parameters<LoroWebsocketClient["connect"]>) {
+    const connecting = super.connect(...args);
+    connecting.catch(() => {});
+    return connecting;
+  }
+}
+
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
@@ -136,7 +151,7 @@ export class SyncCoordinator {
     console.log("coord: connecting");
     await testWebSocketConnection(wsUrl, this.opts.connectionTimeoutMs);
     await this.opts.beforeConnect?.();
-    const client = new LoroWebsocketClient({ url: wsUrl, disablePing: true } as LoroWebsocketClientOptions);
+    const client = new SyncClient({ url: wsUrl, disablePing: true } as LoroWebsocketClientOptions);
     this.client = client;
     let treeRoom: { waitForReachingServerVersion(): Promise<void>; leave(): void } | null = null;
     try {

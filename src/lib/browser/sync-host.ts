@@ -1,3 +1,4 @@
+import { subscribeToChanges } from "@/lib/sync/events";
 import { META_DIR } from "@/lib/core/paths";
 import type { VaultFileSystem } from "@/lib/vault/fs";
 import { SyncCoordinator, type SyncHooks, type SyncReport } from "@/lib/sync/coordinator";
@@ -9,6 +10,10 @@ import type { TreeID } from "loro-crdt";
 
 const JOURNAL_PATH = `${META_DIR}/sync/journal.json`;
 const DISCOVERY_POLL_MS = 2_000;
+/** While the server's change stream is connected, polling is only a fallback. */
+const DISCOVERY_POLL_WITH_EVENTS_MS = 30_000;
+/** A burst of change events (a sync round saves several rooms) is checked once. */
+const EVENT_DEBOUNCE_MS = 50;
 
 export interface JournalSnapshot {
   entries: DirtyEntry[];
@@ -41,6 +46,9 @@ export class SyncHost {
   private lastStatus: SyncStatus = { kind: "idle" };
   private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private discoveryRunning = false;
+  private discoveryRequestedAgain = false;
+  private events: AbortController | null = null;
+  private eventsConnected = false;
 
   private readonly httpUrl: string;
   private readonly authToken: string;
@@ -114,12 +122,40 @@ export class SyncHost {
   start(): void {
     this.scheduler.start();
     this.scheduleDiscoveryPoll(0);
+    this.subscribeToChanges();
+  }
+
+  /**
+   * Listen to the server's change stream (/api/events) and check for new
+   * changes the moment one is announced, instead of on the next poll.
+   */
+  private subscribeToChanges(): void {
+    if (this.events) return;
+    const events = new AbortController();
+    this.events = events;
+    void subscribeToChanges({
+      url: `${this.httpUrl}/api/events`,
+      headers: { authorization: `Bearer ${this.authToken}` },
+      signal: events.signal,
+      onConnect: () => {
+        this.eventsConnected = true;
+        // Anything missed while disconnected.
+        this.scheduleDiscoveryPoll(0);
+      },
+      onDisconnect: () => {
+        this.eventsConnected = false;
+      },
+      onChange: () => this.scheduleDiscoveryPoll(EVENT_DEBOUNCE_MS),
+    });
   }
 
   /** Stop the reconnect loop and disconnect any open WS. */
   stop(): void {
     this.scheduler.stop();
     this.stopDiscoveryPoll();
+    this.events?.abort();
+    this.events = null;
+    this.eventsConnected = false;
     this.disconnect();
     this.emitStatus({ kind: "idle" });
   }
@@ -176,7 +212,12 @@ export class SyncHost {
   }
 
   private async pollDiscovery(): Promise<void> {
-    if (!this.scheduler.isRunning || this.discoveryRunning) return;
+    if (!this.scheduler.isRunning) return;
+    if (this.discoveryRunning) {
+      // Asked again mid-check (a change event): check once more after it.
+      this.discoveryRequestedAgain = true;
+      return;
+    }
     this.discoveryRunning = true;
     try {
       const response = await fetch(
@@ -195,7 +236,11 @@ export class SyncHost {
       // deliberately silent.
     } finally {
       this.discoveryRunning = false;
-      this.scheduleDiscoveryPoll(DISCOVERY_POLL_MS);
+      const again = this.discoveryRequestedAgain;
+      this.discoveryRequestedAgain = false;
+      this.scheduleDiscoveryPoll(
+        again ? 0 : this.eventsConnected ? DISCOVERY_POLL_WITH_EVENTS_MS : DISCOVERY_POLL_MS,
+      );
     }
   }
 

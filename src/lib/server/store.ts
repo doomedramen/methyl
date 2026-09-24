@@ -55,7 +55,16 @@ export class ServerStore {
   }
 
   close(): void {
+    this.changeListeners.clear();
     this.db.close();
+  }
+
+  private readonly changeListeners = new Set<(seq: number) => void>();
+
+  /** Be told the sequence number of every change recorded from now on. */
+  onChange(listener: (seq: number) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
   }
 
   getNextSeq(): number {
@@ -110,6 +119,7 @@ export class ServerStore {
         "INSERT INTO changes (seq, objectId, type, timestamp) VALUES (?, ?, ?, ?)",
       )
       .run(seq, objectId, type, Date.now());
+    for (const listener of this.changeListeners) listener(seq);
   }
 
   getChangesAfter(afterSeq: number): {

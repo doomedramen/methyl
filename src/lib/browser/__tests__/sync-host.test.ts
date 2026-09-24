@@ -313,12 +313,45 @@ function waitFor(check: () => boolean, timeoutMs = 5000, stepMs = 25): Promise<v
   });
 }
 
+describe("live sync (change events)", () => {
+  it("an edit on one running device reaches another running device without a manual sync", async () => {
+    const fsA = new MemoryVaultFS();
+    const a = await makeVaultOn(fsA);
+    const note = a.createDocument(undefined, "live.md", "first line\n");
+    note.doc.commit();
+    const hostA = await SyncHost.create({ ...makeHostOptions(a, fsA), intervalMs: 60_000 });
+    await hostA.sync();
+
+    const fsB = new MemoryVaultFS();
+    const b = await makeVaultOn(fsB);
+    const hostB = await SyncHost.create({ ...makeHostOptions(b, fsB), intervalMs: 60_000 });
+    await hostB.sync();
+    hostB.start();
+    try {
+      expect(b.getDocument(note.id)?.getText("content").toString()).toBe("first line\n");
+
+      a.getDocument(note.id)!.getText("content").insert(0, "live edit\n");
+      a.getDocument(note.id)!.doc.commit();
+      const pushedAt = Date.now();
+      await hostA.sync();
+
+      // No sync() on B: its change stream announces the edit and it runs a
+      // round by itself — well inside the old 15s polling interval.
+      await waitFor(() => b.getDocument(note.id)?.getText("content").toString().startsWith("live edit") ?? false, 10_000);
+      expect(Date.now() - pushedAt).toBeLessThan(5_000);
+    } finally {
+      hostB.stop();
+      hostA.disconnect();
+    }
+  }, 30_000);
+});
+
 describe("SyncHost sees disk edits made after a room has already been joined", () => {
   // A dedicated server (watching a real filesystem tmp vault) rather than
   // the shared in-memory-fs server above: this exercises the actual
-  // watcher -> ServerStore -> live-room-cache path (recordRoomSave /
-  // patchCachedRoomIfLoaded in sync-server.ts), which only matters once a
-  // real .md file gets edited on disk.
+  // watcher -> ServerStore -> live room path (recordRoomSave /
+  // RoomServer.push in sync-server.ts), which only matters once a real .md
+  // file gets edited on disk.
   let tmp: string;
   let diskServer: ReturnType<typeof createSyncServer>;
   let diskWsPort: number;
@@ -364,9 +397,8 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
       vaultId: DISK_VAULT,
     });
 
-    // First round: creates the room server-side (so it gets cached in
-    // SimpleServer's in-memory `rooms` Map — see patchCachedRoomIfLoaded's
-    // doc comment) and lets the Node-side vault mirror materialise the .md.
+    // First round: creates the room server-side (so the room server holds
+    // it in memory) and lets the Node-side vault mirror materialise the .md.
     await host.sync();
     await waitFor(() => existsSync(join(tmp, "disk-edit.md")));
 
@@ -391,8 +423,8 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
     }, 25000);
 
     // Second sync round: the room was already joined+left once above, so
-    // without patchCachedRoomIfLoaded this would still see the pre-edit
-    // snapshot no matter how many rounds run.
+    // it's still in the room server's memory; RoomServer.push must have
+    // brought the disk edit into it.
     await host.sync();
 
     const clientText = engine.getDocument(doc.id)!.getText("content").toString();

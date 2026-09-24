@@ -1,6 +1,6 @@
 import { META_DIR } from "@/lib/core/paths";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
-import { connect as netConnect, type Socket } from "net";
+import type { Socket } from "net";
 import { join } from "path";
 import next from "next";
 import { createSyncServer, createHttpApi } from "@/lib/server/sync-server";
@@ -50,34 +50,23 @@ function requireAuthToken(): void {
   process.exit(1);
 }
 
-/**
- * loro-websocket's SimpleServer always binds its own `ws` server to a
- * host:port (see node_modules/loro-websocket/dist/server/index.js) — it has
- * no "attach to an existing http.Server" mode. To present ONE external port
- * to the outside world while reusing SimpleServer unmodified, it's bound to
- * an internal, loopback-only port, and raw WS upgrade requests received on
- * the public port are proxied byte-for-byte over a local TCP connection.
- *
- * Everything else runs in-process: this server hosts the sync HTTP API and
- * the Next.js app directly (via `next()` — the custom-server API, which
- * `output: "standalone"` forbids). No standalone build, no child process, no
- * reverse proxy for ordinary HTTP.
- */
-const INTERNAL_WS_PORT = Number(process.env.METHYL_INTERNAL_WS_PORT ?? PORT + 10000);
 
 async function main() {
+  // One limiter for every authenticated entry point: HTTP API and sync joins.
+  const limiter = new AuthLimiter();
+  // No port: this server's own upgrade handler (below) hands sync sockets
+  // to the room server — one port for everything, no internal proxy.
   const syncServer = createSyncServer({
-    port: INTERNAL_WS_PORT,
-    host: "127.0.0.1",
     vaultPath: VAULT_PATH,
     authToken: AUTH_TOKEN!,
     watch: WATCH,
+    limiter,
+    trustProxy: TRUST_PROXY,
   });
 
   await syncServer.start();
 
   const assetDir = `${VAULT_PATH}/${META_DIR}/server/assets`;
-  const limiter = new AuthLimiter();
   const apiHandler = createHttpApi({
     store: syncServer.store,
     authToken: AUTH_TOKEN!,
@@ -94,31 +83,16 @@ async function main() {
   await app.prepare();
 
   // Next installs a catch-all upgrade listener lazily from getRequestHandler.
-  // In production Methyl owns the only WebSocket endpoint, so retain the
-  // Methyl proxy listener and remove Next's competing route handler after it
-  // is registered. Otherwise a browser WebSocket is closed before the Loro
-  // handshake reaches the internal server.
+  // In production Methyl owns the only WebSocket endpoint, so keep this
+  // listener and remove Next's competing one after it is registered.
+  // Otherwise a browser WebSocket is closed before the Loro handshake.
   function handleUpgrade(req: IncomingMessage, clientSocket: Socket, head: Buffer): void {
-    // An address locked out by failed HTTP auth may not open sync sockets
-    // either.
+    // An address locked out by failed auth may not open sync sockets.
     if (limiter.retryAfterMs(clientAddress(req, TRUST_PROXY)) > 0) {
       clientSocket.end("HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n");
       return;
     }
-    const upstream = netConnect(INTERNAL_WS_PORT, "127.0.0.1", () => {
-      const rawHeaders: string[] = [];
-      for (let i = 0; i < req.rawHeaders.length; i += 2) {
-        rawHeaders.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
-      }
-      const requestLine = `${req.method} ${req.url} HTTP/1.1\r\n${rawHeaders.join("\r\n")}\r\n\r\n`;
-      upstream.write(requestLine);
-      if (head && head.length > 0) upstream.write(head);
-      upstream.pipe(clientSocket);
-      clientSocket.pipe(upstream);
-    });
-
-    upstream.on("error", () => clientSocket.destroy());
-    clientSocket.on("error", () => upstream.destroy());
+    syncServer.rooms.handleUpgrade(req, clientSocket, head);
   }
 
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -154,7 +128,7 @@ async function main() {
     }
   });
 
-  // Proxy WebSocket upgrades to the internal loro-websocket SimpleServer.
+  // Sync WebSockets go straight to the room server.
   server.on("upgrade", handleUpgrade);
 
   await new Promise<void>((resolve) => server.listen(PORT, HOST, resolve));
