@@ -131,6 +131,21 @@ above), set `METHYL_ALLOWED_ORIGINS` on the server to a comma-separated list of 
 app origins so its `/api/*` and `/healthz` responses carry the right CORS headers — by
 default, cross-origin requests are rejected by the browser.
 
+### Server settings
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `METHYL_AUTH_TOKEN` | *(required)* | Shared secret clients use to authenticate. |
+| `METHYL_PORT` / `METHYL_HOST` | `8080` / `0.0.0.0` | Where the server listens. |
+| `METHYL_VAULT_PATH` | `/vault` | The mounted vault folder. |
+| `METHYL_WATCH` | `true` | Watch the vault folder for external edits. |
+| `METHYL_ALLOWED_ORIGINS` | *(empty)* | CORS allow-list, see above. |
+| `METHYL_TRUST_PROXY` | `false` | Set to `true` only behind a reverse proxy you control. Failed logins are then counted per `X-Forwarded-For` address instead of per proxy. |
+| `METHYL_MAX_ASSET_BYTES` | `536870912` (512 MiB) | Largest attachment upload accepted. |
+
+Ten failed authentication attempts from one address within a minute lock that
+address out (HTTP `429`); each further lockout doubles, up to 15 minutes.
+
 ## Plugins
 
 Methyl has a small, Obsidian-inspired plugin system. A plugin registers editor

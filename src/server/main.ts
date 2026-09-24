@@ -3,12 +3,19 @@ import { connect as netConnect, type Socket } from "net";
 import { join } from "path";
 import next from "next";
 import { createSyncServer, createHttpApi } from "@/lib/server/sync-server";
+import { AuthLimiter, clientAddress } from "@/lib/server/auth";
 
 const PORT = Number(process.env.METHYL_PORT ?? 8080);
 const HOST = process.env.METHYL_HOST ?? "0.0.0.0";
 const VAULT_PATH = process.env.METHYL_VAULT_PATH ?? "/vault";
 const WATCH = process.env.METHYL_WATCH !== "false";
 const AUTH_TOKEN = process.env.METHYL_AUTH_TOKEN;
+// Only set when a trusted reverse proxy (e.g. Nginx Proxy Manager) sits in
+// front: the failed-auth limiter then keys on X-Forwarded-For.
+const TRUST_PROXY = process.env.METHYL_TRUST_PROXY === "true";
+const MAX_ASSET_BYTES = process.env.METHYL_MAX_ASSET_BYTES
+  ? Number(process.env.METHYL_MAX_ASSET_BYTES)
+  : undefined;
 // Project root (the dir containing `.next`) — the bundled server lives in
 // `dist/`, so the app is one level up by default; overridable for running
 // against a differently-located checkout (e.g. a container that mounts the
@@ -67,7 +74,15 @@ async function main() {
   await syncServer.start();
 
   const assetDir = `${VAULT_PATH}/.adhd/server/assets`;
-  const apiHandler = createHttpApi({ store: syncServer.store, authToken: AUTH_TOKEN!, assetDir });
+  const limiter = new AuthLimiter();
+  const apiHandler = createHttpApi({
+    store: syncServer.store,
+    authToken: AUTH_TOKEN!,
+    assetDir,
+    limiter,
+    trustProxy: TRUST_PROXY,
+    maxAssetBytes: MAX_ASSET_BYTES,
+  });
 
   // In-process Next.js (custom-server API). `dev: false` — this entrypoint
   // is the production path; `npm run dev` already serves the dev server.
@@ -81,6 +96,12 @@ async function main() {
   // is registered. Otherwise a browser WebSocket is closed before the Loro
   // handshake reaches the internal server.
   function handleUpgrade(req: IncomingMessage, clientSocket: Socket, head: Buffer): void {
+    // An address locked out by failed HTTP auth may not open sync sockets
+    // either.
+    if (limiter.retryAfterMs(clientAddress(req, TRUST_PROXY)) > 0) {
+      clientSocket.end("HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n");
+      return;
+    }
     const upstream = netConnect(INTERNAL_WS_PORT, "127.0.0.1", () => {
       const rawHeaders: string[] = [];
       for (let i = 0; i < req.rawHeaders.length; i += 2) {

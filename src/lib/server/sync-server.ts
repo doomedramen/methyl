@@ -11,6 +11,7 @@ import { ServerStore } from "@/lib/server/store";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
 import { VaultEngine, buildPathFromNode } from "@/lib/vault/engine";
 import { watchVaultForExternalChanges } from "@/lib/server/vault-watcher";
+import { AuthLimiter, bearerMatches, clientAddress, isValidObjectId, parseSeq, safeEqual } from "@/lib/server/auth";
 
 export interface SyncServerOptions {
   port: number;
@@ -48,6 +49,23 @@ export interface HttpApiOptions {
   authToken: string;
   assetDir: string;
   onAssetPut?: (assetId: string, digest: string) => void | Promise<void>;
+  /** Failed-auth limiter; share one across every authenticated entry point. */
+  limiter?: AuthLimiter;
+  /** Honour X-Forwarded-For when keying the limiter (METHYL_TRUST_PROXY). */
+  trustProxy?: boolean;
+  /** Largest accepted asset upload, in bytes. */
+  maxAssetBytes?: number;
+}
+
+/** Decode one URL path segment, or null when it is malformed or not a valid ID. */
+function decodeObjectId(segment: string): string | null {
+  let id: string;
+  try {
+    id = decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+  return isValidObjectId(id) ? id : null;
 }
 
 async function streamUpload(
@@ -112,25 +130,44 @@ async function streamUpload(
  * - GET  /api/rooms                    → room + durable summaries
  */
 export function createHttpApi(options: HttpApiOptions) {
-  const { store, authToken, assetDir, onAssetPut } = options;
+  const { store, authToken, assetDir, onAssetPut, maxAssetBytes } = options;
+  const limiter = options.limiter ?? new AuthLimiter();
+  const trustProxy = options.trustProxy ?? false;
 
   return (req: IncomingMessage, res: ServerResponse): void => {
-    if (req.headers["authorization"] !== `Bearer ${authToken}`) {
+    const client = clientAddress(req, trustProxy);
+    const retryAfter = limiter.retryAfterMs(client);
+    if (retryAfter > 0) {
+      res.setHeader("retry-after", String(Math.ceil(retryAfter / 1000)));
+      sendJson(res, 429, { error: "too many failed attempts" });
+      return;
+    }
+    if (!bearerMatches(req.headers["authorization"], authToken)) {
+      limiter.recordFailure(client);
       sendJson(res, 401, { error: "unauthorized" });
       return;
     }
+    limiter.recordSuccess(client);
 
     const url = new URL(req.url ?? "/", "http://localhost");
     const { pathname } = url;
 
     if (req.method === "GET" && pathname === "/api/changes") {
-      const after = Number(url.searchParams.get("after") ?? "0");
-      sendJson(res, 200, store.getChangesAfter(Number.isNaN(after) ? 0 : after));
+      const after = parseSeq(url.searchParams.get("after"));
+      if (after === null) {
+        sendJson(res, 400, { error: "invalid after" });
+        return;
+      }
+      sendJson(res, 200, store.getChangesAfter(after));
       return;
     }
 
     if (req.method === "GET" && pathname.startsWith("/api/durable/")) {
-      const roomId = decodeURIComponent(pathname.slice("/api/durable/".length));
+      const roomId = decodeObjectId(pathname.slice("/api/durable/".length));
+      if (roomId === null) {
+        sendJson(res, 400, { error: "invalid room id" });
+        return;
+      }
       const vv = store.getDurableVersion(roomId);
       if (!vv) {
         sendJson(res, 404, { error: "room unknown" });
@@ -141,8 +178,12 @@ export function createHttpApi(options: HttpApiOptions) {
     }
 
     if (req.method === "PUT" && pathname.startsWith("/api/assets/")) {
-      const id = decodeURIComponent(pathname.slice("/api/assets/".length));
-      void streamUpload(req, assetDir)
+      const id = decodeObjectId(pathname.slice("/api/assets/".length));
+      if (id === null) {
+        sendJson(res, 400, { error: "invalid asset id" });
+        return;
+      }
+      void streamUpload(req, assetDir, maxAssetBytes)
         .then(({ digest, size }) => {
           const current = store.getAssetMeta(id);
           if (current?.sha256 === digest && current.size === size) {
@@ -173,7 +214,11 @@ export function createHttpApi(options: HttpApiOptions) {
     }
 
     if ((req.method === "GET" || req.method === "HEAD") && pathname.startsWith("/api/assets/")) {
-      const id = decodeURIComponent(pathname.slice("/api/assets/".length));
+      const id = decodeObjectId(pathname.slice("/api/assets/".length));
+      if (id === null) {
+        sendJson(res, 400, { error: "invalid asset id" });
+        return;
+      }
       const meta = store.getAssetMeta(id);
       if (!meta) {
         sendJson(res, 404, { error: "asset unknown" });
@@ -403,12 +448,13 @@ export function createSyncServer(options: SyncServerOptions) {
     saveInterval: options.saveIntervalMs ?? 500,
 
     authenticate: async (
-      _roomId: string,
+      roomId: string,
       _crdtType: CrdtType,
       auth: Uint8Array,
     ) => {
+      if (!isValidObjectId(roomId)) return null;
       const token = new TextDecoder().decode(auth);
-      if (token !== options.authToken) return null;
+      if (!safeEqual(token, options.authToken)) return null;
       return "write";
     },
 
