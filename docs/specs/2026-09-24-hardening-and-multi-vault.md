@@ -311,6 +311,18 @@ Build these in this order; each is its own PR with unit tests for the CodeMirror
 4. **Cut the OPFS round-trips on the critical path.** Load the tree snapshot and the sidecar index in parallel. Don't read every document's CRDT state at startup; open documents lazily when they are first shown or searched.
 5. **Service worker:** serve the app shell cache-first so a warm start makes no network request before first paint, including when the sync server is unreachable.
 
+**Measured so far** (`scripts/measure-startup.mjs`: a 400-note vault synced into OPFS, desktop Chromium, 4× CPU throttling, warm reloads, time to `methyl:engine-ready`):
+
+| | Before | After |
+| --- | --- | --- |
+| Modules + Loro WASM | 0.3–1.6 s | same |
+| Load 400 documents | ~6 s (blocking) | background |
+| Startup reconcile | ~9–11 s (blocking) | background, and cheaper |
+| **Engine ready** | **~18.5 s** | **~1.1 s** |
+| First sync of the 400 notes | stalled (123 after 4 min) | completes |
+
+The Loro WASM compile (3.2 MB) was not the main cost here; the document loading, reconcile and quadratic indexing were. Starting the WASM compile earlier (at module evaluation) was tried and gave no gain in Chromium — it only delays hydration — so it was not kept. A real-iPhone measurement is still needed (step 1).
+
 **Acceptance.** Warm-cache cold start to an interactive, editable last-open note in **under 1 second** on a recent iPhone and under 500 ms on desktop Chrome, recorded with the marks from step 1. A Playwright test with CPU throttling guards against regressions (for example, at most 2 s to an editable note with 4× throttling and a 500-note vault).
 
 ## 7.6 Found while implementing: sync data-loss bugs
