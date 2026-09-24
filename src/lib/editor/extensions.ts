@@ -37,7 +37,7 @@ const loroUndoKeymap: KeyBinding[] = [
 ];
 
 /** Base editor scoped to single-note editing. */
-export function adhdEditorExtensions(opts: {
+export function methylEditorExtensions(opts: {
   doc: LoroDoc;
   ephemeral: EphemeralStore;
   user: EditorUser;

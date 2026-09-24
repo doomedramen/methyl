@@ -91,11 +91,11 @@ describe("vault diagnostics ring buffer", () => {
     }
   });
 
-  it("records refuse-reserved-path-write when a materialize call targets .adhd/", async () => {
+  it("records refuse-reserved-path-write when a materialize call targets .methyl/", async () => {
     const root = mkdtempSync(join(tmpdir(), "adhd-diag-"));
     try {
       const { engine, docStore, ids } = await newEngineWithThreeNotes(root);
-      await engine.materializeDocument(ids[0]!, ".adhd/crdt/docs/should-not-write.md");
+      await engine.materializeDocument(ids[0]!, ".methyl/crdt/docs/should-not-write.md");
 
       const entries = await readDiagnostics(docStore);
       expect(entries.some((e) => e.op === "refuse-reserved-path-write")).toBe(true);

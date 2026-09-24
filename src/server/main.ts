@@ -1,3 +1,4 @@
+import { META_DIR } from "@/lib/core/paths";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
 import { connect as netConnect, type Socket } from "net";
 import { join } from "path";
@@ -75,7 +76,7 @@ async function main() {
 
   await syncServer.start();
 
-  const assetDir = `${VAULT_PATH}/.adhd/server/assets`;
+  const assetDir = `${VAULT_PATH}/${META_DIR}/server/assets`;
   const limiter = new AuthLimiter();
   const apiHandler = createHttpApi({
     store: syncServer.store,

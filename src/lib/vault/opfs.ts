@@ -1,4 +1,4 @@
-import { normalizePath } from "@/lib/core/paths";
+import { normalizePath, isMetaDirName } from "@/lib/core/paths";
 import { assertDeletable, type VaultFileSystem } from "@/lib/vault/fs";
 
 const ROOT_KEY = "adhd-vault";
@@ -13,7 +13,7 @@ const ROOT_KEY = "adhd-vault";
  *   ├── *.md
  *   ├── attachments...
  *   ├── .trash/
- *   └── .adhd/
+ *   └── .methyl/
  *       ├── device/
  *       ├── crdt/
  *       └── cache/
@@ -136,7 +136,7 @@ export class OpfsVaultFS implements VaultFileSystem {
     const entries = (dir as unknown as { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }).entries();
     for await (const [name, handle] of entries) {
       const rel = prefix ? `${prefix}/${name}` : name;
-      if (name === ".adhd") continue;
+      if (isMetaDirName(name)) continue;
       if (handle.kind === "file") {
         yield { path: rel, handle: handle as FileSystemFileHandle };
       } else {
@@ -145,7 +145,7 @@ export class OpfsVaultFS implements VaultFileSystem {
     }
   }
 
-  /** Walk all vault files, skipping .adhd. */
+  /** Walk all vault files, skipping the metadata directory. */
   async *walk(): AsyncGenerator<{ path: string; handle: FileSystemFileHandle }> {
     const root = await this.ensureRoot();
     yield* this.walkImpl(root, "");

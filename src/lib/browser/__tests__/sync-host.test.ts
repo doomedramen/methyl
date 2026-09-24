@@ -106,7 +106,7 @@ describe("SyncHost client driver", () => {
     expect(host.journal.getLastServerSeq()).toBeGreaterThan(0);
 
     // Journal was persisted after sync
-    const raw = await fs.readTextFile(".adhd/sync/journal.json");
+    const raw = await fs.readTextFile(".methyl/sync/journal.json");
     expect(raw).toBeTruthy();
   });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { readRenamedKey } from "@/lib/browser/storage-keys";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
@@ -9,12 +10,11 @@ import { attachmentMarkdownLink, relativeAttachmentPath } from "@/lib/vault/atta
 import { useApp, usePluginHost } from "@/lib/plugins/react";
 import { reconfigurePluginCompartment } from "@/lib/plugins/editor";
 
-const NAME_KEY = "adhd-name";
+const NAME_KEY = "methyl.name";
 
 function loadUser(): EditorUser {
-  const name =
-    (typeof window !== "undefined" && localStorage.getItem(NAME_KEY)) || "You";
-  return { name, colorClassName: "cm-adhd-you" };
+  const name = (typeof window !== "undefined" && readRenamedKey(NAME_KEY, "adhd-name")) || "You";
+  return { name, colorClassName: "cm-methyl-you" };
 }
 
 /**
@@ -155,7 +155,7 @@ export function NoteEditor({
           createUndoManager,
           getContentTextFromDoc,
         } = syncMod;
-        const { adhdEditorExtensions, editorBaseTheme } = extMod;
+        const { methylEditorExtensions, editorBaseTheme } = extMod;
 
         const undoManager = createUndoManager(handle.doc);
         const ephemeral = createCursorEphemeral();
@@ -182,7 +182,7 @@ export function NoteEditor({
           state: EditorState.create({
             doc: getContentTextFromDoc(session.doc).toString(),
             extensions: [
-              adhdEditorExtensions({
+              methylEditorExtensions({
                 doc: session.doc,
                 ephemeral,
                 user,

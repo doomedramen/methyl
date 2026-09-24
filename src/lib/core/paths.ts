@@ -28,14 +28,33 @@ export function normalizeName(name: string): string {
 }
 
 /**
- * Reserved: ADHD's own metadata directory (.adhd/crdt/, the sidecar doc
- * index, sync journal, ...). A user-visible tree node with this exact name
- * would materialise into (and, on rename/delete, remove from) the same
- * on-disk path as real CRDT storage -- sanitizeName previously let ".adhd"
- * through, since it doesn't match the "all dots/whitespace" rejection (it
- * has letters after the leading dot). Rejected case-insensitively.
+ * The app's metadata directory at the root of every vault: CRDT state
+ * (`crdt/`), the sidecar doc index, the sync journal, caches, plugin data.
+ * Every module builds these paths from this constant.
  */
-const RESERVED_NAMES = new Set([".adhd"]);
+export const META_DIR = ".methyl";
+
+/**
+ * Earlier names of META_DIR. A vault still holding one is migrated at
+ * startup; until then, and forever after, the name stays reserved so a
+ * leftover directory is never read as vault content.
+ */
+export const LEGACY_META_DIRS: readonly string[] = [".adhd"];
+
+/** Whether a top-level directory name is the app's metadata, current or legacy. */
+export function isMetaDirName(name: string): boolean {
+  return name === META_DIR || LEGACY_META_DIRS.includes(name);
+}
+
+/**
+ * Reserved: the metadata directory names above. A user-visible tree node
+ * with this exact name would materialise into (and, on rename/delete,
+ * remove from) the same on-disk path as real CRDT storage -- sanitizeName
+ * previously let ".adhd" through, since it doesn't match the "all
+ * dots/whitespace" rejection (it has letters after the leading dot).
+ * Rejected case-insensitively.
+ */
+const RESERVED_NAMES = new Set([META_DIR, ...LEGACY_META_DIRS]);
 
 export function sanitizeName(name: string): string | null {
   if (name.length === 0) return null;

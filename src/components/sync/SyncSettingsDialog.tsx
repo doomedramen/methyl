@@ -92,7 +92,7 @@ function SyncSettingsForm() {
           <FieldLabel htmlFor="sync-server-url">Server URL</FieldLabel>
           <Input
             id="sync-server-url"
-            placeholder="https://adhd.example.com"
+            placeholder="https://methyl.example.com"
             value={serverUrl}
             onChange={(e) => setServerUrl(e.target.value)}
             autoComplete="off"

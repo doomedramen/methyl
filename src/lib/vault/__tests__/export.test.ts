@@ -39,7 +39,7 @@ describe("vault export", () => {
     const progress: number[] = [];
     const files = await unzip(await exportVaultZip(fs, "full", (p) => progress.push(p.files)));
 
-    expect(Object.keys(files).some((p) => p.startsWith(".adhd/crdt/"))).toBe(true);
+    expect(Object.keys(files).some((p) => p.startsWith(".methyl/crdt/"))).toBe(true);
     expect(Object.keys(files).some((p) => p.endsWith(".tmp"))).toBe(false);
     expect(progress.at(-1)).toBe(Object.keys(files).length);
 

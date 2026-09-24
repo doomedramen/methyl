@@ -105,8 +105,8 @@ describe("SearchIndex", () => {
   });
 
   it("load returns false on corrupt file", async () => {
-    await fs.mkdir(".adhd/cache");
-    await fs.writeTextAtomic(".adhd/cache/search.json", "NOT JSON!!!");
+    await fs.mkdir(".methyl/cache");
+    await fs.writeTextAtomic(".methyl/cache/search.json", "NOT JSON!!!");
     const ok = await idx.load();
     expect(ok).toBe(false);
     expect(idx.size).toBe(0);
@@ -220,9 +220,9 @@ describe("DerivedIndexes", () => {
   });
 
   it("load handles corrupt files gracefully", async () => {
-    await fs.mkdir(".adhd/cache");
+    await fs.mkdir(".methyl/cache");
     await fs.writeTextAtomic(
-      ".adhd/cache/backlinks.json",
+      ".methyl/cache/backlinks.json",
       "CORRUPT",
     );
     await derived.load();

@@ -57,7 +57,7 @@ describe("ingest safety rails: a bad disk scan must not wipe the vault", () => {
 
       // Simulate the reported on-disk state directly: index.json = "{}".
       await docStore.writeMaterializedAtomic(
-        ".adhd/index.json",
+        ".methyl/index.json",
         new TextEncoder().encode("{}"),
       );
 
@@ -112,24 +112,28 @@ describe("ingest safety rails: a bad disk scan must not wipe the vault", () => {
   });
 });
 
-describe("reserved .adhd metadata directory is protected", () => {
-  it("sanitizeName rejects a folder/file literally named .adhd", async () => {
+describe("reserved .methyl metadata directory is protected", () => {
+  it("sanitizeName rejects a folder/file literally named .methyl", async () => {
     const { sanitizeName } = await import("@/lib/core/paths");
+    expect(sanitizeName(".methyl")).toBeNull();
+    // The legacy name stays reserved too, so a leftover directory is never
+    // taken for vault content.
     expect(sanitizeName(".adhd")).toBeNull();
+    expect(sanitizeName(".ADHD")).toBeNull();
     expect(sanitizeName(".ADHD")).toBeNull();
     expect(sanitizeName(".Adhd")).toBeNull();
   });
 
-  it("VaultTree refuses to create a directory named .adhd", async () => {
+  it("VaultTree refuses to create a directory named .methyl", async () => {
     const { VaultTree } = await import("@/lib/vault/tree");
     const tree = VaultTree.create();
-    expect(() => tree.addDirectory(undefined, ".adhd")).toThrow();
+    expect(() => tree.addDirectory(undefined, ".methyl")).toThrow();
   });
 
   it(
-    "materialize/delete near a would-be .adhd collision never touches real CRDT bytes " +
-      "(reproduces the confirmed cause: sanitizeName used to let \".adhd\" through, so a " +
-      "materialize/remove call could land inside the real .adhd/crdt/ directory)",
+    "materialize/delete near a would-be .methyl collision never touches real CRDT bytes " +
+      "(reproduces the confirmed cause: sanitizeName used to let \".methyl\" through, so a " +
+      "materialize/remove call could land inside the real .methyl/crdt/ directory)",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "adhd-safety-"));
       try {
@@ -138,15 +142,15 @@ describe("reserved .adhd metadata directory is protected", () => {
         // The real CRDT bytes for a tracked document, before anything else
         // happens — this must still be there afterward.
 
-        // A node can no longer be named ".adhd" at all (the fix), so this
+        // A node can no longer be named ".methyl" at all (the fix), so this
         // attack surface is closed at creation time.
-        expect(() => engine.createFolder(undefined, ".adhd")).toThrow();
+        expect(() => engine.createFolder(undefined, ".methyl")).toThrow();
 
-        // Even if a path *did* somehow resolve under .adhd/ (defense in
+        // Even if a path *did* somehow resolve under .methyl/ (defense in
         // depth, in case of a future bug elsewhere), the engine's own
         // write/remove wrapper refuses it rather than touching the store.
-        await engine.materializeDocument(ids[0]!, ".adhd/crdt/docs/should-not-write.md");
-        expect(await docStore.readMaterialized(".adhd/crdt/docs/should-not-write.md")).toBeNull();
+        await engine.materializeDocument(ids[0]!, ".methyl/crdt/docs/should-not-write.md");
+        expect(await docStore.readMaterialized(".methyl/crdt/docs/should-not-write.md")).toBeNull();
 
         const afterSnapshot = await docStore.loadSnapshot(ids[0]!);
         expect(afterSnapshot).not.toBeNull(); // the doc's own real compaction still ran fine

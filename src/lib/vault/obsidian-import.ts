@@ -1,5 +1,5 @@
 import type { TreeID } from "loro-crdt";
-import { sanitizeName } from "@/lib/core/paths";
+import { sanitizeName, LEGACY_META_DIRS, META_DIR } from "@/lib/core/paths";
 import type { VaultEngine } from "@/lib/vault/engine";
 
 /** A lazily-read file from an Obsidian vault. */
@@ -44,7 +44,8 @@ export interface PreparedObsidianImport {
 }
 
 const IGNORED_DIRECTORIES = new Map<string, string>([
-  [".adhd", "Methyl metadata"],
+  [META_DIR, "Methyl metadata"],
+  ...LEGACY_META_DIRS.map((dir) => [dir, "Methyl metadata"] as const),
   [".git", "Git metadata"],
   [".obsidian", "Obsidian metadata"],
   [".trash", "Obsidian trash"],

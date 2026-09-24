@@ -1,3 +1,4 @@
+import { migrateLegacyMetaDir } from "@/lib/vault/meta-migration";
 import { markBoot } from "@/lib/core/boot-marks";
 import { OpfsVaultFS } from "@/lib/vault/opfs";
 import { WriterGatedFS } from "@/lib/vault/gated-fs";
@@ -127,6 +128,9 @@ export async function getVault(): Promise<VaultEngine> {
     const lock = await acquireVaultWriterLock("local");
     fs.setWritable(lock.active);
     markBoot("lock-acquired");
+    // `.adhd/` → `.methyl/`: before anything reads the stores. Only the
+    // writer tab may write, so only it migrates.
+    if (lock.active) await migrateLegacyMetaDir(fs);
     if (!lock.active) {
       // Second tab: open read-only until a takeover is requested or this
       // tab is naturally promoted once the writer tab releases.

@@ -1,3 +1,5 @@
+import { META_DIR } from "@/lib/core/paths";
+
 /**
  * Vault filesystem abstraction shared by OPFS (browser) and Memory (tests/dev).
  * Search, derived indexes, and the OPFS stores program against this, not the
@@ -25,7 +27,7 @@ export interface VaultFileSystem {
   /** Non-recursive directory listing. */
   readdir(path: string): Promise<{ dirs: string[]; files: string[] }>;
 
-  /** Recursively walk every file in the vault, skipping top-level `.adhd`. */
+  /** Recursively walk every file in the vault, skipping the top-level metadata directory. */
   walk(): AsyncGenerator<{ path: string }>;
 }
 
@@ -33,7 +35,13 @@ export interface VaultFileSystem {
  * Paths no delete may ever target: the vault root and the reserved
  * metadata directories that hold every document's CRDT state.
  */
-const PROTECTED_DELETE_PATHS = new Set(["", ".adhd", ".adhd/crdt", ".adhd/crdt/docs", ".adhd/crdt/vault"]);
+const PROTECTED_DELETE_PATHS = new Set([
+  "",
+  META_DIR,
+  `${META_DIR}/crdt`,
+  `${META_DIR}/crdt/docs`,
+  `${META_DIR}/crdt/vault`,
+]);
 
 export function assertDeletable(path: string): void {
   const normalized = normalizeFilePath(path);

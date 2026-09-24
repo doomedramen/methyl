@@ -9,11 +9,11 @@ const bytes = (s: string) => new TextEncoder().encode(s);
 describe("vault delete guards", () => {
   it("refuses to delete the vault root or the reserved metadata directories", async () => {
     const fs = new MemoryVaultFS();
-    await fs.writeFile(".adhd/crdt/docs/a/snapshot.loro", bytes("x"));
-    for (const path of ["", "/", ".adhd", ".adhd/", ".adhd/crdt", ".adhd/crdt/docs", ".adhd/crdt/vault", "a/../.adhd"]) {
+    await fs.writeFile(".methyl/crdt/docs/a/snapshot.loro", bytes("x"));
+    for (const path of ["", "/", ".methyl", ".methyl/", ".methyl/crdt", ".methyl/crdt/docs", ".methyl/crdt/vault", "a/../.methyl"]) {
       await expect(fs.delete(path, { recursive: true }), path).rejects.toThrow(/protected/);
     }
-    expect(await fs.exists(".adhd/crdt/docs/a/snapshot.loro")).toBe(true);
+    expect(await fs.exists(".methyl/crdt/docs/a/snapshot.loro")).toBe(true);
   });
 
   it("only removes a non-empty directory when asked to recurse", async () => {
@@ -71,7 +71,7 @@ describe("vault delete guards", () => {
     };
     walk(root);
     // sync-server.ts unlinks its own upload temp files and replaced asset
-    // copies under .adhd/server/assets — never vault content.
+    // copies under .methyl/server/assets — never vault content.
     expect(offenders.filter((f) => f !== "lib/server/sync-server.ts")).toEqual([]);
   });
 });

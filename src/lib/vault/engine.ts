@@ -1,3 +1,4 @@
+import { LEGACY_META_DIRS, META_DIR, isMetaDirName } from "@/lib/core/paths";
 import { markBoot } from "@/lib/core/boot-marks";
 import { type OpId, type TreeID } from "loro-crdt";
 import { VaultTree, type VaultTreeNode } from "@/lib/vault/tree";
@@ -58,7 +59,8 @@ export interface AssetIngestReport {
 export const ATTACHMENTS_FOLDER_NAME = "Attachments";
 
 const IGNORED_EXTERNAL_DIRECTORY_SEGMENTS = new Set([
-  ".adhd",
+  META_DIR,
+  ...LEGACY_META_DIRS,
   ".git",
   ".obsidian",
   ".trash",
@@ -78,7 +80,7 @@ function isMarkdownPath(path: string): boolean {
 }
 
 /** Where the sidecar doc index (SPEC §5) lives, relative to the vault root. */
-const DOC_INDEX_PATH = ".adhd/index.json";
+const DOC_INDEX_PATH = `${META_DIR}/index.json`;
 
 /** How many documents' stored state is read at once when opening a vault. */
 const DOC_LOAD_CONCURRENCY = 16;
@@ -178,18 +180,19 @@ export class VaultEngine {
    * Defense in depth (confirmed real-world cause of a vault wipe): every
    * `.md` materialise/remove call must funnel through here rather than
    * calling `docStore.writeMaterializedAtomic`/`removeMaterialized`
-   * directly. `.adhd/` is reserved for the app's own CRDT storage/index;
-   * `sanitizeName` now blocks a tree node from being named `.adhd`, but
+   * directly. `.methyl/` is reserved for the app's own CRDT storage/index;
+   * `sanitizeName` now blocks a tree node from being named `.methyl`, but
    * this is a second, independent check — a materialised path must never
    * touch that directory regardless of how it was computed, since OPFS's
    * `delete()` is recursive and a single wrong call there can destroy the
    * entire CRDT store in one shot. `DOC_INDEX_PATH` itself is the one
    * legitimate exception (it's the sidecar index file, deliberately
-   * co-located with `.adhd/` so `listMaterializedPaths()` never lists it).
+   * co-located with `.methyl/` so `listMaterializedPaths()` never lists it).
    */
   private isPathUnderReservedDir(path: string): boolean {
     if (path === DOC_INDEX_PATH) return false;
-    return path === ".adhd" || path.startsWith(".adhd/");
+    const top = path.split("/")[0]!;
+    return isMetaDirName(top);
   }
 
   /** Best-effort diagnostics append — never throws, never blocks the caller. */
@@ -201,7 +204,7 @@ export class VaultEngine {
     if (this.isPathUnderReservedDir(path)) {
       console.error(
         `[VaultEngine] refusing to write materialised path "${path}" — ` +
-          `it falls under the reserved .adhd/ metadata directory.`,
+          `it falls under the reserved ${META_DIR}/ metadata directory.`,
       );
       await this.diag("refuse-reserved-path-write", { detail: path });
       return;
@@ -213,7 +216,7 @@ export class VaultEngine {
     if (this.isPathUnderReservedDir(path)) {
       console.error(
         `[VaultEngine] refusing to delete materialised path "${path}" — ` +
-          `it falls under the reserved .adhd/ metadata directory.`,
+          `it falls under the reserved ${META_DIR}/ metadata directory.`,
       );
       await this.diag("refuse-reserved-path-remove", { detail: path });
       return;
@@ -823,12 +826,12 @@ export class VaultEngine {
    * contentHash, size, mtime}, as of the last time the app itself wrote to
    * disk (materialize/remove). It is the "last written by app" marker that
    * lets ingestExternalChanges() tell an external edit/move/copy apart from
-   * the app's own writes. Stored at `.adhd/index.json`, outside the
+   * the app's own writes. Stored at `.methyl/index.json`, outside the
    * directories `listMaterializedPaths()` walks, so it's invisible to
    * normal vault listing.
    *
    * If absent (first run against an existing vault, or after deleting
-   * `.adhd`), it's seeded from the current tree + whatever is already
+   * `.methyl`), it's seeded from the current tree + whatever is already
    * materialised on disk, so that run treats the existing vault as the
    * known baseline rather than "everything is new".
    */
@@ -1331,7 +1334,7 @@ export class VaultEngine {
    *   - delete any stale materialised `.md` that no longer corresponds to a
    *     tree node (stale path left behind by a rename/move that happened
    *     before this session, e.g. across a crash) — unknown ordinary files
-   *     are adopted as binary nodes or preserved, and `.adhd` is never touched
+   *     are adopted as binary nodes or preserved, and `.methyl` is never touched
    */
   /**
    * Resolve any post-merge same-name sibling collisions (VaultTree.

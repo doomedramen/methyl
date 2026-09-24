@@ -18,9 +18,9 @@ describe("vaultPluginStorage", () => {
   it("reads through docStore.readMaterialized", async () => {
     const engine = makeEngineStub();
     const storage = vaultPluginStorage(engine);
-    expect(await storage.read(".adhd/plugins.json")).toBeNull();
-    await storage.write(".adhd/plugins.json", new TextEncoder().encode("{}"));
-    expect(new TextDecoder().decode((await storage.read(".adhd/plugins.json"))!)).toBe("{}");
+    expect(await storage.read(".methyl/plugins.json")).toBeNull();
+    await storage.write(".methyl/plugins.json", new TextEncoder().encode("{}"));
+    expect(new TextDecoder().decode((await storage.read(".methyl/plugins.json"))!)).toBe("{}");
   });
 
   it("writes through docStore.writeMaterializedAtomic", async () => {

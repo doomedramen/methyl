@@ -1,3 +1,4 @@
+import { META_DIR } from "@/lib/core/paths";
 import type { VaultFileSystem } from "@/lib/vault/fs";
 import { SyncCoordinator, type SyncHooks, type SyncReport } from "@/lib/sync/coordinator";
 import { DirtyJournal, type DirtyEntry } from "@/lib/sync/journal";
@@ -6,7 +7,7 @@ import { SyncScheduler, type SyncStatus } from "@/lib/sync/scheduler";
 import { maybeDropUntouchedSeed } from "@/lib/browser/seed-marker";
 import type { TreeID } from "loro-crdt";
 
-const JOURNAL_PATH = ".adhd/sync/journal.json";
+const JOURNAL_PATH = `${META_DIR}/sync/journal.json`;
 const DISCOVERY_POLL_MS = 2_000;
 
 export interface JournalSnapshot {
@@ -277,7 +278,7 @@ export async function saveJournal(
   fs: VaultFileSystem,
   snapshot: JournalSnapshot,
 ): Promise<void> {
-  await fs.mkdir(".adhd/sync");
+  await fs.mkdir(`${META_DIR}/sync`);
   await fs.writeTextAtomic(
     JOURNAL_PATH,
     JSON.stringify(snapshot),

@@ -140,17 +140,17 @@ describe("materialization: disk mirrors the tree", () => {
       expect(node?.documentId).toBe(result.ingested.created[0]);
     });
 
-    it("never touches .adhd metadata", async () => {
+    it("never touches .methyl metadata", async () => {
       const { engine, fs } = await newEngine();
       await fs.writeFile(
-        ".adhd/crdt/vault/snapshot.loro",
+        ".methyl/crdt/vault/snapshot.loro",
         new TextEncoder().encode("not-a-real-snapshot"),
       );
 
       const result = await engine.reconcileMaterialization();
 
-      expect(result.removed).not.toContain(".adhd/crdt/vault/snapshot.loro");
-      expect(await fs.exists(".adhd/crdt/vault/snapshot.loro")).toBe(true);
+      expect(result.removed).not.toContain(".methyl/crdt/vault/snapshot.loro");
+      expect(await fs.exists(".methyl/crdt/vault/snapshot.loro")).toBe(true);
     });
 
     it("cleans up a stale path left behind after a rename made outside this session", async () => {

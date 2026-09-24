@@ -1,3 +1,4 @@
+import { META_DIR } from "@/lib/core/paths";
 import { promises as fs } from "fs";
 import { join, relative } from "path";
 import Database from "better-sqlite3";
@@ -9,14 +10,14 @@ import Database from "better-sqlite3";
  *   node dist/server.cjs restore <backup-dir>
  *
  * Backup copies the whole vault folder — notes, attachments and the
- * `.adhd/` metadata — and takes the sync database through SQLite's online
+ * `.methyl/` metadata — and takes the sync database through SQLite's online
  * backup API, so it is consistent even while the server is running and
  * writing. Restore copies a backup into an empty vault folder; it refuses
  * to overwrite one that already has content, so it can't clobber a live
  * vault by accident.
  */
 
-const SYNC_DB = join(".adhd", "server", "sync.sqlite");
+const SYNC_DB = join(META_DIR, "server", "sync.sqlite");
 
 async function isEmptyOrMissing(dir: string): Promise<boolean> {
   try {
@@ -54,7 +55,7 @@ export async function backupVault(vaultPath: string, destination: string): Promi
     await fs.access(join(vaultPath, SYNC_DB));
     const db = new Database(join(vaultPath, SYNC_DB), { fileMustExist: true });
     try {
-      await fs.mkdir(join(destination, ".adhd", "server"), { recursive: true });
+      await fs.mkdir(join(destination, META_DIR, "server"), { recursive: true });
       await db.backup(join(destination, SYNC_DB));
     } finally {
       db.close();

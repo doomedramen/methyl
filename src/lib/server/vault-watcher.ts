@@ -4,16 +4,16 @@ import { isIgnoredExternalPath, type VaultEngine } from "@/lib/vault/engine";
 
 /**
  * Watches a Node filesystem vault for external Markdown and ordinary-file changes (edits made
- * outside ADHD — another editor, `git checkout`, a sync client writing
+ * outside Methyl — another editor, `git checkout`, a sync client writing
  * directly to disk, etc.) and feeds them through
  * `VaultEngine.ingestExternalChanges()` (SPEC §5, §25, §26).
  *
- * - Ignores `.adhd/**`, tool metadata directories (`.git`, `.obsidian`,
+ * - Ignores `.methyl/**`, tool metadata directories (`.git`, `.obsidian`,
  *   `.trash`, `node_modules`), and `*.tmp` (the atomic-write staging file
  *   every materialize goes through) so bookkeeping never enters the vault.
  * - Ignores the app's *own* `.md` writes too, but via a different
  *   mechanism: every `materializeDocument`/`materializeToTreePath`/
- *   `repairDocument` call updates the sidecar index (`.adhd/index.json`)
+ *   `repairDocument` call updates the sidecar index (`.methyl/index.json`)
  *   with the hash of what it just wrote (see VaultEngine.touchIndexEntry),
  *   so by the time this watcher's debounced ingest runs,
  *   `ingestExternalChanges()` sees the disk content already matches the

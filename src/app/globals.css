@@ -373,7 +373,7 @@
 
 /* Remote presence cursors (shipped via Loro ephemeral, rendered by the
    editor's cursor layer once networked content arrives — §23). */
-.cm-adhd-you {
+.cm-methyl-you {
   --cm-presence: oklch(0.65 0.2 265);
 }
 .cm-remote-cursor {

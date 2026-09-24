@@ -1,8 +1,10 @@
-# ADHD v4 Architecture Specification
+# Methyl Architecture Specification
+
+> Originally written as the "Methyl v4" specification; the product is now Methyl and its metadata directory `.methyl/` (vaults created before the rename are migrated from `.methyl/` at startup).
 
 ## 1. Product goal
 
-ADHD is a self-hostable, Obsidian-style Markdown application built with Next.js.
+Methyl is a self-hostable, Obsidian-style Markdown application built with Next.js.
 
 It must:
 
@@ -11,12 +13,12 @@ It must:
 * use normal folders, Markdown files and arbitrary supporting files
 * keep the server vault human-readable and usable with normal filesystem tools
 * allow folders such as `.assets/`, `_resources/`, `Attachments/`, etc.
-* permit editing the server vault outside ADHD with tools such as VS Code
+* permit editing the server vault outside Methyl with tools such as VS Code
 * allow edits on multiple devices while disconnected
 * automatically reconcile those edits when the home server becomes reachable
 * require no Postgres, Redis, MinIO or other infrastructure
 * be deployable as one Docker container plus one mounted vault volume
-* preserve user data even if ADHD itself is abandoned
+* preserve user data even if Methyl itself is abandoned
 
 The core philosophy is:
 
@@ -58,7 +60,7 @@ Node 24 is currently Active LTS in September 2026. I would use it rather than No
 
 # 3. Data model: three kinds of truth
 
-ADHD deliberately distinguishes three layers.
+Methyl deliberately distinguishes three layers.
 
 ### Portable truth
 
@@ -71,17 +73,17 @@ The user's files:
 │   ├── Garage.md
 │   └── Shopping.md
 ├── Projects/
-│   └── ADHD/
+│   └── Methyl/
 │       ├── Architecture.md
 │       └── .assets/
 │           └── architecture.png
 ├── Journal/
 │   └── 2026-09-16.md
 ├── Attachments/
-└── .adhd/
+└── .methyl/
 ```
 
-If the user backs up everything except `.adhd/`, their notes and files still survive.
+If the user backs up everything except `.methyl/`, their notes and files still survive.
 
 ### Merge/history truth
 
@@ -99,7 +101,7 @@ Deleting the Loro state loses CRDT history but must **not** lose the current Mar
 
 ### Derived state
 
-Things ADHD can reconstruct:
+Things Methyl can reconstruct:
 
 * search index
 * backlinks
@@ -131,13 +133,13 @@ Example:
 │       └── dimensions.png
 │
 ├── Projects/
-│   └── ADHD/
+│   └── Methyl/
 │       ├── Architecture.md
 │       └── Ideas.md
 │
 ├── .trash/
 │
-└── .adhd/
+└── .methyl/
     ├── server/
     │   ├── sync.sqlite
     │   └── rooms/
@@ -152,7 +154,7 @@ Example:
 Only two names are reserved at vault root:
 
 ```text
-.adhd
+.methyl
 .trash
 ```
 
@@ -164,7 +166,7 @@ Other dot-directories are valid user content:
 .templates/
 ```
 
-ADHD should not impose a fixed attachment structure.
+Methyl should not impose a fixed attachment structure.
 
 A setting controls where newly pasted/imported assets go, with sensible choices such as:
 
@@ -195,31 +197,31 @@ Each Markdown document therefore receives a UUIDv7.
 
 I would **not** clutter normal frontmatter with an application-specific property.
 
-`.md` files stay 100% clean: no ADHD-specific marker of any kind, ever — not
+`.md` files stay 100% clean: no Methyl-specific marker of any kind, ever — not
 in frontmatter, not as an HTML comment, not in the editor's LoroText, not on
 disk. A vault file must be indistinguishable from one nobody's app has ever
 touched, so it stays usable in any other Markdown tool, unmodified by
-ADHD merely opening it.
+Methyl merely opening it.
 
 Identity instead lives in two places, neither of them the file content:
 
 ```text
 inside the app     → the vault-tree CRDT (LoroTree node → documentId)
-outside the app     → a hidden sidecar index, .adhd/index.json
+outside the app     → a hidden sidecar index, .methyl/index.json
 (disk reconciliation)
 ```
 
-The vault tree (§6) is authoritative while ADHD is running: every tree node
+The vault tree (§6) is authoritative while Methyl is running: every tree node
 already carries a stable `documentId`, so renames and moves performed
 through the app never touch identity at all.
 
 The sidecar index exists for the case the tree can't cover: reconciling
-changes made *outside* ADHD (a disk watcher, a server rescan, crash
-recovery). It's a flat map, written to `.adhd/index.json` next to the
-existing `.adhd/crdt/` layout (§10):
+changes made *outside* Methyl (a disk watcher, a server rescan, crash
+recovery). It's a flat map, written to `.methyl/index.json` next to the
+existing `.methyl/crdt/` layout (§10):
 
 ```ts
-// .adhd/index.json
+// .methyl/index.json
 type DocIndex = Record<
   string, // relative path
   {
@@ -265,14 +267,14 @@ wasn't watching."
 
 On the Node server, `watchVaultForExternalChanges()`
 (`src/lib/server/vault-watcher.ts`) debounces a chokidar watch over the
-vault directory (ignoring `.adhd/` and `*.tmp`) and calls
+vault directory (ignoring `.methyl/` and `*.tmp`) and calls
 `ingestExternalChanges()` on change, reporting affected `doc:<id>` /
 `vault:<id>` rooms so the result can be broadcast to sync clients. In the
 browser, OPFS has no external writers besides other tabs, so ingestion only
 runs at boot and when the tab regains visibility.
 
 **Migration.** Vaults created before the sidecar index exist still contain
-the old `<!-- adhd:id=... -->` comment. On first read of such a file, ADHD:
+the old `<!-- adhd:id=... -->` comment. On first read of such a file, Methyl:
 
 ```text
 1. recovers the id from the comment
@@ -304,7 +306,7 @@ deps:
 
 App presentation state does **not** belong there.
 
-For example, graph coordinates belong in ADHD's view state rather than:
+For example, graph coordinates belong in Methyl's view state rather than:
 
 ```yaml
 graph:
@@ -334,7 +336,7 @@ ROOT
 │   ├── Garage.md
 │   └── Shopping.md
 └── Projects
-    └── ADHD
+    └── Methyl
         └── Architecture.md
 ```
 
@@ -411,7 +413,7 @@ graph edges
 search text
 ```
 
-ADHD must never round-trip normal note edits through a Markdown AST.
+Methyl must never round-trip normal note edits through a Markdown AST.
 
 ---
 
@@ -450,7 +452,7 @@ The browser's OPFS mirrors the logical vault:
 ├── Projects/
 ├── Attachments/
 ├── .trash/
-└── .adhd/
+└── .methyl/
     ├── device/
     ├── crdt/
     │   ├── vault/
@@ -485,7 +487,7 @@ and validates checksums when importing snapshots/updates.
 Per document:
 
 ```text
-.adhd/crdt/docs/<id>/
+.methyl/crdt/docs/<id>/
 ├── snapshot.loro
 ├── updates/
 │   ├── 000001.loro
@@ -636,14 +638,14 @@ body         1
 The search index is written to:
 
 ```text
-.adhd/cache/search.json
+.methyl/cache/search.json
 ```
 
 Backlinks and other small indexes can be plain serialized maps.
 
-Deleting `.adhd/cache/` triggers a rebuild from Markdown.
+Deleting `.methyl/cache/` triggers a rebuild from Markdown.
 
-If ADHD eventually contains tens or hundreds of thousands of notes and MiniSearch becomes inadequate, client SQLite can be reconsidered without changing the vault or sync architecture.
+If Methyl eventually contains tens or hundreds of thousands of notes and MiniSearch becomes inadequate, client SQLite can be reconsidered without changing the vault or sync architecture.
 
 ---
 
@@ -669,7 +671,7 @@ Downloading vault
 384 MB / 427 MB
 ```
 
-Only after all files have been downloaded and hashes verified does ADHD report:
+Only after all files have been downloaded and hashes verified does Methyl report:
 
 ```text
 ✓ Available completely offline
@@ -690,7 +692,7 @@ If persistence is not granted:
 ⚠ Offline storage is not protected from automatic eviction.
 ```
 
-ADHD should not hide that condition.
+Methyl should not hide that condition.
 
 ---
 
@@ -701,7 +703,7 @@ A pure web app cannot guarantee:
 ```text
 arrive home
 ↓
-iOS wakes closed ADHD
+iOS wakes closed Methyl
 ↓
 sync
 ```
@@ -711,7 +713,7 @@ Safari/iOS still does not support the Background Sync API used for this pattern.
 The supported behaviour is:
 
 ```text
-ADHD already open
+Methyl already open
 ↓
 home server becomes reachable
 ↓
@@ -721,11 +723,11 @@ automatic reconnect + sync
 or:
 
 ```text
-ADHD closed
+Methyl closed
 ↓
 arrive home
 ↓
-open ADHD
+open Methyl
 ↓
 immediate sync
 ```
@@ -1081,7 +1083,7 @@ No content is lost.
 
 # 23. Server filesystem watcher
 
-The mounted filesystem is intentionally editable outside ADHD.
+The mounted filesystem is intentionally editable outside Methyl.
 
 Use Chokidar 5 rather than raw `fs.watch`.
 
@@ -1096,7 +1098,7 @@ Watch:
 excluding:
 
 ```text
-/vault/.adhd/**
+/vault/.methyl/**
 /vault/.trash/**
 ```
 
@@ -1236,7 +1238,7 @@ If somebody does:
 cp Garage.md Garage-copy.md
 ```
 
-both files have identical content, and neither carries any ADHD marker —
+both files have identical content, and neither carries any Methyl marker —
 identity lives in the sidecar index (§5), not in the file.
 
 `reconcileVault()` detects this from content hashes alone:
@@ -1261,7 +1263,7 @@ Deletion is modeled as a tree deletion/tombstone.
 
 Loro's tree model handles deletion through its tree semantics rather than requiring the document contents to disappear from CRDT history immediately.
 
-ADHD defaults to recoverable deletion:
+Methyl defaults to recoverable deletion:
 
 ```text
 delete note
@@ -1422,7 +1424,7 @@ Use a simple single-user pairing flow.
 Server environment:
 
 ```text
-ADHD_ADMIN_TOKEN=<long random secret>
+METHYL_AUTH_TOKEN=<long random secret>
 ```
 
 First connection at home:
@@ -1473,7 +1475,7 @@ Default deployment assumes the sync server is **not Internet exposed**.
 Use a stable HTTPS hostname such as:
 
 ```text
-https://adhd.home.example.com
+https://methyl.home.example.com
 ```
 
 served through Nginx Proxy Manager.
@@ -1493,9 +1495,9 @@ creates a different browser origin and therefore a different local vault.
 Nginx Proxy Manager:
 
 ```text
-/           → ADHD HTTP :3000
-/api/*      → ADHD HTTP :3000
-/sync       → ADHD WS   :8787
+/           → Methyl HTTP :3000
+/api/*      → Methyl HTTP :3000
+/sync       → Methyl WS   :8787
 ```
 
 Both listeners can belong to one Node process in one Docker container.
@@ -1511,7 +1513,7 @@ No COOP/COEP headers are needed because the browser no longer depends on SQLite-
 One Docker container:
 
 ```text
-adhd
+methyl
 │
 ├── HTTP :3000
 │   ├── static Next export
@@ -1550,7 +1552,7 @@ external queue
 
 # 34. Reconnect algorithm
 
-When ADHD becomes foregrounded:
+When Methyl becomes foregrounded:
 
 ```text
 1. App is already usable from OPFS.
@@ -1802,11 +1804,11 @@ Projects/
 and:
 
 ```text
-Full ADHD Backup
+Full Methyl Backup
 
 normal vault
 +
-.adhd/
+.methyl/
 ```
 
 Portable restore:
@@ -2119,7 +2121,7 @@ These should be encoded into tests.
 
 ### A
 
-If `.adhd/cache/` disappears:
+If `.methyl/cache/` disappears:
 
 > no user data is lost.
 
@@ -2169,7 +2171,7 @@ If the browser reports "Synced":
 
 No ordinary user content depends on:
 
-> Postgres, IndexedDB schema, SQLite schema or an ADHD-specific binary format.
+> Postgres, IndexedDB schema, SQLite schema or an Methyl-specific binary format.
 
 ### J
 
@@ -2186,7 +2188,7 @@ SHA256(markdown file)
 # 48. Final architecture
 
 ```text
-                         ADHD
+                         Methyl
                    Next.js PWA shell
                           │
              ┌────────────┴────────────┐

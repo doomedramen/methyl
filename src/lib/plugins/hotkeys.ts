@@ -1,7 +1,8 @@
+import { META_DIR } from "@/lib/core/paths";
 import type { Hotkey } from "@/lib/plugins/api";
 import type { PluginStorage } from "@/lib/plugins/storage";
 
-const HOTKEYS_JSON_PATH = ".adhd/hotkeys.json";
+const HOTKEYS_JSON_PATH = `${META_DIR}/hotkeys.json`;
 
 export function formatHotkey(hotkey: Hotkey, platform: "mac" | "other"): string {
   const parts: string[] = hotkey.modifiers.map((m) => {

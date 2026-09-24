@@ -524,7 +524,7 @@ function VaultPluginBridge({
 
 /**
  * Build a vault export (SPEC §40) and hand it to the browser as a download.
- * "portable" is the notes and attachments; "full" adds the `.adhd/`
+ * "portable" is the notes and attachments; "full" adds the `.methyl/`
  * metadata so a restore keeps note identity and history.
  */
 async function downloadVaultExport(mode: "portable" | "full"): Promise<void> {
@@ -1036,7 +1036,7 @@ export function VaultApp() {
       actionHandled.current = true;
       (async () => {
         try {
-          const cache = await caches.open("adhd-share-pending");
+          const cache = await caches.open("methyl-share-pending");
           const res = await cache.match("share-pending");
           if (!res) return;
           await cache.delete("share-pending");

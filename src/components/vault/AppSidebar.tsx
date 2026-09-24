@@ -1,5 +1,6 @@
 "use client";
 
+import { readRenamedKey } from "@/lib/browser/storage-keys";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeID } from "loro-crdt";
 import type { VaultEngine } from "@/lib/vault/engine";
@@ -153,7 +154,7 @@ interface AppSidebarProps {
   onNewFolderOpenChange: (open: boolean) => void;
 }
 
-const COLLAPSED_KEY = "adhd.sidebar.collapsedFolders";
+const COLLAPSED_KEY = "methyl.sidebar.collapsedFolders";
 
 function collectFolderIds(rows: SidebarRow[], folderIds = new Set<string>()): Set<string> {
   for (const row of rows) {
@@ -166,7 +167,7 @@ function collectFolderIds(rows: SidebarRow[], folderIds = new Set<string>()): Se
 
 function loadCollapsed(): Set<string> | null {
   try {
-    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    const raw = readRenamedKey(COLLAPSED_KEY, "adhd.sidebar.collapsedFolders");
     if (raw) {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr)) return new Set(arr);

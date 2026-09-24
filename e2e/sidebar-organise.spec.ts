@@ -49,7 +49,7 @@ async function walkVaultFiles(page: Page): Promise<string[]> {
         }
       ).entries();
       for await (const [name, handle] of entries) {
-        if (prefix === "" && (name === ".adhd" || name === ".trash")) continue;
+        if (prefix === "" && (name === ".methyl" || name === ".trash")) continue;
         const path = prefix ? `${prefix}/${name}` : name;
         if (handle.kind === "directory") {
           await walk(handle as FileSystemDirectoryHandle, path);
@@ -66,7 +66,7 @@ async function walkVaultFiles(page: Page): Promise<string[]> {
 }
 
 /** All materialized note paths in the vault, relative to its root, sorted.
- *  Skips the app's own bookkeeping (`.adhd/`, `.trash/`). Writes go
+ *  Skips the app's own bookkeeping (`.methyl/`, `.trash/`). Writes go
  *  tmp-file → rename (see OpfsVaultFS in src/lib/vault/opfs.ts), so right
  *  after a UI action there can briefly be `*.md.tmp`/`*.tmp.crswap`
  *  leftovers in the listing; poll until the tree is quiescent (no `.tmp`

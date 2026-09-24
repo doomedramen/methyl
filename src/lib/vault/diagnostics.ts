@@ -1,3 +1,4 @@
+import { META_DIR } from "@/lib/core/paths";
 import type { PersistedDocStore } from "@/lib/vault/store";
 
 /**
@@ -7,11 +8,11 @@ import type { PersistedDocStore } from "@/lib/vault/store";
  * confirmed. Rather than guess again, every deletion, sweep, and safety-rail
  * refusal is recorded here so a future unexplained wipe leaves evidence.
  *
- * Persisted at the vault-local, never-synced `.adhd/vault-meta/` area (same
+ * Persisted at the vault-local, never-synced `.methyl/vault-meta/` area (same
  * spot as seed-marker.ts) via `PersistedDocStore.writeMaterializedAtomic` /
  * `readMaterialized` directly — like `VaultEngine`'s own `DOC_INDEX_PATH`,
  * this is a deliberate, narrow exception to the "materialised paths never
- * touch .adhd/" guard, not a bypass of it.
+ * touch .methyl/" guard, not a bypass of it.
  *
  * Every entry is timestamp + operation name + small numeric counts + short
  * detail strings (ids, paths, counts) — never note content.
@@ -21,7 +22,7 @@ import type { PersistedDocStore } from "@/lib/vault/store";
  * hot path an extra full-store scan.
  */
 
-const DIAGNOSTICS_PATH = ".adhd/vault-meta/diagnostics.json";
+const DIAGNOSTICS_PATH = `${META_DIR}/vault-meta/diagnostics.json`;
 const MAX_ENTRIES = 100;
 
 export interface DiagnosticEntry {

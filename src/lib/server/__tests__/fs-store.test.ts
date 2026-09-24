@@ -27,7 +27,7 @@ function newDocStore(): NodeFSStore {
 }
 
 function crdtDocDir(docId: string): string {
-  return join(tmpDir, ".adhd/crdt/docs", docId);
+  return join(tmpDir, ".methyl/crdt/docs", docId);
 }
 
 /** Body without the adhd:id marker comment (§5). */

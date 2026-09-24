@@ -1,3 +1,4 @@
+import { readRenamedKey } from "@/lib/browser/storage-keys";
 import { testWebSocketConnection } from "@/lib/sync/websocket";
 
 /**
@@ -14,10 +15,11 @@ import { testWebSocketConnection } from "@/lib/sync/websocket";
  * model, but is a real tradeoff worth knowing about.
  */
 
-const STORAGE_KEY = "adhd-sync-config";
+const STORAGE_KEY = "methyl.sync-config";
+const LEGACY_STORAGE_KEY = "adhd-sync-config";
 
 export interface SyncConfig {
-  /** Origin the sync server is reachable at, e.g. "https://adhd.example.com". */
+  /** Origin the sync server is reachable at, e.g. "https://methyl.example.com". */
   serverUrl: string;
   authToken: string;
 }
@@ -33,7 +35,7 @@ function hasLocalStorage(): boolean {
 export function loadSyncConfig(): SyncConfig | null {
   if (!hasLocalStorage()) return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readRenamedKey(STORAGE_KEY, LEGACY_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SyncConfig>;
     if (typeof parsed.serverUrl !== "string" || !parsed.serverUrl) return null;
@@ -57,6 +59,7 @@ export function clearSyncConfig(): void {
   if (!hasLocalStorage()) return;
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
     // ignore
   }

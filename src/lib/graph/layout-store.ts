@@ -1,10 +1,11 @@
+import { META_DIR } from "@/lib/core/paths";
 import type { PersistedDocStore } from "@/lib/vault/store";
 
 /**
  * Per-document graph layout (node x/y + viewport), vault-local and never
  * synced — SPEC §37: "Visual layout state ... belongs in ... not in
  * Markdown." Persisted the same way seed-marker.ts and diagnostics.ts are:
- * a plain JSON file under `.adhd/vault-meta/`, written directly via
+ * a plain JSON file under `.methyl/vault-meta/`, written directly via
  * `PersistedDocStore` (not through `VaultEngine`'s materialize path, which
  * is reserved for the Markdown mirror of tree-tracked documents).
  *
@@ -14,7 +15,7 @@ import type { PersistedDocStore } from "@/lib/vault/store";
  * exists for a node — it just isn't dirtying the file.
  */
 
-const LAYOUT_PATH = ".adhd/vault-meta/graph-layout.json";
+const LAYOUT_PATH = `${META_DIR}/vault-meta/graph-layout.json`;
 
 export interface GraphNodeLayout {
   x: number;

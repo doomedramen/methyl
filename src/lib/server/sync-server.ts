@@ -1,3 +1,5 @@
+import { migrateLegacyMetaDirOnDisk } from "@/lib/server/meta-migration";
+import { META_DIR } from "@/lib/core/paths";
 import { SimpleServer, type SimpleServerConfig } from "loro-websocket/server";
 import { CrdtType } from "loro-protocol";
 import { LoroDoc, type TreeID } from "loro-crdt";
@@ -363,19 +365,20 @@ function recordAssetSave(
 }
 
 export function createSyncServer(options: SyncServerOptions) {
-  const store = new ServerStore(`${options.vaultPath}/.adhd/server/sync.sqlite`);
-  const assetDir = `${options.vaultPath}/.adhd/server/assets`;
+  migrateLegacyMetaDirOnDisk(options.vaultPath);
+  const store = new ServerStore(`${options.vaultPath}/${META_DIR}/server/sync.sqlite`);
+  const assetDir = `${options.vaultPath}/${META_DIR}/server/assets`;
   const vaultId = options.vaultId ?? "local";
   const treeRoomId = `vault:${vaultId}`;
 
   /**
    * Node-side vault mirror (SPEC §5, §10, §11, §25/§26): a VaultEngine
-   * over `.adhd/crdt/**` at `options.vaultPath`, kept as a *derived mirror*
+   * over `.methyl/crdt/**` at `options.vaultPath`, kept as a *derived mirror*
    * of the relay state ServerStore/SQLite already holds — SQLite
-   * (`.adhd/server/sync.sqlite`) stays the sync protocol's source of truth
+   * (`.methyl/server/sync.sqlite`) stays the sync protocol's source of truth
    * (durable versions, discovery, `/api/changes`), unchanged from before
    * this integration, so the tested client-sync path has zero regression
-   * risk. The engine's fs-store is the ONLY writer to `.adhd/crdt/**` —
+   * risk. The engine's fs-store is the ONLY writer to `.methyl/crdt/**` —
    * nothing else in this server touches that directory, so there is no
    * two-writer conflict.
    *
@@ -389,7 +392,7 @@ export function createSyncServer(options: SyncServerOptions) {
    *   2. disk -> server: watchVaultForExternalChanges ingests an
    *      externally-edited/moved/new/deleted .md (safety rails from
    *      VaultEngine.ingestExternalChanges apply — never touches
-   *      .adhd/crdt, never mass-deletes) and the resulting CRDT bytes are
+   *      .methyl/crdt, never mass-deletes) and the resulting CRDT bytes are
    *      fed back into ServerStore via recordRoomSave, i.e. exactly the
    *      same durable-version/discovery bookkeeping a client's own save
    *      would produce. `SimpleServer` (loro-websocket) exposes no public

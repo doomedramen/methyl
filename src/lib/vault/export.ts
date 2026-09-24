@@ -1,3 +1,4 @@
+import { META_DIR } from "@/lib/core/paths";
 import { Zip, ZipDeflate, ZipPassThrough } from "fflate";
 import type { VaultFileSystem } from "@/lib/vault/fs";
 
@@ -7,7 +8,7 @@ import type { VaultFileSystem } from "@/lib/vault/fs";
  * - `portable`: the vault's own files — Markdown notes and attachments in
  *   their folders — and nothing else. Opens in any editor; re-importable
  *   through the Obsidian importer.
- * - `full`: the same plus the `.adhd/` metadata directory (CRDT state and
+ * - `full`: the same plus the `.methyl/` metadata directory (CRDT state and
  *   history, the sidecar index), so restoring it keeps note identity and
  *   history.
  *
@@ -16,7 +17,7 @@ import type { VaultFileSystem } from "@/lib/vault/fs";
  */
 export type ExportMode = "portable" | "full";
 
-const METADATA_DIR = ".adhd";
+const METADATA_DIR = META_DIR;
 // Text compresses well; already-compressed media is stored as-is.
 const COMPRESSIBLE = /\.(md|markdown|txt|json|csv|svg|html?|css|js|ya?ml|canvas|loro)$/i;
 

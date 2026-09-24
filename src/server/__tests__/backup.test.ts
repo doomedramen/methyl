@@ -19,11 +19,11 @@ describe("server backup and restore", () => {
   it("copies notes and metadata, and takes the live database through the backup API", async () => {
     const vault = tmp("vault");
     writeFileSync(join(vault, "Home.md"), "home\n");
-    mkdirSync(join(vault, ".adhd", "crdt"), { recursive: true });
-    writeFileSync(join(vault, ".adhd", "crdt", "state.json"), "{}");
+    mkdirSync(join(vault, ".methyl", "crdt"), { recursive: true });
+    writeFileSync(join(vault, ".methyl", "crdt", "state.json"), "{}");
     writeFileSync(join(vault, "Home.md.tmp"), "half");
     // A store held open, as by a running server, with an uncheckpointed WAL.
-    const store = new ServerStore(join(vault, ".adhd", "server", "sync.sqlite"));
+    const store = new ServerStore(join(vault, ".methyl", "server", "sync.sqlite"));
     store.recordChange(store.getNextSeq(), "doc:a", "doc");
 
     const backup = join(tmp("backup"), "out");
@@ -31,10 +31,10 @@ describe("server backup and restore", () => {
     store.close();
 
     expect(readFileSync(join(backup, "Home.md"), "utf8")).toBe("home\n");
-    expect(existsSync(join(backup, ".adhd", "crdt", "state.json"))).toBe(true);
+    expect(existsSync(join(backup, ".methyl", "crdt", "state.json"))).toBe(true);
     expect(existsSync(join(backup, "Home.md.tmp"))).toBe(false);
-    expect(existsSync(join(backup, ".adhd", "server", "sync.sqlite-wal"))).toBe(false);
-    const copy = new ServerStore(join(backup, ".adhd", "server", "sync.sqlite"));
+    expect(existsSync(join(backup, ".methyl", "server", "sync.sqlite-wal"))).toBe(false);
+    const copy = new ServerStore(join(backup, ".methyl", "server", "sync.sqlite"));
     expect(copy.getChangesAfter(0).changes.map((c) => c.objectId)).toEqual(["doc:a"]);
     copy.close();
   });

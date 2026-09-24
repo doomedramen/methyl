@@ -395,7 +395,7 @@ describe("P0.10: reconnect after compaction", () => {
 describe("Architectural invariants", () => {
   it("A: deleting cache loses no user data", () => {
     // Cache is derived — search index, backlinks, etc.
-    // Deleting .adhd/cache/ just means rebuild from Markdown
+    // Deleting .methyl/cache/ just means rebuild from Markdown
     const doc = Document.fromMarkdown(
       "aaaa-aaaa-aaaa-aaaa-aaaa-aaaa",
       "## Note\nContent",

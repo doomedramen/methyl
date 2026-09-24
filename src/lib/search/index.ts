@@ -1,8 +1,9 @@
+import { META_DIR } from "@/lib/core/paths";
 import MiniSearch, { type AsPlainObject } from "minisearch";
 import type { DocIndexEntry, ParsedDocument } from "@/lib/core/types";
 import type { PersistedDocStore } from "@/lib/vault/store";
 
-const CACHE_ROOT = ".adhd/cache";
+const CACHE_ROOT = `${META_DIR}/cache`;
 const SEARCH_FILE = `${CACHE_ROOT}/search.json`;
 const BACKLINKS_FILE = `${CACHE_ROOT}/backlinks.json`;
 const GRAPH_FILE = `${CACHE_ROOT}/graph.json`;
@@ -62,7 +63,7 @@ function miniSearchOptions() {
 }
 
 /**
- * Full-text index over note content (§13). Persisted to .adhd/cache/search.json.
+ * Full-text index over note content (§13). Persisted to .methyl/cache/search.json.
  * Tracks documents itself because MiniSearch cannot enumerate stored documents.
  */
 export class SearchIndex {

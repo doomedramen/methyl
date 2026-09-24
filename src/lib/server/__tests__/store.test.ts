@@ -9,7 +9,7 @@ let store: ServerStore;
 
 beforeAll(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "adhd-test-"));
-  store = new ServerStore(join(tmpDir, ".adhd/server/sync.sqlite"));
+  store = new ServerStore(join(tmpDir, ".methyl/server/sync.sqlite"));
 });
 
 afterAll(() => {

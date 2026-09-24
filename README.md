@@ -22,7 +22,7 @@ Markdown is the portable truth, Loro is the sync/history format, everything else
 - Import Obsidian vaults with folders, Markdown notes, and attachments preserved
 - 7 themes (Light, Dark, Obsidian, Obsidian Light, Nord, Catppuccin Mocha, Rosé Pine Dawn) plus System
 - Installable PWA with storage-persistence and quota status
-- Note identity kept outside the files (vault tree + `.adhd/index.json`), so renames and moves keep history
+- Note identity kept outside the files (vault tree + `.methyl/index.json`), so renames and moves keep history
 - A small plugin system (see [Plugins](#plugins))
 
 ## Getting started
@@ -80,7 +80,7 @@ docker compose up -d
 ```
 
 Open <http://localhost:8080>. Notes live in `./vault` as plain Markdown files, readable
-and editable with any normal tool — `.adhd/` inside it holds sync metadata (CRDT history,
+and editable with any normal tool — `.methyl/` inside it holds sync metadata (CRDT history,
 discovery index), not required to read your notes.
 
 **Serve it over https.** Browsers only give a page persistent storage (OPFS, where
@@ -96,7 +96,7 @@ docker compose pull && docker compose up -d
 ```
 
 **Backup:** the server can back itself up while it runs. The backup is a folder holding the
-whole vault — notes, attachments and the `.adhd/` metadata that lets devices resume sync
+whole vault — notes, attachments and the `.methyl/` metadata that lets devices resume sync
 without a full resend — with the sync database copied through SQLite's online backup, so
 it's consistent mid-write:
 
@@ -118,14 +118,14 @@ docker compose up -d
 Restore refuses to write into a vault folder that isn't empty.
 
 In the browser, **Export vault** (Markdown and attachments, opens anywhere) and **Export full
-backup** (adds the `.adhd/` metadata) are in the command menu (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>).
+backup** (adds the `.methyl/` metadata) are in the command menu (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>).
 
 ### Connecting to a sync server
 
 Once a server is running (above), point each browser at it:
 
 1. Open the app **from the server's own URL** (e.g. `http://localhost:8080`, or your
-   `https://adhd.home.example.com` if you're behind a reverse proxy) — this is required:
+   `https://methyl.home.example.com` if you're behind a reverse proxy) — this is required:
    OPFS/service-worker storage is scoped per origin, so a vault opened from a different
    origin is a different, unsynced vault.
 2. Open **Sync settings** — from the status popover in the sidebar footer, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> → "Sync settings".
@@ -184,10 +184,10 @@ data file.
 - **Plugins: Manage** (via <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>, or the
   puzzle-piece icon) opens a dialog listing every bundled plugin with an
   enable/disable toggle and any load error.
-- Enabled state persists to `.adhd/plugins.json`; a plugin's own data
+- Enabled state persists to `.methyl/plugins.json`; a plugin's own data
   (settings it saves via `saveData`/`loadData`) lives at
-  `.adhd/plugins/<id>/data.json`.
-- Hotkeys can be remapped by hand-editing `.adhd/hotkeys.json` — a map of
+  `.methyl/plugins/<id>/data.json`.
+- Hotkeys can be remapped by hand-editing `.methyl/hotkeys.json` — a map of
   `"pluginId:commandId"` to an array of `{ modifiers, key }` bindings — which
   overrides that command's default binding.
 
@@ -201,7 +201,7 @@ vault/
 ├── Projects/
 │   └── welcome.md        # plain Markdown, usable anywhere
 ├── Attachments/
-└── .adhd/                # app metadata — sync history and identity, not needed to read notes
+└── .methyl/                # app metadata — sync history and identity, not needed to read notes
     ├── crdt/             # Loro snapshots and updates per document
     ├── index.json        # path → document id + content hash
     ├── plugins.json      # which bundled plugins are enabled
@@ -209,7 +209,7 @@ vault/
     └── hotkeys.json      # optional hotkey overrides, keyed "pluginId:commandId"
 ```
 
-Internal names (`.adhd/`, `adhd-vault`) predate the Methyl name and are kept for compatibility with existing vaults.
+Vaults created before the rename kept their metadata in `.adhd/`; it is moved to `.methyl/` automatically the first time a newer version opens the vault (the server renames it; the browser copies, verifies, then removes the old copy).
 
 ## Tech stack
 

@@ -1,3 +1,4 @@
+import { isMetaDirName } from "@/lib/core/paths";
 import type { VaultFileSystem } from "@/lib/vault/fs";
 import { assertDeletable, normalizeFilePath } from "@/lib/vault/fs";
 
@@ -73,7 +74,7 @@ export class MemoryVaultFS implements VaultFileSystem {
 
   async *walk(): AsyncGenerator<{ path: string }> {
     for (const key of [...this.files.keys()].sort()) {
-      if (key === ".adhd" || key.startsWith(".adhd/")) continue;
+      if (isMetaDirName(key.split("/")[0]!)) continue;
       yield { path: key };
     }
   }

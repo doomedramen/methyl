@@ -1,3 +1,4 @@
+import { META_DIR, isMetaDirName } from "@/lib/core/paths";
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
 import type { VaultFileSystem } from "@/lib/vault/fs";
@@ -157,7 +158,7 @@ class OpfsPersistBackend {
     const walk = async (dir: string, rel: string): Promise<void> => {
       const { dirs } = await this.fs.readdir(dir);
       for (const name of dirs) {
-        if (rel === "" && name === ".adhd") continue;
+        if (rel === "" && isMetaDirName(name)) continue;
         const path = rel ? `${rel}/${name}` : name;
         out.push(path);
         await walk(path, path);
@@ -215,7 +216,7 @@ export class OpfsDocStore implements PersistedDocStore {
   private backend: OpfsPersistBackend;
   private root: string;
 
-  constructor(fs: VaultFileSystem, root = ".adhd/crdt/docs") {
+  constructor(fs: VaultFileSystem, root = `${META_DIR}/crdt/docs`) {
     this.backend = new OpfsPersistBackend(fs);
     this.root = root;
   }
@@ -280,7 +281,7 @@ export class OpfsVaultTreeStore implements VaultTreeStore {
   }
 
   private dir(): string {
-    return ".adhd/crdt/vault";
+    return `${META_DIR}/crdt/vault`;
   }
 
   loadSnapshot(): Promise<Uint8Array | null> {

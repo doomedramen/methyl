@@ -11,8 +11,8 @@ import type { OpId } from "loro-crdt";
  *   - For reconciling *external* filesystem changes (disk watcher, server
  *     rescans, crash recovery) we keep a hidden sidecar index mapping
  *     relative path → { id, contentHash, mtime }. This is the on-disk
- *     analogue of the tree, persisted at `.adhd/index.json` alongside the
- *     `.adhd/crdt/` layout (see PersistedDocStore in @/lib/vault/store).
+ *     analogue of the tree, persisted at `.methyl/index.json` alongside the
+ *     `.methyl/crdt/` layout (see PersistedDocStore in @/lib/vault/store).
  *
  * `.md` files themselves stay 100% clean: no id comment, ever — in the
  * editor's LoroText or on disk. Legacy files that still carry the old
