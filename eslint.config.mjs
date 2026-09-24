@@ -12,7 +12,20 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "dist/**",
+    "playwright-report/**",
+    "test-results/**",
   ]),
+  {
+    rules: {
+      // A leading underscore marks a parameter or binding as deliberately
+      // unused (callback signatures, destructuring to omit a key).
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+    },
+  },
   {
     files: ["src/plugins/**/*.ts", "src/plugins/**/*.tsx"],
     ignores: ["src/plugins/**/__tests__/**"],

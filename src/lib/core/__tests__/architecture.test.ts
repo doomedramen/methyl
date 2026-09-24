@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Document, CONTENT_KEY } from "@/lib/core/document";
 import { VaultTree } from "@/lib/vault/tree";
-import { extractIdFromMarkdown, insertIdComment } from "@/lib/core/doc-id";
+import { insertIdComment } from "@/lib/core/doc-id";
 import { sha256Text } from "@/lib/core/hash";
 import { parseMarkdown } from "@/lib/core/markdown";
 import { mergeExternalEdit } from "@/lib/core/merge";
@@ -24,7 +24,6 @@ Hello from the original`,
     );
 
     const snap = base.snapshot();
-    const baseFrontiers = base.frontiers();
 
     // Phone creates its own doc fork
     const phone = Document.fromSnapshot(base.id, snap);
@@ -123,7 +122,7 @@ External: fixed dimensions`;
 
     // Use mergeExternalEdit
     baseCheckpoint.sha256 = ""; // not used by merge
-    const result = mergeExternalEdit(
+    mergeExternalEdit(
       baseDocClone.doc,
       baseCheckpoint,
       externalMd,
@@ -225,12 +224,12 @@ describe("P0.5: concurrent same-name file creation", () => {
     const branch1 = tree.fork();
     const branch2 = tree.fork();
 
-    const node1Id = branch1.addMarkdownDocument(
+    branch1.addMarkdownDocument(
       parent,
       "Report.md",
       "55555555-5555-5555-5555-555555555555",
     );
-    const node2Id = branch2.addMarkdownDocument(
+    branch2.addMarkdownDocument(
       parent,
       "Report.md",
       "66666666-6666-6666-6666-666666666666",

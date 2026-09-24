@@ -3,7 +3,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
-import type { EditorSession } from "@/lib/editor/session";
 import type { EditorUser } from "@/lib/editor/sync";
 import { Paperclip } from "lucide-react";
 import { attachmentMarkdownLink, relativeAttachmentPath } from "@/lib/vault/attachments";
@@ -93,6 +92,13 @@ export function NoteEditor({
   useLayoutEffect(() => {
     appRef.current = app;
   }, [app]);
+  // The editor is created once per document; read the persistence callbacks
+  // through a ref so a parent re-render with new callbacks is still seen
+  // without tearing the editor down.
+  const callbacksRef = useRef({ onDirtyChange, onPersisting, onPersisted, onSaveError });
+  useLayoutEffect(() => {
+    callbacksRef.current = { onDirtyChange, onPersisting, onPersisted, onSaveError };
+  }, [onDirtyChange, onPersisting, onPersisted, onSaveError]);
 
   useLayoutEffect(() => {
     focusRequestRef.current = focusRequest;
@@ -160,11 +166,11 @@ export function NoteEditor({
           documentId,
           maxDirtyMs: 3_000,
           onPersisted: () => {
-            if (inSync()) onPersisted?.(documentId);
-            else onSaveError?.(documentId);
+            if (inSync()) callbacksRef.current.onPersisted?.(documentId);
+            else callbacksRef.current.onSaveError?.(documentId);
           },
-          onPersistStart: () => onPersisting?.(documentId),
-          onPersistError: () => onSaveError?.(documentId),
+          onPersistStart: () => callbacksRef.current.onPersisting?.(documentId),
+          onPersistError: () => callbacksRef.current.onSaveError?.(documentId),
         });
         view = new EditorView({
           parent: host,
@@ -185,11 +191,11 @@ export function NoteEditor({
               EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
                   session.schedulePersist();
-                  onDirtyChange?.(documentId, true);
+                  callbacksRef.current.onDirtyChange?.(documentId, true);
                   // Catch edits that never reach the LoroText, so no persist fires.
                   if (verifyTimer) clearTimeout(verifyTimer);
                   verifyTimer = setTimeout(() => {
-                    if (!disposed && !inSync()) onSaveError?.(documentId);
+                    if (!disposed && !inSync()) callbacksRef.current.onSaveError?.(documentId);
                   }, 5_000);
                 }
               }),
@@ -285,7 +291,7 @@ export function NoteEditor({
 
         const flush = () => {
           if (!session.isDirty()) {
-            onPersisted?.(documentId);
+            callbacksRef.current.onPersisted?.(documentId);
             return;
           }
           void session.flush();

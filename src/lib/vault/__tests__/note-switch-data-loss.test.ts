@@ -243,11 +243,11 @@ describe("note-switch data loss (reported: Untitled.md / Untitled 2.md end up em
 });
 
 describe("ingest conflict rule: CRDT wins over a shrinking/emptying external edit with un-materialized newer changes", () => {
-  it("keeps un-materialized CRDT content instead of merging a shorter/empty disk file over it", async () => {
+  it("keeps un-materialized CRDT content instead of merging a disk file that shrank below what was last written", async () => {
     const { engine, fs } = await newEngine();
 
-    const doc = engine.createDocument(undefined, "note.md", "");
-    // Materialize the EMPTY state first — this becomes the index's/
+    const doc = engine.createDocument(undefined, "note.md", "base line\n");
+    // Materialize the base state first — this becomes the index's/
     // persisted-state's last-known-good checkpoint (frontiers F0).
     await engine.persistTree();
     await engine.persistDocumentIncremental(doc.id);
@@ -257,12 +257,12 @@ describe("ingest conflict rule: CRDT wins over a shrinking/emptying external edi
     // entry": frontiers have moved past docStore.readState()'s frontiers,
     // but nothing has re-run compact()/touchIndexEntry() yet.
     const active = engine.getDocument(doc.id)!;
-    active.getText(CONTENT_KEY).insert(0, "important unsaved-to-disk text");
+    active.getText(CONTENT_KEY).insert(0, "important unsaved-to-disk text\n");
     active.doc.commit();
 
-    // Simulate disk showing something OTHER than what's indexed — shorter
-    // than the un-materialized CRDT content — whatever the exact mechanism
-    // (a truncate-then-slow-write, a scan catching a partial write, etc.).
+    // Simulate disk showing less than was last written there — whatever the
+    // exact mechanism (a truncate-then-slow-write, a scan catching a partial
+    // write, etc.).
     await fs.writeFile("note.md", new TextEncoder().encode("x"));
 
     const report = await engine.ingestExternalChanges();
@@ -270,11 +270,34 @@ describe("ingest conflict rule: CRDT wins over a shrinking/emptying external edi
     // Must NOT have treated this as an accepted edit that replaced content.
     expect(report.edited).not.toContain(doc.id);
     expect(engine.getDocument(doc.id)!.getText(CONTENT_KEY).toString()).toBe(
-      "important unsaved-to-disk text",
+      "important unsaved-to-disk text\nbase line\n",
     );
     // The engine should have re-materialised its own (correct) content
-    // over the stale empty file rather than leaving disk wrong.
-    expect(await fs.readTextFile("note.md")).toBe("important unsaved-to-disk text");
+    // over the stale file rather than leaving disk wrong.
+    expect(await fs.readTextFile("note.md")).toBe("important unsaved-to-disk text\nbase line\n");
+  });
+
+  it("merges an external edit that added text even when newer un-materialized CRDT content is longer", async () => {
+    const { engine, fs } = await newEngine();
+
+    const doc = engine.createDocument(undefined, "note.md", "line one\n");
+    await engine.persistTree();
+    await engine.persistDocumentIncremental(doc.id);
+
+    // A client's edit reaches the CRDT but not yet the disk...
+    const active = engine.getDocument(doc.id)!;
+    active.getText(CONTENT_KEY).insert(0, "from client, quite a long line\n");
+    active.doc.commit();
+    // ...while an external editor appends a (shorter) line to the file.
+    await fs.writeFile("note.md", new TextEncoder().encode("line one\nfrom disk\n"));
+
+    const report = await engine.ingestExternalChanges();
+
+    expect(report.edited).toContain(doc.id);
+    const merged = engine.getDocument(doc.id)!.getText(CONTENT_KEY).toString();
+    expect(merged).toContain("from client, quite a long line");
+    expect(merged).toContain("from disk");
+    expect(await fs.readTextFile("note.md")).toBe(merged);
   });
 
   it("still accepts a real external edit when the CRDT has no un-materialized changes ahead of the index", async () => {

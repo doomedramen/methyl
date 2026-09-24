@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { useSync } from "@/lib/browser/sync-context";
 import type { SyncConfig } from "@/lib/browser/sync-config";
@@ -24,26 +24,27 @@ type TestResult = { kind: "idle" } | { kind: "testing" } | { kind: "ok" } | { ki
  * `dialogOpen` via useSync()).
  */
 export function SyncSettingsDialog() {
-  const { config, dialogOpen, setDialogOpen, save, disconnect, testConnection } = useSync();
-  const [serverUrl, setServerUrl] = useState("");
-  const [authToken, setAuthToken] = useState("");
+  const { dialogOpen, setDialogOpen } = useSync();
+  // The form lives in its own component so it mounts fresh — with state
+  // initialised from the saved config — every time the dialog opens.
+  return (
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <DialogContent>{dialogOpen && <SyncSettingsForm />}</DialogContent>
+    </Dialog>
+  );
+}
+
+function SyncSettingsForm() {
+  const { config, setDialogOpen, save, disconnect, testConnection } = useSync();
+  // The app is almost always served by the server it syncs with, so with
+  // no saved config start from the current origin and let the user edit it.
+  // "Test connection" is what proves it, not a probe before showing the field.
+  const [serverUrl, setServerUrl] = useState(
+    () => config?.serverUrl ?? (typeof window === "undefined" ? "" : window.location.origin),
+  );
+  const [authToken, setAuthToken] = useState(() => config?.authToken ?? "");
   const [showToken, setShowToken] = useState(false);
   const [test, setTest] = useState<TestResult>({ kind: "idle" });
-
-  useEffect(() => {
-    if (!dialogOpen) return;
-    setTest({ kind: "idle" });
-    if (config) {
-      setServerUrl(config.serverUrl);
-      setAuthToken(config.authToken);
-      return;
-    }
-    // The app is almost always served by the server it syncs with, so
-    // start from the current origin and let the user edit it. "Test
-    // connection" is what proves it, not a probe before showing the field.
-    setServerUrl(typeof window === "undefined" ? "" : window.location.origin);
-    setAuthToken("");
-  }, [dialogOpen, config]);
 
   const runTest = useCallback(async () => {
     if (!serverUrl.trim() || !authToken.trim()) {
@@ -76,87 +77,85 @@ export function SyncSettingsDialog() {
   }, [disconnect, setDialogOpen]);
 
   return (
-    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Sync</DialogTitle>
-          <DialogDescription>
-            The browser keeps its own local vault. Connect this device to a Methyl server so notes
-            — including files copied into the server&apos;s mounted vault — sync here. The server
-            address and access token are saved in this browser only.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader>
+        <DialogTitle>Sync</DialogTitle>
+        <DialogDescription>
+          The browser keeps its own local vault. Connect this device to a Methyl server so notes
+          — including files copied into the server&apos;s mounted vault — sync here. The server
+          address and access token are saved in this browser only.
+        </DialogDescription>
+      </DialogHeader>
 
-        <div className="flex flex-col gap-4">
-          <Field>
-            <FieldLabel htmlFor="sync-server-url">Server URL</FieldLabel>
+      <div className="flex flex-col gap-4">
+        <Field>
+          <FieldLabel htmlFor="sync-server-url">Server URL</FieldLabel>
+          <Input
+            id="sync-server-url"
+            placeholder="https://adhd.example.com"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="sync-access-token">Access token</FieldLabel>
+          <div className="relative">
             <Input
-              id="sync-server-url"
-              placeholder="https://adhd.example.com"
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
+              id="sync-access-token"
+              type={showToken ? "text" : "password"}
+              placeholder="Paste the token from your server"
+              value={authToken}
+              onChange={(e) => setAuthToken(e.target.value)}
               autoComplete="off"
               spellCheck={false}
+              className="pr-9"
             />
-          </Field>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="absolute top-1/2 right-1 -translate-y-1/2"
+              onClick={() => setShowToken((v) => !v)}
+              aria-label={showToken ? "Hide token" : "Show token"}
+            >
+              {showToken ? <EyeOff /> : <Eye />}
+            </Button>
+          </div>
+          <FieldDescription>
+            Stored in this browser&apos;s local storage, not in a cookie — anyone with access to
+            this browser profile could read it.
+          </FieldDescription>
+        </Field>
 
-          <Field>
-            <FieldLabel htmlFor="sync-access-token">Access token</FieldLabel>
-            <div className="relative">
-              <Input
-                id="sync-access-token"
-                type={showToken ? "text" : "password"}
-                placeholder="Paste the token from your server"
-                value={authToken}
-                onChange={(e) => setAuthToken(e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-                className="pr-9"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="absolute top-1/2 right-1 -translate-y-1/2"
-                onClick={() => setShowToken((v) => !v)}
-                aria-label={showToken ? "Hide token" : "Show token"}
-              >
-                {showToken ? <EyeOff /> : <Eye />}
-              </Button>
-            </div>
-            <FieldDescription>
-              Stored in this browser&apos;s local storage, not in a cookie — anyone with access to
-              this browser profile could read it.
-            </FieldDescription>
-          </Field>
+        {test.kind === "error" && <FieldError>{test.message}</FieldError>}
+        {test.kind === "ok" && (
+          <p className="text-sm text-primary" role="status">
+            Connected — the server is reachable and the token works.
+          </p>
+        )}
+      </div>
 
-          {test.kind === "error" && <FieldError>{test.message}</FieldError>}
-          {test.kind === "ok" && (
-            <p className="text-sm text-primary" role="status">
-              Connected — the server is reachable and the token works.
-            </p>
+      <DialogFooter className="flex-row items-center justify-between sm:justify-between">
+        <div className="flex gap-2">
+          {config && (
+            <Button type="button" variant="outline" onClick={onDisconnect}>
+              Disconnect
+            </Button>
           )}
         </div>
-
-        <DialogFooter className="flex-row items-center justify-between sm:justify-between">
-          <div className="flex gap-2">
-            {config && (
-              <Button type="button" variant="outline" onClick={onDisconnect}>
-                Disconnect
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={runTest} disabled={test.kind === "testing"}>
-              {test.kind === "testing" && <Loader2 data-icon="inline-start" className="animate-spin" />}
-              Test connection
-            </Button>
-            <Button type="button" onClick={onSave} disabled={!serverUrl.trim() || !authToken.trim()}>
-              Save
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" onClick={runTest} disabled={test.kind === "testing"}>
+            {test.kind === "testing" && <Loader2 data-icon="inline-start" className="animate-spin" />}
+            Test connection
+          </Button>
+          <Button type="button" onClick={onSave} disabled={!serverUrl.trim() || !authToken.trim()}>
+            Save
+          </Button>
+        </div>
+      </DialogFooter>
+    </>
   );
 }

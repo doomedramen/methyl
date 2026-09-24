@@ -4,7 +4,6 @@ import {
   SearchIndex,
   DerivedIndexes,
   toIndexedDocument,
-  SEARCH_BOOST,
 } from "@/lib/search/index";
 import { parseMarkdown } from "@/lib/core/markdown";
 import type { ParsedDocument } from "@/lib/core/types";

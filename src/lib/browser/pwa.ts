@@ -104,7 +104,6 @@ export function usePwa() {
     quota: null,
     updateReady: false,
   });
-  const notified = useRef(false);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {

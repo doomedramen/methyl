@@ -83,7 +83,7 @@ describe("materialization: disk mirrors the tree", () => {
   describe("reconcileMaterialization", () => {
     it("re-materialises a doc whose file is missing", async () => {
       const { engine, fs } = await newEngine();
-      const doc = engine.createDocument(undefined, "note.md", "hello");
+      engine.createDocument(undefined, "note.md", "hello");
       // No persist/materialize call yet — file doesn't exist on disk.
       expect(await fs.exists("note.md")).toBe(false);
 

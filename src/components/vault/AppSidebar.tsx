@@ -664,9 +664,10 @@ export function AppSidebar({
 
   const handleDragOver = (event: DragOverEvent) => updateDropTarget(event);
   const handleDragMove = (event: DragMoveEvent) => updateDropTarget(event);
+  // Runs after every render so the ref always holds this render's closure.
   useEffect(() => {
     updateDropTargetRef.current = updateDropTarget;
-  }, [updateDropTarget]);
+  });
 
   const applyKeyboardPlacement = (targetTreeId: TreeID, direction: "up" | "down") => {
     const activeId = activeDragIdRef.current;
@@ -757,8 +758,12 @@ export function AppSidebar({
     clearPlacement();
   };
 
+  const handleDragCancelRef = useRef(handleDragCancel);
   useEffect(() => {
-    if (isMobile && !openMobile && dragOrigin.current) handleDragCancel();
+    handleDragCancelRef.current = handleDragCancel;
+  });
+  useEffect(() => {
+    if (isMobile && !openMobile && dragOrigin.current) handleDragCancelRef.current();
   }, [isMobile, openMobile]);
 
   useEffect(() => () => stopAutoScroll(), []);
@@ -780,6 +785,8 @@ export function AppSidebar({
     <Sidebar variant="sidebar" className={cn("methyl-sidebar", activeDragId && "select-none touch-none")}>
       <SidebarHeader className="methyl-sidebar-header flex-row items-center justify-between gap-2 px-5 pt-6 md:pt-5">
         <div className="flex min-w-0 items-center gap-2">
+          {/* A static decorative SVG: next/image would add nothing here. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.svg" alt="" className="size-6 shrink-0 rounded-md" />
           <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
         </div>

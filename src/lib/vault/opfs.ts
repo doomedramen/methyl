@@ -117,7 +117,7 @@ export class OpfsVaultFS implements VaultFileSystem {
       await writable.close();
       if (opts?.atomic !== false) {
         try {
-          await (handle as any).flush?.();
+          await (handle as FileSystemFileHandle & { flush?: () => Promise<void> }).flush?.();
         } catch {
           // flush not available on this platform; close() already persisted
         }

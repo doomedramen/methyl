@@ -1,6 +1,5 @@
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
-import { splitPath } from "@/lib/vault/opfs";
 import type { VaultFileSystem } from "@/lib/vault/fs";
 import {
   atomicCompact,

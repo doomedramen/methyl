@@ -10,6 +10,11 @@ pre-commit:
       run: npm run check:unit
     typecheck:
       run: npm run check:type
+    lint:
+      # Staged files only: a whole-repo lint alongside the test run starves
+      # the timing-sensitive sync tests of CPU. CI lints everything.
+      glob: "*.{ts,tsx,js,mjs}"
+      run: npx eslint --max-warnings=0 --no-warn-ignored {staged_files}
 
 # Full CI checks and the release image build run before pushes, not every
 # commit. This keeps pre-commit fast while making pushes CI-complete.

@@ -20,6 +20,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Check lockfile
+        run: npm run check:lockfile
+      - name: Run lint
+        run: npm run lint
       - name: Run typecheck
         run: npm run check:type
       - name: Run unit tests

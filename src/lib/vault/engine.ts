@@ -1,4 +1,4 @@
-import { LoroDoc, type OpId, type TreeID } from "loro-crdt";
+import { type OpId, type TreeID } from "loro-crdt";
 import { VaultTree, type VaultTreeNode } from "@/lib/vault/tree";
 import { Document, CONTENT_KEY } from "@/lib/core/document";
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
@@ -115,6 +115,8 @@ export class VaultEngine {
    * materialize/rename/move/delete call.
    */
   private materializedPaths = new Map<string, string>();
+  /** Index paths written while an ingest pass applies its results. */
+  private indexTouchesThisPass: Set<string> | null = null;
   private materializedAssetPaths = new Map<string, string>();
   private readonly searchIndex: SearchIndex;
   private readonly derivedIndexes: DerivedIndexes;
@@ -578,6 +580,11 @@ export class VaultEngine {
     const frontiers = doc.doc.oplogFrontiers();
     const hash = await sha256Text(markdown);
 
+    if (await this.externalEditPendingAt(filePath, markdown)) {
+      await this.deferWriteForExternalEdit(documentId, filePath);
+      return null;
+    }
+
     // 1. Write materialised .md atomically (UTF-8 only here)
     const mdBytes = new TextEncoder().encode(markdown);
     await this.materializedWrite(filePath, mdBytes);
@@ -601,7 +608,7 @@ export class VaultEngine {
     };
     await this.docStore.compact(documentId, snapBytes, persistedState);
     this.materializedPaths.set(documentId, filePath);
-    await this.touchIndexEntry(filePath, documentId, markdown);
+    await this.touchIndexEntry(filePath, documentId, markdown, frontiers);
     await this.updateIndexesForDocument(documentId);
 
     return checkpoint;
@@ -643,15 +650,19 @@ export class VaultEngine {
    * `materializedPaths`) if that path changed — e.g. after a rename or a
    * move into a different folder. No-op if the doc isn't tree-tracked.
    */
-  private async materializeToTreePath(documentId: string): Promise<void> {
+  private async materializeToTreePath(documentId: string): Promise<boolean> {
     const node = this.tree.findByDocumentId(documentId);
     const doc = this.documents.get(documentId);
-    if (!node || !doc) return;
+    if (!node || !doc) return true;
     const newPath = buildPathFromNode(this.tree, node);
-    if (!newPath) return;
+    if (!newPath) return true;
     const oldPath = this.materializedPaths.get(documentId);
     doc.doc.commit();
     const content = doc.getText(CONTENT_KEY).toString();
+    if (await this.externalEditPendingAt(newPath, content)) {
+      await this.deferWriteForExternalEdit(documentId, newPath);
+      return false;
+    }
     const bytes = new TextEncoder().encode(content);
     await this.materializedWrite(newPath, bytes);
     if (oldPath && oldPath !== newPath) {
@@ -659,8 +670,9 @@ export class VaultEngine {
       await this.dropIndexEntry(oldPath);
     }
     this.materializedPaths.set(documentId, newPath);
-    await this.touchIndexEntry(newPath, documentId, content);
+    await this.touchIndexEntry(newPath, documentId, content, doc.doc.oplogFrontiers());
     await this.updateIndexesForDocument(documentId);
+    return true;
   }
 
   /**
@@ -738,6 +750,7 @@ export class VaultEngine {
     path: string,
     documentId: string,
     content: string,
+    frontiers?: OpId[],
   ): Promise<void> {
     const index = await this.loadDocIndex();
     index[path] = {
@@ -745,8 +758,53 @@ export class VaultEngine {
       contentHash: await sha256Text(content),
       size: content.length,
       mtime: Date.now(),
+      ...(frontiers ? { frontiers } : {}),
     };
+    this.indexTouchesThisPass?.add(path);
     await this.saveDocIndex(index);
+  }
+
+  /**
+   * True when a document's file on disk no longer matches what this engine
+   * last wrote or ingested there — an external edit that hasn't been
+   * ingested yet. Anything about to rewrite that file (a client's save on
+   * the server) must ingest first, or the external edit is overwritten.
+   */
+  async hasPendingExternalEdit(documentId: string): Promise<boolean> {
+    const node = this.tree.findByDocumentId(documentId);
+    const path = this.materializedPaths.get(documentId) ?? (node ? buildPathFromNode(this.tree, node) : null);
+    return path ? this.externalEditPendingAt(path) : false;
+  }
+
+  /**
+   * True when the file at `path` differs from what the index says this
+   * engine last wrote there (and, if given, from `aboutToWrite`). Writing
+   * over it would destroy an external edit the watcher hasn't ingested yet.
+   * No index entry means the engine never wrote the path: nothing to
+   * protect.
+   */
+  private async externalEditPendingAt(path: string, aboutToWrite?: string): Promise<boolean> {
+    const entry = (await this.loadDocIndex())[path];
+    if (!entry) return false;
+    const bytes = await this.docStore.readMaterialized(path);
+    if (!bytes) return false;
+    const raw = new TextDecoder().decode(bytes);
+    const content = extractIdFromMarkdown(raw) ? stripIdComment(raw) : raw;
+    if (aboutToWrite !== undefined && content === aboutToWrite) return false;
+    return (await sha256Text(content)) !== entry.contentHash;
+  }
+
+  /**
+   * Called instead of a Markdown write whose target holds an un-ingested
+   * external edit. The file, checkpoint and index are left alone so the
+   * next ingest pass sees the edit and three-way merges it.
+   */
+  private async deferWriteForExternalEdit(documentId: string, path: string): Promise<void> {
+    console.warn(
+      `[VaultEngine] not writing "${path}": it was edited outside the app since the last ` +
+        `write; leaving it for the external-change ingest to merge.`,
+    );
+    await this.diag("defer-write-external-edit", { detail: `${documentId} ${path}` });
   }
 
   /** Mirror of touchIndexEntry for the app's own deletions/moves-away. */
@@ -895,6 +953,7 @@ export class VaultEngine {
       }
     }
 
+    this.indexTouchesThisPass = new Set();
     for (const r of result.resolved) {
       const entryHash = result.index[r.path]!.contentHash;
 
@@ -916,6 +975,10 @@ export class VaultEngine {
         if (changed || r.rewrite) {
           const doc = this.documents.get(r.id);
           if (doc) {
+            // This pass consumes the file's current disk content, so record
+            // it as seen: the write-back below must not be deferred as an
+            // un-ingested external edit.
+            await this.touchIndexEntry(r.path, r.id, r.cleanContent);
             const state = await this.docStore.readState(r.id);
             const currentContent = doc.getText(CONTENT_KEY).toString();
 
@@ -933,8 +996,15 @@ export class VaultEngine {
             // shrink. Keep the CRDT's content; log and skip the merge.
             const currentHash = await sha256Text(currentContent);
             const hasUnindexedChanges = !prevEntry || prevEntry.contentHash !== currentHash;
+            // "Shrink" is measured against what was last written to disk (the
+            // merge base), not against the CRDT: the CRDT may hold newer
+            // changes (a client's edit) that make it longer than a disk edit
+            // which itself only *added* text. The three-way merge keeps the
+            // CRDT's own changes either way; the rail only guards against a
+            // file that lost content since the app last wrote it.
+            const baseLength = prevEntry?.size ?? currentContent.length;
             const wouldShrinkOrEmpty =
-              currentContent.length > 0 && r.cleanContent.length < currentContent.length;
+              currentContent.length > 0 && r.cleanContent.length < baseLength;
 
             if (changed && hasUnindexedChanges && wouldShrinkOrEmpty) {
               console.warn(
@@ -950,7 +1020,10 @@ export class VaultEngine {
             } else {
               const checkpoint: MaterializationCheckpoint = {
                 documentId: r.id,
-                frontiers: state?.frontiers ?? doc.frontiers(),
+                // The version last written to this path is the true merge
+                // base; the persisted state's frontiers can be newer than
+                // what's on disk (it tracks compaction, not writes).
+                frontiers: prevEntry?.frontiers ?? state?.frontiers ?? doc.frontiers(),
                 sha256: state?.sha256 ?? "",
               };
               mergeExternalEdit(doc.doc, checkpoint, r.cleanContent);
@@ -988,6 +1061,18 @@ export class VaultEngine {
       }
 
       finalIndex[r.path] = result.index[r.path]!;
+    }
+
+    // Paths this pass wrote back (merged content, re-materialised CRDT)
+    // already have a current entry, with the version written; the scan's
+    // entry describes the file as it was *before* those writes.
+    const touched = this.indexTouchesThisPass;
+    this.indexTouchesThisPass = null;
+    if (touched && touched.size > 0) {
+      const current = await this.loadDocIndex();
+      for (const path of touched) {
+        if (path in finalIndex && current[path]?.id === finalIndex[path]!.id) finalIndex[path] = current[path]!;
+      }
     }
 
     await this.persistTree();
@@ -1148,8 +1233,8 @@ export class VaultEngine {
     const mdBytes = new TextEncoder().encode(currentContent);
     await this.materializedWrite(filePath, mdBytes);
     this.materializedPaths.set(documentId, filePath);
-    await this.touchIndexEntry(filePath, documentId, currentContent);
     const frontiers = doc.doc.oplogFrontiers();
+    await this.touchIndexEntry(filePath, documentId, currentContent, frontiers);
     const hash = await sha256Text(doc.getText(CONTENT_KEY).toString());
     const now = Date.now();
     const checkpoint: MaterializationCheckpoint = { documentId, frontiers, sha256: hash };
@@ -1222,7 +1307,9 @@ export class VaultEngine {
 
     // Keep the on-disk .md mirror current. The editor already debounces
     // calls into this method (session flush), so this isn't per-keystroke.
-    await this.materializeToTreePath(documentId);
+    // A deferred write (external edit pending on disk) must not compact:
+    // compaction advances the stored frontiers the ingest merges against.
+    if (!(await this.materializeToTreePath(documentId))) return { compacted: false };
 
     const state = await this.docStore.readState(documentId);
     if (!state) return { compacted: false };
@@ -1445,14 +1532,6 @@ export class VaultEngine {
       detail: `${treeId} ${oldPaths.slice(0, 10).join(",")}`,
     });
   }
-}
-
-/** True if two Loro frontiers (OpId[]) denote the same version. */
-function frontiersEqual(a: OpId[], b: OpId[]): boolean {
-  if (a.length !== b.length) return false;
-  const key = (f: OpId) => `${f.peer}:${f.counter}`;
-  const bSet = new Set(b.map(key));
-  return a.every((f) => bSet.has(key(f)));
 }
 
 /** True if `candidate` is `ancestorId` itself or a descendant of it. */

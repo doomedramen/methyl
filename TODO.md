@@ -12,11 +12,9 @@ limits) live there, not here — only their *deviations* are listed below.
       guard, index rebuild, mass-deletion refusal, reserved-path guard) and a
       diagnostics ring buffer are in place; if it recurs, read the buffer via
       "Copy diagnostics" in the status popover.
-- [ ] **`src/lib/vault/tree.ts` reads as binary** to `grep` and `file` — some stray
-      byte in the file. Harmless so far; find and remove it.
-- [ ] **Lint:** `set-state-in-effect` error and an unused `event` in
-      `AppSidebar.tsx`, plus warnings in `engine.ts`, `store.ts`, `carousel.tsx`.
-      All predate the current work.
+- [x] **`src/lib/vault/tree.ts` reads as binary** — no longer: `file` reports
+      UTF-8 text and there are no control bytes left in it.
+- [x] **Lint** is clean and runs in CI and pre-commit with `--max-warnings=0`.
 - [ ] **Cmd/Ctrl-click on a wikilink is unverified with a real mouse.** It works
       when the event is dispatched directly; the automation tool's modifier-click
       never reached the page.

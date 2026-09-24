@@ -419,7 +419,7 @@ function GraphEditorInner({
         void persistNow(nextNodes, nextEdges);
       }, 400);
     },
-    [onDirtyChange, persistNow],
+    [documentId, onDirtyChange, persistNow],
   );
 
   const onLabelChange = useCallback(
@@ -467,44 +467,6 @@ function GraphEditorInner({
     },
     [engine, documentId, readOnly],
   );
-
-  // Load the document + stored layout on mount / documentId change.
-  useEffect(() => {
-    disposed.current = false;
-    let cancelled = false;
-    (async () => {
-      const doc = engine.getDocument(documentId);
-      const markdown = doc ? doc.getMarkdown() : "";
-      const graph = detectGraphDocument(markdown) ?? { nodes: [], edges: [] };
-      const layout = await readGraphLayout(engine.docStore, documentId);
-      if (cancelled) return;
-      const positions = layout?.nodes ?? {};
-      const { nodes: flowNodes, edges: flowEdges } = graphToFlow(
-        graph,
-        positions,
-        readOnly,
-        onLabelChange,
-        onToggleDone,
-        onConvertType,
-        onDelete,
-        layout?.meta,
-        layout?.animatedEdges ?? true,
-      );
-      setMeta(layout?.meta ?? {});
-      setAnimatedEdges(layout?.animatedEdges ?? true);
-      setNodes(flowNodes);
-      setEdges(flowEdges);
-      setLoadedFor(documentId);
-      requestAnimationFrame(() => fitView({ padding: 0.2 }));
-    })();
-    return () => {
-      cancelled = true;
-      disposed.current = true;
-      if (persistTimer.current) clearTimeout(persistTimer.current);
-      if (layoutTimer.current) clearTimeout(layoutTimer.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, documentId, readOnly]);
 
   const onToggleDone = useCallback(
     (id: string, done: boolean) => {
@@ -575,6 +537,44 @@ function GraphEditorInner({
     setAnimatedEdges(next);
     scheduleLayoutSave(nodesRef.current);
   }, [readOnly, scheduleLayoutSave]);
+
+  // Load the document + stored layout on mount / documentId change.
+  useEffect(() => {
+    disposed.current = false;
+    let cancelled = false;
+    (async () => {
+      const doc = engine.getDocument(documentId);
+      const markdown = doc ? doc.getMarkdown() : "";
+      const graph = detectGraphDocument(markdown) ?? { nodes: [], edges: [] };
+      const layout = await readGraphLayout(engine.docStore, documentId);
+      if (cancelled) return;
+      const positions = layout?.nodes ?? {};
+      const { nodes: flowNodes, edges: flowEdges } = graphToFlow(
+        graph,
+        positions,
+        readOnly,
+        onLabelChange,
+        onToggleDone,
+        onConvertType,
+        onDelete,
+        layout?.meta,
+        layout?.animatedEdges ?? true,
+      );
+      setMeta(layout?.meta ?? {});
+      setAnimatedEdges(layout?.animatedEdges ?? true);
+      setNodes(flowNodes);
+      setEdges(flowEdges);
+      setLoadedFor(documentId);
+      requestAnimationFrame(() => fitView({ padding: 0.2 }));
+    })();
+    return () => {
+      cancelled = true;
+      disposed.current = true;
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      if (layoutTimer.current) clearTimeout(layoutTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, documentId, readOnly]);
 
   // Re-apply the animation flag to freshly loaded edges when the preference
   // changes (a mount-time no-op, since graphToFlow already set it for the
@@ -728,7 +728,7 @@ function GraphEditorInner({
   useEffect(() => {
     if (!saveRequest || saveRequest.documentId !== documentId || readOnly) return;
     void persistNow(nodesRef.current, edgesRef.current);
-  }, [saveRequest, readOnly, persistNow]);
+  }, [saveRequest, documentId, readOnly, persistNow]);
 
   const onNodeDoubleClick: NodeMouseHandler = useCallback((e) => {
     e.stopPropagation();

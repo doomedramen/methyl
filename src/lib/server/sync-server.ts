@@ -5,12 +5,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { promises as fsPromises } from "fs";
 import { join } from "path";
+import type { AddressInfo } from "net";
 import { createHash, randomUUID } from "crypto";
-import type { FSWatcher } from "chokidar";
 import { ServerStore } from "@/lib/server/store";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
 import { VaultEngine, buildPathFromNode } from "@/lib/vault/engine";
-import { watchVaultForExternalChanges } from "@/lib/server/vault-watcher";
+import { watchVaultForExternalChanges, type VaultWatcher } from "@/lib/server/vault-watcher";
 import { AuthLimiter, bearerMatches, clientAddress, isValidObjectId, parseSeq, safeEqual } from "@/lib/server/auth";
 
 export interface SyncServerOptions {
@@ -279,25 +279,37 @@ export function createHttpApi(options: HttpApiOptions) {
  * There's no public API to push an update into an already-cached room
  * (the class comment on `createSyncServer` below already noted this for
  * *live* push to already-open rooms), but `SimpleServer.rooms` is a plain,
- * unencapsulated `Map` field — reaching in and overwriting the cached
- * entry's `data` in place is the only way to make a rejoin see it. This is
- * safe: `data` is always a full LoroDoc snapshot (the same shape
+ * unencapsulated `Map` field — reaching in and updating the cached
+ * entry's `data` in place is the only way to make a rejoin see it. The
+ * shapes line up: `data` is always a full LoroDoc snapshot (the same shape
  * `onSaveDocument`/`onLoadDocument` already exchange, and what
  * `durableVersionOf` already treats as the comparison unit for §20), and
  * every snapshot passed here is produced by importing into the *same*
  * engine Document/tree that both directions (client save, disk ingest)
- * share — so it's always a merge-superset of whatever was cached, never a
- * regression.
+ * share. It is *not* always a superset of the cached room, though: a
+ * client update the room has received but not yet saved (SimpleServer
+ * saves on an interval) is in the cache and not in the engine. Replacing
+ * the cached bytes dropped that update, so the client's edit silently
+ * vanished from the room. Merge instead: import `data` into the cached
+ * snapshot, so the room keeps everything either side has.
  */
 function patchCachedRoomIfLoaded(
   server: SimpleServer,
   roomId: string,
   data: Uint8Array,
 ): void {
-  const rooms = (server as unknown as { rooms: Map<string, { data: Uint8Array }> }).rooms;
+  const rooms = (server as unknown as { rooms: Map<string, { data: Uint8Array; dirty: boolean }> }).rooms;
   const roomKey = `${roomId}:${CrdtType.Loro}`;
   const cached = rooms.get(roomKey);
-  if (cached) cached.data = data;
+  if (!cached) return;
+  const merged = LoroDoc.fromSnapshot(cached.data);
+  merged.import(data);
+  cached.data = merged.export({ mode: "snapshot" });
+  // If the cache held something `data` lacked, the merged room is ahead of
+  // what was just recorded: mark it dirty so SimpleServer saves it and the
+  // durable version catches up (clients wait on it, §20).
+  const incoming = LoroDoc.fromSnapshot(data);
+  if (merged.version().compare(incoming.version()) !== 0) cached.dirty = true;
 }
 
 /**
@@ -390,7 +402,7 @@ export function createSyncServer(options: SyncServerOptions) {
    *      would need a change inside loro-websocket itself.
    */
   let engine: VaultEngine | null = null;
-  let watcher: FSWatcher | null = null;
+  let watcher: VaultWatcher | null = null;
   let bootReconciling = false;
   let mirrorWriteChain: Promise<void> = Promise.resolve();
 
@@ -516,6 +528,14 @@ export function createSyncServer(options: SyncServerOptions) {
         if (roomId.startsWith("doc:")) {
           const docId = roomId.slice(4);
           await eng.importDocumentUpdate(docId, data);
+          // Persisting below rewrites this note's file. If the file was
+          // edited on disk and the watcher hasn't ingested it yet (it waits
+          // for writes to settle, then debounces), ingest it now: the edit
+          // is three-way merged into the CRDT, which already holds the
+          // client's bytes, and published — instead of being overwritten.
+          if (watcher && (await eng.hasPendingExternalEdit(docId))) {
+            await watcher.ingestNow();
+          }
           await eng.persistDocumentIncremental(docId);
           // Materialize the .md. The mirror tree can lag here: the client's
           // tree room is saved in the SAME round, but its onSaveDocument
@@ -546,6 +566,19 @@ export function createSyncServer(options: SyncServerOptions) {
     store,
     /** The Node-side VaultEngine mirror, once start() has created it. */
     getEngine: () => engine,
+    /**
+     * Ports actually bound after start() — pass 0 for `port`/`httpPort` to
+     * let the OS pick free ones (tests do, so parallel runs never collide).
+     */
+    ports: (): { ws: number; http: number | undefined } => {
+      const wss = (server as unknown as { wss?: { address(): AddressInfo | string } }).wss;
+      const wsAddress = wss?.address();
+      const httpAddress = http?.address();
+      return {
+        ws: typeof wsAddress === "object" && wsAddress ? wsAddress.port : options.port,
+        http: typeof httpAddress === "object" && httpAddress ? httpAddress.port : httpPort,
+      };
+    },
     start: async () => {
       const eng = await ensureEngine();
 

@@ -41,8 +41,8 @@ function httpGet(
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "adhd-e2e-"));
-  wsPort = 21000 + Math.floor(Math.random() * 1000);
-  httpPort = wsPort + 1;
+  wsPort = 0;
+  httpPort = 0;
   server = createSyncServer({
     port: wsPort,
     httpPort,
@@ -51,6 +51,8 @@ beforeAll(async () => {
     saveIntervalMs: 60,
   });
   await server.start();
+  // Bound to OS-assigned ports (0 above), so parallel test files never collide.
+  ({ ws: wsPort, http: httpPort } = server.ports() as { ws: number; http: number });
 });
 
 afterAll(async () => {

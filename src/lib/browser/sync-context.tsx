@@ -71,9 +71,14 @@ export function SyncProvider({
   const [dialogOpen, setDialogOpen] = useState(false);
   const hostRef = useRef<SyncHostType | null>(null);
   const onRemoteChangeRef = useRef(onRemoteChange);
-  onRemoteChangeRef.current = onRemoteChange;
+  useEffect(() => {
+    onRemoteChangeRef.current = onRemoteChange;
+  }, [onRemoteChange]);
 
   useEffect(() => {
+    // localStorage only exists in the browser, so the saved config is read
+    // after hydration rather than during the server render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setConfig(loadSyncConfig());
   }, []);
 
@@ -102,11 +107,11 @@ export function SyncProvider({
   // Start/stop the host whenever the engine becomes syncable or config changes.
   useEffect(() => {
     let cancelled = false;
-    if (!canSync || !engine || !config) {
-      setStatus({ kind: "idle" });
-      return;
-    }
+    if (!canSync || !engine || !config) return;
 
+    // Reset before the async start below; the host reports its own status
+    // from then on.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus({ kind: "connecting" });
 
     Promise.all([import("@/lib/vault/opfs"), import("@/lib/browser/sync-host")])
@@ -140,6 +145,7 @@ export function SyncProvider({
       cancelled = true;
       hostRef.current?.stop();
       hostRef.current = null;
+      setStatus({ kind: "idle" });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canSync, engine, config?.serverUrl, config?.authToken]);

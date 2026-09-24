@@ -10,9 +10,11 @@ import { LoroDoc } from "loro-crdt";
 describe("synchost debug", () => {
   it("joins tree + doc rooms without hang", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "adhd-dbg-"));
-    const wsPort = 23111, httpPort = 23112;
-    const server = createSyncServer({ port: wsPort, httpPort, vaultPath: tmp, authToken: "t", saveIntervalMs: 50 });
+    // OS-assigned ports: a fixed pair here once sat inside the range other
+    // test files picked from at random, so parallel runs could collide.
+    const server = createSyncServer({ port: 0, httpPort: 0, vaultPath: tmp, authToken: "t", saveIntervalMs: 50 });
     await server.start();
+    const { ws: wsPort, http: httpPort } = server.ports();
 
     const treeDoc = new LoroDoc();
     treeDoc.getText("tree").insert(0, "root");

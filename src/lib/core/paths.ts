@@ -62,7 +62,7 @@ export function sanitizeName(name: string): string | null {
 export function uniqueName(
   name: string,
   taken: (n: string) => boolean,
-  existing?: string,
+  _existing?: string,
 ): string {
   if (!taken(name)) return name;
   const extIdx = name.lastIndexOf(".");

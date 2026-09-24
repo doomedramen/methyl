@@ -198,7 +198,7 @@ export class SyncCoordinator {
 
       // 9: sync doc rooms
       const touchedRoomIds: string[] = [];
-      const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds);
+      const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds, httpUrl, hdr);
 
       // 10: sync binaries
       const binariesSynced = await this.syncBinaries(binaries, httpUrl, hdr);
@@ -233,6 +233,8 @@ export class SyncCoordinator {
     client: LoroWebsocketClient,
     authToken: string,
     touched: string[],
+    httpUrl: string,
+    hdr: Record<string, string>,
   ): Promise<number> {
     if (roomIds.length === 0) return 0;
     const [acquire, release] = bounded(this.opts.maxConcurrentDocs);
@@ -269,6 +271,12 @@ export class SyncCoordinator {
           const vv = Object.fromEntries(doc.version().toJSON()) as VV;
           if (Object.keys(vv).length > 0) {
             this.journal.markDirty(id, vv);
+            // Stay in the room until the server has stored everything this
+            // client has (§20). Leaving — and destroying the socket at the
+            // end of the round — straight after reaching the *server's*
+            // version could drop this client's own update still in flight,
+            // and the round would report a sync the server never received.
+            await this.waitForDurable(id, vv, httpUrl, hdr);
           }
           count++;
           touched.push(id);
@@ -279,6 +287,35 @@ export class SyncCoordinator {
     }));
 
     return count;
+  }
+
+  /**
+   * Poll the server's durable version for `roomId` until it covers
+   * `target`, or give up after the connection timeout. Giving up is not an
+   * error: the room stays dirty in the journal and the next round retries.
+   */
+  private async waitForDurable(
+    roomId: string,
+    target: VV,
+    httpUrl: string,
+    hdr: Record<string, string>,
+  ): Promise<boolean> {
+    const deadline = Date.now() + this.opts.connectionTimeoutMs;
+    let delay = 25;
+    for (;;) {
+      try {
+        const res = await fetch(`${httpUrl}/api/durable/${encodeURIComponent(roomId)}`, { headers: hdr });
+        if (res.ok) {
+          const body = (await res.json()) as { durableVersion: string };
+          if (coversVersion(vvFromBase64(body.durableVersion), target)) return true;
+        }
+      } catch {
+        // Network hiccup: fall through to the retry below.
+      }
+      if (Date.now() + delay > deadline) return false;
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 2, 250);
+    }
   }
 
   /* ── binary transfer (bounded concurrency) ─────────────────────── */

@@ -90,6 +90,8 @@ export function AssetViewer({
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {isImageAttachment(title) ? (
+          // A blob: URL read from the local vault; next/image can't optimise it.
+          // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt={title} className="mx-auto max-h-full max-w-full rounded-lg object-contain" />
         ) : isPlayableAttachment(title) ? (
           mime.startsWith("video/") ? (
