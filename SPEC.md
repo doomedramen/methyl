@@ -824,10 +824,11 @@ There are three categories of synchronized state.
 ### Vault structure
 
 ```text
-vault:<vault-id>
+vault:local
 ```
 
-LoroTree.
+LoroTree. Each server vault is its own room namespace (see §33), so the tree room is
+`vault:local` in every one of them, whatever the browser vault's own id.
 
 ### Markdown
 
@@ -1510,32 +1511,38 @@ No COOP/COEP headers are needed because the browser no longer depends on SQLite-
 
 # 33. Server process
 
-One Docker container:
+One Docker container, one port:
 
 ```text
-methyl
+methyl :8080
 │
-├── HTTP :3000
-│   ├── static Next export
-│   └── /api/*
+├── Next app (pages, service worker)
+├── /healthz
+├── /api/vaults                  vaults this server serves
+├── /api/v/<vault>/*             changes, events, durable, assets, rooms
+├── WS /sync/<vault>             Loro room server (in-house, loro-protocol)
 │
-├── WS :8787
-│   └── official Loro server
-│
-└── /vault
-    └── mounted volume
+└── /vaults                      METHYL_VAULTS_PATH, a mounted volume
+    ├── personal/                a vault: notes + .methyl/
+    └── work/
 ```
+
+Each vault sub-folder gets its own sync database, change log, room namespace,
+filesystem watcher and Node-side mirror; nothing crosses between vaults. Folders added
+or removed while running are opened or closed. A deployment with a single
+`METHYL_VAULT_PATH` serves it as the vault `default`, and the unprefixed `/api/*`
+routes and other socket paths are deprecated aliases for `default`.
 
 Docker:
 
 ```text
 image
-  ├── Next static build
-  ├── Node sync server
+  ├── Next build
+  ├── Node server (app, API, sync rooms)
   └── service worker
 
 volume
-  └── /vault
+  └── /vault (one vault) or /vaults (several)
 ```
 
 No:

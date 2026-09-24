@@ -76,7 +76,7 @@ describe("sync-server vault watcher integration", () => {
         fs: clientFs,
         engine: clientEngine,
         wsUrl: `ws://127.0.0.1:${wsPort}`,
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: "bootimport",
       });
@@ -180,7 +180,7 @@ describe("sync-server vault watcher integration", () => {
       fs: clientFs,
       engine: clientEngine,
       wsUrl: `ws://127.0.0.1:${wsPort}`,
-      httpUrl: `http://127.0.0.1:${httpPort}`,
+      apiUrl: `http://127.0.0.1:${httpPort}/api`,
       authToken: AUTH,
       vaultId,
     });
@@ -237,7 +237,7 @@ describe("sync-server vault watcher integration", () => {
       fs: clientFs,
       engine: clientEngine,
       wsUrl: `ws://127.0.0.1:${wsPort}`,
-      httpUrl: `http://127.0.0.1:${httpPort}`,
+      apiUrl: `http://127.0.0.1:${httpPort}/api`,
       authToken: AUTH,
       vaultId,
     });

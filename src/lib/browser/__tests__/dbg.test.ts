@@ -31,7 +31,7 @@ describe("synchost debug", () => {
       getBinaryData: async () => null,
       getMissingBinaryIds: async () => [],
     };
-    const c = new SyncCoordinator({ wsUrl: `ws://127.0.0.1:${wsPort}`, httpUrl: `http://127.0.0.1:${httpPort}`, authToken: "t", vaultId: "v" }, new DirtyJournal(), hooks);
+    const c = new SyncCoordinator({ wsUrl: `ws://127.0.0.1:${wsPort}`, apiUrl: `http://127.0.0.1:${httpPort}/api`, authToken: "t", vaultId: "v" }, new DirtyJournal(), hooks);
     console.log("sync start");
     // 4000ms left ~1s of headroom under the (default) 5000ms test timeout —
     // too tight when many other test files are also spinning up real

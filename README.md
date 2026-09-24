@@ -115,7 +115,8 @@ docker compose run --rm methyl node dist/server.cjs restore /vault-backups/2026-
 docker compose up -d
 ```
 
-Restore refuses to write into a vault folder that isn't empty.
+Restore refuses to write into a vault folder that isn't empty. With `METHYL_VAULTS_PATH`
+(below), name the vault: `backup --vault work /vault-backups/work-$(date +%F)`.
 
 In the browser, **Export vault** (Markdown and attachments, opens anywhere) and **Export full
 backup** (adds the `.methyl/` metadata) are in the command menu (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>).
@@ -131,7 +132,8 @@ Once a server is running (above), point each browser at it:
 2. Open **Sync settings** — from the status popover in the sidebar footer, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> → "Sync settings".
 3. Paste the server URL (auto-filled with the current origin when it's detected as a
    Methyl server) and the `METHYL_AUTH_TOKEN` you set above. "Test connection" checks
-   both before you save.
+   both before you save. **Server vault** picks which of the server's vaults this
+   browser vault syncs with; a server with one vault calls it `default`.
 4. Save. Only the tab holding the vault's writer lock (SPEC §12) opens a sync
    connection; other tabs stay read-only and don't duplicate it.
 
@@ -159,7 +161,8 @@ default, cross-origin requests are rejected by the browser.
 | --- | --- | --- |
 | `METHYL_AUTH_TOKEN` | *(required)* | Shared secret clients use to authenticate. |
 | `METHYL_PORT` / `METHYL_HOST` | `8080` / `0.0.0.0` | Where the server listens. |
-| `METHYL_VAULT_PATH` | `/vault` | The mounted vault folder. |
+| `METHYL_VAULT_PATH` | `/vault` | The mounted vault folder, served as the vault `default`. Ignored when `METHYL_VAULTS_PATH` is set. |
+| `METHYL_VAULTS_PATH` | *(unset)* | A folder of vaults: each sub-folder is served as its own vault. See [Vaults](#vaults). |
 | `METHYL_WATCH` | `true` | Watch the vault folder for external edits. |
 | `METHYL_ALLOWED_ORIGINS` | *(empty)* | CORS allow-list, see above. |
 | `METHYL_TRUST_PROXY` | `false` | Set to `true` only behind a reverse proxy you control. Failed logins are then counted per `X-Forwarded-For` address instead of per proxy. |
@@ -175,6 +178,23 @@ settings. The vault name at the top of the sidebar switches between them; **Mana
 (also in the command menu) creates, renames and deletes vaults, and imports a full backup
 (**Export full backup**) as a new vault. A vault's notes live at `/<vault id>/<note path>`
 in the app's URLs.
+
+The server can serve several vaults too. Mount a folder of vaults and set
+`METHYL_VAULTS_PATH` to it; each sub-folder named with lower-case letters, digits and
+hyphens (e.g. `personal`, `work`) is a vault, with its own sync database, change feed and
+file watcher. Folders added or removed while the server runs are picked up within a
+second or so. In each browser vault's sync settings, choose the **Server vault** to sync
+with.
+
+To move an existing single-vault server over, stop it, move the vault folder into the
+vaults folder under a name (say `/vaults/personal`), set `METHYL_VAULTS_PATH=/vaults`, and
+start it again. The server never moves your folders itself. Browsers keep syncing with
+the vault called `default`, so either name that folder `default` or change each
+browser's **Server vault** setting to the new name.
+
+Server API, per vault: `/api/v/<vault>/…` and the sync socket at `/sync/<vault>`;
+`GET /api/vaults` lists them. The old unprefixed `/api/…` routes still reach the
+`default` vault but are deprecated.
 
 ## Plugins
 

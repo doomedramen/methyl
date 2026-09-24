@@ -90,14 +90,16 @@ describe("sync config store", () => {
   it("derives ws/http urls from an https origin", () => {
     expect(deriveSyncUrls("https://adhd.example.com/some/path?x=1")).toEqual({
       httpUrl: "https://adhd.example.com",
-      wsUrl: "wss://adhd.example.com",
+      apiUrl: "https://adhd.example.com/api/v/default",
+      wsUrl: "wss://adhd.example.com/sync/default",
     });
   });
 
   it("derives ws/http urls from an http origin with a port", () => {
-    expect(deriveSyncUrls("http://localhost:8090")).toEqual({
+    expect(deriveSyncUrls("http://localhost:8090", "work")).toEqual({
       httpUrl: "http://localhost:8090",
-      wsUrl: "ws://localhost:8090",
+      apiUrl: "http://localhost:8090/api/v/work",
+      wsUrl: "ws://localhost:8090/sync/work",
     });
   });
 

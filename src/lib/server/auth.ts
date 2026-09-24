@@ -137,3 +137,8 @@ export function parseSeq(value: string | null): number | null {
   const n = Number(value);
   return Number.isSafeInteger(n) ? n : null;
 }
+
+/** Server vault ids are folder names: lower-case letters, digits and hyphens (spec item 9). */
+export function isServerVaultId(id: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(id);
+}

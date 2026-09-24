@@ -18,13 +18,15 @@ const EVENT_DEBOUNCE_MS = 50;
 export interface JournalSnapshot {
   entries: DirtyEntry[];
   lastServerSeq: number;
+  /** The API the seq belongs to; another server or server vault starts again from 0. */
+  remote?: string;
 }
 
 export interface SyncHostOptions {
   fs: VaultFileSystem;
   engine: VaultEngine;
   wsUrl: string;
-  httpUrl: string;
+  apiUrl: string;
   authToken: string;
   vaultId: string;
   maxConcurrentDocs?: number;
@@ -50,19 +52,19 @@ export class SyncHost {
   private events: AbortController | null = null;
   private eventsConnected = false;
 
-  private readonly httpUrl: string;
+  private readonly apiUrl: string;
   private readonly authToken: string;
 
   private constructor(options: SyncHostOptions, journal: DirtyJournal) {
     this.fs = options.fs;
     this.engine = options.engine;
     this.journal = journal;
-    this.httpUrl = options.httpUrl;
+    this.apiUrl = options.apiUrl;
     this.authToken = options.authToken;
     this.coordinator = new SyncCoordinator(
       {
         wsUrl: options.wsUrl,
-        httpUrl: options.httpUrl,
+        apiUrl: options.apiUrl,
         authToken: options.authToken,
         vaultId: options.vaultId,
         maxConcurrentDocs: options.maxConcurrentDocs,
@@ -81,7 +83,7 @@ export class SyncHost {
   }
 
   static async create(options: SyncHostOptions): Promise<SyncHost> {
-    const journal = await loadJournal(options.fs);
+    const journal = await loadJournal(options.fs, options.apiUrl);
     return new SyncHost(options, journal);
   }
 
@@ -134,7 +136,7 @@ export class SyncHost {
     const events = new AbortController();
     this.events = events;
     void subscribeToChanges({
-      url: `${this.httpUrl}/api/events`,
+      url: `${this.apiUrl}/events`,
       headers: { authorization: `Bearer ${this.authToken}` },
       signal: events.signal,
       onConnect: () => {
@@ -221,7 +223,7 @@ export class SyncHost {
     this.discoveryRunning = true;
     try {
       const response = await fetch(
-        `${this.httpUrl}/api/changes?after=${this.journal.getLastServerSeq()}`,
+        `${this.apiUrl}/changes?after=${this.journal.getLastServerSeq()}`,
         { headers: { authorization: `Bearer ${this.authToken}` } },
       );
       if (response.ok) {
@@ -245,13 +247,13 @@ export class SyncHost {
   }
 
   async persistJournal(): Promise<void> {
-    await saveJournal(this.fs, this.journal.snapshot());
+    await saveJournal(this.fs, { ...this.journal.snapshot(), remote: this.apiUrl });
   }
 
   /** Whether the server already has any recorded content for this vault. */
   private async serverHasContent(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.httpUrl}/api/changes?after=0`, {
+      const res = await fetch(`${this.apiUrl}/changes?after=0`, {
         headers: { authorization: `Bearer ${this.authToken}` },
       });
       if (!res.ok) return false; // can't tell — safest to assume empty and keep the seed
@@ -308,12 +310,18 @@ export class SyncHost {
 
 export async function loadJournal(
   fs: VaultFileSystem,
+  remote?: string,
 ): Promise<DirtyJournal> {
   const raw = await fs.readTextFile(JOURNAL_PATH);
   if (!raw) return new DirtyJournal();
   try {
     const snapshot = JSON.parse(raw) as JournalSnapshot;
-    return new DirtyJournal(snapshot.entries ?? [], snapshot.lastServerSeq ?? 0);
+    // A seq from a different server vault means nothing here: discover
+    // from the start. Local dirty entries still need sending either way.
+    // (A journal from before `remote` was recorded belongs to the same
+    // server's default vault, reached by the legacy routes: keep its seq.)
+    const sameRemote = !remote || !snapshot.remote || snapshot.remote === remote;
+    return new DirtyJournal(snapshot.entries ?? [], sameRemote ? (snapshot.lastServerSeq ?? 0) : 0);
   } catch {
     return new DirtyJournal();
   }

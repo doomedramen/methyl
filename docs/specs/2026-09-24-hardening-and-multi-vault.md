@@ -131,7 +131,7 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 
 **Acceptance.** Extend `src/lib/server/__tests__/sync-server.e2e.test.ts`: two clients in one room see each other's edits in under 1 s; an external disk edit reaches an already-open client in under 2 s (watcher debounce 300 ms plus margin); a rejoining client gets the latest snapshot. Tick the "Sync isn't live" entry in `TODO.md` and update SPEC §18–20 and §33.
 
-**As built.** `src/lib/server/room-server.ts` implements the protocol on `ws` + `loro-protocol` + `loro-crdt` (one live `LoroDoc` per open room), attached to the app's HTTP server; `main.ts` hands it upgrades directly. `recordRoomSave` pushes server-side changes into open rooms. Because clients join rooms only for a sync round, "live" also needs a nudge for idle clients: `GET /api/events` streams a Server-Sent Event per recorded change, and `SyncHost` runs a round when one arrives (read with `fetch` so it carries the auth header). Discovery polling drops to every 30 s while the stream is connected. Two bugs fixed on the way: `SyncScheduler.kick()` during a running round was dropped (now it runs again right after), and saves no longer lose updates that arrive mid-save. The multi-vault server routes (`/api/v/<vaultId>/…`, `/sync/<vaultId>`) are still to do.
+**As built.** `src/lib/server/room-server.ts` implements the protocol on `ws` + `loro-protocol` + `loro-crdt` (one live `LoroDoc` per open room), attached to the app's HTTP server; `main.ts` hands it upgrades directly. `recordRoomSave` pushes server-side changes into open rooms. Because clients join rooms only for a sync round, "live" also needs a nudge for idle clients: `GET /api/events` streams a Server-Sent Event per recorded change, and `SyncHost` runs a round when one arrives (read with `fetch` so it carries the auth header). Discovery polling drops to every 30 s while the stream is connected. Two bugs fixed on the way: `SyncScheduler.kick()` during a running round was dropped (now it runs again right after), and saves no longer lose updates that arrive mid-save. The multi-vault server routes are built on top of it; see item 9.
 
 ### 4.2 Report the `loro-codemirror` bug upstream (item 8)
 
@@ -196,6 +196,13 @@ OPFS root
 - Switching vaults is a full page load of the other vault's URL; nothing per-vault survives it.
 - A vault whose folder has note files but no CRDT tree adopts them at boot instead of showing an empty vault (the state the unexplained wipe left behind).
 - **The server half is built with item 7** (the in-house room server), not in phase C: a single `SimpleServer` can't be namespaced per vault without changing room ids, and item 7 replaces it anyway.
+
+**As built (server half).** `src/lib/server/vault-host.ts` (`VaultHost`) serves every valid sub-folder of `METHYL_VAULTS_PATH` through its own `createSyncServer` (store, change log, room server, watcher, mirror) and rescans the folder on change, opening and closing vaults. Routes: `GET /api/vaults`, `/api/v/<id>/…`, WebSocket `/sync/<id>`; the unprefixed routes and any other socket path alias `default` with a one-time deprecation log. A single `METHYL_VAULT_PATH` is served as `default`. Choices made:
+
+- The tree room is `vault:local` in every server vault (`src/lib/sync/rooms.ts`). Each server vault is its own room namespace, so the tree room needs no vault id, and `vault:local` is what every existing server database already holds. Browser vaults join it whatever their local id.
+- A browser vault's sync config gains `remoteVaultId` (default `default`), chosen in *Sync settings* with the server's vault list as suggestions. The client's API base (`apiUrl`) and socket URL carry it. The sync journal records which API its `lastServerSeq` belongs to and starts again from 0 when the binding changes.
+- `backup`/`restore` take `--vault <id>` in multi-vault mode.
+- Per-vault device authorisation and `.methyl-server/server.db` come with item 5.
 
 **Acceptance.** Unit tests for the registry, per-vault key namespacing and the migration (including a crash between copy and delete, then rerun). Server e2e test with two vaults: edits in one never show up in the other's changes feed, and a device paired for one gets 403 on the other. Playwright: create a second vault, switch, both vaults keep their notes across reloads, and two tabs hold writer locks on different vaults at once. Add a multi-vault section to SPEC.md and fix the `TODO.md` reference.
 

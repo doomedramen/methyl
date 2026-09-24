@@ -1,6 +1,7 @@
 import { migrateLegacyMetaDirOnDisk } from "@/lib/server/meta-migration";
 import { META_DIR } from "@/lib/core/paths";
 import { RoomServer } from "@/lib/server/room-server";
+import { TREE_VAULT_ID } from "@/lib/sync/rooms";
 import { CrdtType } from "loro-protocol";
 import { LoroDoc, type TreeID } from "loro-crdt";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
@@ -160,7 +161,9 @@ export function createHttpApi(options: HttpApiOptions) {
     limiter.recordSuccess(client);
 
     const url = new URL(req.url ?? "/", "http://localhost");
-    const { pathname } = url;
+    // Served at /api/<route> or, per vault, /api/v/<vaultId>/<route>
+    // (VaultHost picks the vault; the routes are the same).
+    const pathname = url.pathname.replace(/^\/api\/v\/[^/]+(?=\/)/, "/api");
 
     if (req.method === "GET" && pathname === "/api/events") {
       // Server-Sent Events: one `data: {"seq":N}` per recorded change, so
@@ -336,7 +339,7 @@ export function createSyncServer(options: SyncServerOptions) {
   migrateLegacyMetaDirOnDisk(options.vaultPath);
   const store = new ServerStore(`${options.vaultPath}/${META_DIR}/server/sync.sqlite`);
   const assetDir = `${options.vaultPath}/${META_DIR}/server/assets`;
-  const vaultId = options.vaultId ?? "local";
+  const vaultId = options.vaultId ?? TREE_VAULT_ID;
   const treeRoomId = `vault:${vaultId}`;
 
   /**
@@ -530,6 +533,8 @@ export function createSyncServer(options: SyncServerOptions) {
     /** The sync room server; route WebSocket upgrades to `rooms.handleUpgrade`. */
     rooms,
     store,
+    /** Mirror an uploaded asset into the vault folder (the HTTP API's onAssetPut). */
+    materializeAsset: materializeServerAsset,
     /** The Node-side VaultEngine mirror, once start() has created it. */
     getEngine: () => engine,
     /**

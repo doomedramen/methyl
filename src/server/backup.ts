@@ -2,12 +2,15 @@ import { META_DIR } from "@/lib/core/paths";
 import { promises as fs } from "fs";
 import { join, relative } from "path";
 import Database from "better-sqlite3";
+import { isServerVaultId } from "@/lib/server/auth";
 
 /**
  * Server backup and restore (spec item 2).
  *
- *   node dist/server.cjs backup  <destination-dir>
- *   node dist/server.cjs restore <backup-dir>
+ *   node dist/server.cjs backup  [--vault <id>] <destination-dir>
+ *   node dist/server.cjs restore [--vault <id>] <backup-dir>
+ *
+ * `--vault` is required with METHYL_VAULTS_PATH and names the vault folder.
  *
  * Backup copies the whole vault folder — notes, attachments and the
  * `.methyl/` metadata — and takes the sync database through SQLite's online
@@ -80,11 +83,34 @@ export async function restoreVault(backupPath: string, vaultPath: string): Promi
 }
 
 /** `backup`/`restore` subcommands of the server entry point. Returns an exit code. */
-export async function runBackupCommand(command: string, args: string[], vaultPath: string): Promise<number> {
-  const target = args[0];
-  if (!target) {
-    console.error(`usage: server.cjs ${command} <${command === "backup" ? "destination" : "backup"}-dir>`);
+export async function runBackupCommand(
+  command: string,
+  args: string[],
+  where: { vaultsPath?: string; vaultPath: string },
+): Promise<number> {
+  // With METHYL_VAULTS_PATH, name the vault: backup --vault <id> <dir>.
+  const rest = [...args];
+  let vaultId: string | undefined;
+  const flag = rest.indexOf("--vault");
+  if (flag >= 0) {
+    vaultId = rest[flag + 1];
+    rest.splice(flag, 2);
+  }
+  const target = rest[0];
+  const usage = `usage: server.cjs ${command} ${where.vaultsPath ? "--vault <id> " : ""}<${
+    command === "backup" ? "destination" : "backup"
+  }-dir>`;
+  if (!target || (flag >= 0 && !vaultId)) {
+    console.error(usage);
     return 2;
+  }
+  let vaultPath = where.vaultPath;
+  if (where.vaultsPath) {
+    if (!vaultId || !isServerVaultId(vaultId)) {
+      console.error(`${usage}\n(--vault takes a vault folder name: lower-case letters, digits and hyphens)`);
+      return 2;
+    }
+    vaultPath = join(where.vaultsPath, vaultId);
   }
   try {
     if (command === "backup") {

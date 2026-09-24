@@ -11,7 +11,8 @@ import { testWebSocketConnection } from "@/lib/sync/websocket";
 
 export interface SyncCoordinatorOptions {
   wsUrl: string;
-  httpUrl: string;
+  /** HTTP API base: `<origin>/api/v/<vaultId>` (or `<origin>/api` for the legacy default vault). */
+  apiUrl: string;
   authToken: string;
   vaultId: string;
   maxConcurrentDocs?: number;   // §34: 8 on mobile
@@ -144,7 +145,7 @@ export class SyncCoordinator {
   /* ── §34 core loop ─────────────────────────────────────────────── */
 
   private async loop(): Promise<SyncReport> {
-    const { wsUrl, httpUrl, authToken, vaultId } = this.opts;
+    const { wsUrl, apiUrl, authToken, vaultId } = this.opts;
     const hdr = { authorization: `Bearer ${authToken}` };
 
     // 2-4: connect WS
@@ -182,7 +183,7 @@ export class SyncCoordinator {
       // 7: discovery poll
       const lastSeq = this.journal.getLastServerSeq();
       console.log("coord: discovery after", lastSeq);
-      const changesRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
+      const changesRes = await fetch(`${apiUrl}/changes?after=${lastSeq}`, { headers: hdr });
       const { changes: serverChanges } = await changesRes.json() as {
         reset?: boolean;
         changes: Array<{ objectId: string; seq: number; type?: string }>;
@@ -213,13 +214,13 @@ export class SyncCoordinator {
 
       // 9: sync doc rooms
       const touchedRoomIds: string[] = [];
-      const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds, httpUrl, hdr);
+      const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds, apiUrl, hdr);
 
       // 10: sync binaries
-      const binariesSynced = await this.syncBinaries(binaries, httpUrl, hdr);
+      const binariesSynced = await this.syncBinaries(binaries, apiUrl, hdr);
 
       // 11-12: durable confirm + clear
-      const dirtyCleared = await this.confirmDurables(httpUrl, hdr);
+      const dirtyCleared = await this.confirmDurables(apiUrl, hdr);
 
       // The vault tree gets the same guarantee as documents (§20): don't
       // leave its room — and destroy the socket — before the server has
@@ -227,13 +228,13 @@ export class SyncCoordinator {
       // with the connection.
       const treeVersion = Object.fromEntries(treeDoc.version().toJSON()) as VV;
       if (Object.keys(treeVersion).length > 0) {
-        await this.waitForDurable(`vault:${vaultId}`, treeVersion, httpUrl, hdr);
+        await this.waitForDurable(`vault:${vaultId}`, treeVersion, apiUrl, hdr);
       }
 
       // 13: advance lastServerSeq. Re-poll after sync: rooms we synced (and
       // the tree) have produced new change-log rows, so reflect them now so
       // the next discovery poll skips everything already durably sent.
-      const afterRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
+      const afterRes = await fetch(`${apiUrl}/changes?after=${lastSeq}`, { headers: hdr });
       const { changes: afterChanges } = await afterRes.json() as {
         changes: Array<{ objectId: string; seq: number; type?: string }>;
       };
@@ -257,7 +258,7 @@ export class SyncCoordinator {
     client: LoroWebsocketClient,
     authToken: string,
     touched: string[],
-    httpUrl: string,
+    apiUrl: string,
     hdr: Record<string, string>,
   ): Promise<number> {
     if (roomIds.length === 0) return 0;
@@ -300,7 +301,7 @@ export class SyncCoordinator {
             // end of the round — straight after reaching the *server's*
             // version could drop this client's own update still in flight,
             // and the round would report a sync the server never received.
-            await this.waitForDurable(id, vv, httpUrl, hdr);
+            await this.waitForDurable(id, vv, apiUrl, hdr);
           }
           count++;
           touched.push(id);
@@ -321,14 +322,14 @@ export class SyncCoordinator {
   private async waitForDurable(
     roomId: string,
     target: VV,
-    httpUrl: string,
+    apiUrl: string,
     hdr: Record<string, string>,
   ): Promise<boolean> {
     const deadline = Date.now() + this.opts.connectionTimeoutMs;
     let delay = 25;
     for (;;) {
       try {
-        const res = await fetch(`${httpUrl}/api/durable/${encodeURIComponent(roomId)}`, { headers: hdr });
+        const res = await fetch(`${apiUrl}/durable/${encodeURIComponent(roomId)}`, { headers: hdr });
         if (res.ok) {
           const body = (await res.json()) as { durableVersion: string };
           if (coversVersion(vvFromBase64(body.durableVersion), target)) return true;
@@ -346,7 +347,7 @@ export class SyncCoordinator {
 
   private async syncBinaries(
     ids: string[],
-    httpUrl: string,
+    apiUrl: string,
     hdr: Record<string, string>,
   ): Promise<number> {
     if (ids.length === 0) return 0;
@@ -358,7 +359,7 @@ export class SyncCoordinator {
       try {
         const data = await this.hooks.getBinaryData(id);
         if (data) {
-          const response = await fetch(`${httpUrl}/api/assets/${encodeURIComponent(id)}`, {
+          const response = await fetch(`${apiUrl}/assets/${encodeURIComponent(id)}`, {
             method: "PUT",
             headers: { ...hdr, "content-type": "application/octet-stream" },
             body: data.slice().buffer as ArrayBuffer,
@@ -367,7 +368,7 @@ export class SyncCoordinator {
           return;
         }
         if (!this.hooks.writeBinaryData) return;
-        const response = await fetch(`${httpUrl}/api/assets/${encodeURIComponent(id)}`, {
+        const response = await fetch(`${apiUrl}/assets/${encodeURIComponent(id)}`, {
           headers: hdr,
         });
         if (!response.ok) return;
@@ -382,7 +383,7 @@ export class SyncCoordinator {
   /* ── durable poll (exponential backoff, 3 rounds) ───────────────── */
 
   private async confirmDurables(
-    httpUrl: string,
+    apiUrl: string,
     hdr: Record<string, string>,
   ): Promise<number> {
     let cleared = 0;
@@ -394,7 +395,7 @@ export class SyncCoordinator {
       const results = await Promise.allSettled(
         pending.map(async (entry) => {
           const res = await fetch(
-            `${httpUrl}/api/durable/${encodeURIComponent(entry.roomId)}`,
+            `${apiUrl}/durable/${encodeURIComponent(entry.roomId)}`,
             { headers: hdr },
           );
           if (!res.ok) return null;

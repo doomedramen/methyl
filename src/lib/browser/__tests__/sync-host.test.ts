@@ -57,7 +57,7 @@ function makeHostOptions(engine: VaultEngine, fs: MemoryVaultFS) {
     fs,
     engine,
     wsUrl: `ws://127.0.0.1:${wsPort}`,
-    httpUrl: `http://127.0.0.1:${httpPort}`,
+    apiUrl: `http://127.0.0.1:${httpPort}/api`,
     authToken: AUTH,
     vaultId: VAULT,
   };
@@ -392,7 +392,7 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
       fs,
       engine,
       wsUrl: `ws://127.0.0.1:${diskWsPort}`,
-      httpUrl: `http://127.0.0.1:${diskHttpPort}`,
+      apiUrl: `http://127.0.0.1:${diskHttpPort}/api`,
       authToken: DISK_AUTH,
       vaultId: DISK_VAULT,
     });
@@ -443,7 +443,7 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
       fs,
       engine,
       wsUrl: `ws://127.0.0.1:${diskWsPort}`,
-      httpUrl: `http://127.0.0.1:${diskHttpPort}`,
+      apiUrl: `http://127.0.0.1:${diskHttpPort}/api`,
       authToken: DISK_AUTH,
       vaultId: DISK_VAULT,
     });
@@ -483,7 +483,7 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
       fs,
       engine,
       wsUrl: `ws://127.0.0.1:${diskWsPort}`,
-      httpUrl: `http://127.0.0.1:${diskHttpPort}`,
+      apiUrl: `http://127.0.0.1:${diskHttpPort}/api`,
       authToken: DISK_AUTH,
       vaultId: DISK_VAULT,
       intervalMs: 60_000,

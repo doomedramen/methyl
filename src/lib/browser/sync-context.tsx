@@ -25,6 +25,7 @@ import type { ReactNode } from "react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { SyncHost as SyncHostType, SyncStatus } from "@/lib/browser/sync-host";
 import type { SyncReport } from "@/lib/sync/coordinator";
+import { TREE_VAULT_ID } from "@/lib/sync/rooms";
 import {
   clearSyncConfig,
   deriveSyncUrls,
@@ -118,14 +119,15 @@ export function SyncProvider({
         if (cancelled) return;
         // The vault's own file system: writer-lock gated, one write queue.
         const fs = getVaultFileSystem();
-        const { wsUrl, httpUrl } = deriveSyncUrls(config.serverUrl);
+        const { wsUrl, apiUrl } = deriveSyncUrls(config.serverUrl, config.remoteVaultId);
         const host = await SyncHost.create({
           fs,
           engine,
           wsUrl,
-          httpUrl,
+          apiUrl,
           authToken: config.authToken,
-          vaultId: engine.vaultId,
+          // The server vault's tree room, whatever this vault's local id.
+          vaultId: TREE_VAULT_ID,
         });
         if (cancelled) {
           host.stop();

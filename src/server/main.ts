@@ -1,14 +1,16 @@
-import { META_DIR } from "@/lib/core/paths";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
 import type { Socket } from "net";
 import { join } from "path";
 import next from "next";
-import { createSyncServer, createHttpApi } from "@/lib/server/sync-server";
+import { VaultHost } from "@/lib/server/vault-host";
 import { AuthLimiter, clientAddress } from "@/lib/server/auth";
 import { runBackupCommand } from "./backup";
 
 const PORT = Number(process.env.METHYL_PORT ?? 8080);
 const HOST = process.env.METHYL_HOST ?? "0.0.0.0";
+// Multi-vault: every sub-folder of METHYL_VAULTS_PATH is a vault. Without
+// it, METHYL_VAULT_PATH is served as the single vault "default".
+const VAULTS_PATH = process.env.METHYL_VAULTS_PATH || undefined;
 const VAULT_PATH = process.env.METHYL_VAULT_PATH ?? "/vault";
 const WATCH = process.env.METHYL_WATCH !== "false";
 const AUTH_TOKEN = process.env.METHYL_AUTH_TOKEN;
@@ -54,27 +56,18 @@ function requireAuthToken(): void {
 async function main() {
   // One limiter for every authenticated entry point: HTTP API and sync joins.
   const limiter = new AuthLimiter();
-  // No port: this server's own upgrade handler (below) hands sync sockets
-  // to the room server — one port for everything, no internal proxy.
-  const syncServer = createSyncServer({
+  // One room server per vault; this server's own upgrade handler (below)
+  // routes sync sockets to them — one port for everything.
+  const vaults = new VaultHost({
+    vaultsPath: VAULTS_PATH,
     vaultPath: VAULT_PATH,
     authToken: AUTH_TOKEN!,
     watch: WATCH,
     limiter,
     trustProxy: TRUST_PROXY,
-  });
-
-  await syncServer.start();
-
-  const assetDir = `${VAULT_PATH}/${META_DIR}/server/assets`;
-  const apiHandler = createHttpApi({
-    store: syncServer.store,
-    authToken: AUTH_TOKEN!,
-    assetDir,
-    limiter,
-    trustProxy: TRUST_PROXY,
     maxAssetBytes: MAX_ASSET_BYTES,
   });
+  await vaults.start();
 
   // In-process Next.js (custom-server API). `dev: false` — this entrypoint
   // is the production path; `npm run dev` already serves the dev server.
@@ -92,7 +85,7 @@ async function main() {
       clientSocket.end("HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n");
       return;
     }
-    syncServer.rooms.handleUpgrade(req, clientSocket, head);
+    vaults.handleUpgrade(req, clientSocket, head);
   }
 
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -113,7 +106,7 @@ async function main() {
     }
 
     if (url.pathname.startsWith("/api/")) {
-      apiHandler(req, res);
+      vaults.handleApi(req, res);
       return;
     }
 
@@ -132,12 +125,15 @@ async function main() {
   server.on("upgrade", handleUpgrade);
 
   await new Promise<void>((resolve) => server.listen(PORT, HOST, resolve));
-  console.log(`[methyl] listening on http://${HOST}:${PORT} (vault: ${VAULT_PATH})`);
+  console.log(
+    `[methyl] listening on http://${HOST}:${PORT} ` +
+      (VAULTS_PATH ? `(vaults: ${VAULTS_PATH})` : `(vault: ${VAULT_PATH})`),
+  );
 
   const shutdown = async (signal: string) => {
     console.log(`[methyl] received ${signal}, shutting down`);
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    await syncServer.stop();
+    await vaults.stop();
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -146,7 +142,8 @@ async function main() {
 
 const command = process.argv[2];
 if (command === "backup" || command === "restore") {
-  void runBackupCommand(command, process.argv.slice(3), VAULT_PATH).then((code) => process.exit(code));
+  void runBackupCommand(command, process.argv.slice(3), { vaultsPath: VAULTS_PATH, vaultPath: VAULT_PATH })
+    .then((code) => process.exit(code));
 } else {
   requireAuthToken();
   main().catch((err) => {

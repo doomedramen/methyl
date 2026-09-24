@@ -2,8 +2,9 @@
 
 Work that [SPEC.md](SPEC.md) doesn't already describe: bugs found in use, gaps
 between the spec and what's built, and polish. Features the spec covers
-(attachments, graph view, Mermaid/math, export, multi-vault, mobile/iOS
-limits) live there, not here — only their *deviations* are listed below.
+(attachments, graph view, Mermaid/math, export, mobile/iOS limits) live there,
+not here — only their *deviations* are listed below. Multiple vaults are
+described in README.md and SPEC.md §33.
 
 ## Bugs
 

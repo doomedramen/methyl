@@ -77,7 +77,7 @@ describe("SyncCoordinator §34", () => {
     const coordinator = new SyncCoordinator(
       {
         wsUrl: "ws://127.0.0.1:1",
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: VAULT,
         connectionTimeoutMs: 50,
@@ -105,7 +105,7 @@ describe("SyncCoordinator §34", () => {
     const coordinator = new SyncCoordinator(
       {
         wsUrl: `ws://127.0.0.1:${wsPort}`,
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: VAULT,
       },
@@ -158,7 +158,7 @@ describe("SyncCoordinator §34", () => {
     const coordinator = new SyncCoordinator(
       {
         wsUrl: `ws://127.0.0.1:${wsPort}`,
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: VAULT,
       },

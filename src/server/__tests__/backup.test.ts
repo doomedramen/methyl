@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync
 import { join } from "path";
 import { tmpdir } from "os";
 import { ServerStore } from "@/lib/server/store";
-import { backupVault, restoreVault } from "../backup";
+import { backupVault, restoreVault, runBackupCommand } from "../backup";
 
 const dirs: string[] = [];
 const tmp = (name: string) => {
@@ -57,5 +57,24 @@ describe("server backup and restore", () => {
     const fresh = join(tmp("fresh"), "vault");
     await restoreVault(backup, fresh);
     expect(readFileSync(join(fresh, "Home.md"), "utf8")).toBe("home\n");
+  });
+
+  it("with a vaults directory, backs up the vault named by --vault", async () => {
+    const vaults = tmp("vaults");
+    mkdirSync(join(vaults, "work"));
+    writeFileSync(join(vaults, "work", "Plan.md"), "plan\n");
+    const where = { vaultsPath: vaults, vaultPath: "/unused" };
+    const quiet = { log: console.log, error: console.error };
+    console.log = console.error = () => {};
+    try {
+      expect(await runBackupCommand("backup", [join(tmp("x"), "b")], where)).toBe(2);
+      expect(await runBackupCommand("backup", ["--vault", "../etc", join(tmp("y"), "b")], where)).toBe(2);
+      const dest = join(tmp("dest"), "b");
+      expect(await runBackupCommand("backup", ["--vault", "work", dest], where)).toBe(0);
+      expect(readFileSync(join(dest, "Plan.md"), "utf8")).toBe("plan\n");
+    } finally {
+      console.log = quiet.log;
+      console.error = quiet.error;
+    }
   });
 });

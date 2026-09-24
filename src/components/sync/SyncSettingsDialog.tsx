@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { useSync } from "@/lib/browser/sync-context";
-import type { SyncConfig } from "@/lib/browser/sync-config";
+import { DEFAULT_REMOTE_VAULT, listServerVaults, type SyncConfig } from "@/lib/browser/sync-config";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +43,9 @@ function SyncSettingsForm() {
     () => config?.serverUrl ?? (typeof window === "undefined" ? "" : window.location.origin),
   );
   const [authToken, setAuthToken] = useState(() => config?.authToken ?? "");
+  const [remoteVaultId, setRemoteVaultId] = useState(() => config?.remoteVaultId ?? DEFAULT_REMOTE_VAULT);
+  // The server's vaults, offered as suggestions once a connection test ran.
+  const [serverVaults, setServerVaults] = useState<string[]>([]);
   const [showToken, setShowToken] = useState(false);
   const [test, setTest] = useState<TestResult>({ kind: "idle" });
 
@@ -52,24 +55,33 @@ function SyncSettingsForm() {
       return;
     }
     setTest({ kind: "testing" });
-    const candidate: SyncConfig = { serverUrl: serverUrl.trim(), authToken: authToken.trim() };
+    const candidate: SyncConfig = {
+      serverUrl: serverUrl.trim(),
+      authToken: authToken.trim(),
+      remoteVaultId: remoteVaultId.trim() || DEFAULT_REMOTE_VAULT,
+    };
     try {
       new URL(candidate.serverUrl);
     } catch {
       setTest({ kind: "error", message: "That doesn't look like a valid URL." });
       return;
     }
-    const result = await testConnection(candidate);
-    setTest(result.ok ? { kind: "ok" } : { kind: "error", message: result.error });
-  }, [serverUrl, authToken, testConnection]);
+    const [result, vaults] = await Promise.all([testConnection(candidate), listServerVaults(candidate)]);
+    if (vaults.ok) setServerVaults(vaults.vaults);
+    let message = result.ok ? "" : result.error;
+    if (!result.ok && vaults.ok && vaults.vaults.length > 0 && !vaults.vaults.includes(candidate.remoteVaultId!)) {
+      message += `. The server's vaults: ${vaults.vaults.join(", ")}.`;
+    }
+    setTest(result.ok ? { kind: "ok" } : { kind: "error", message });
+  }, [serverUrl, authToken, remoteVaultId, testConnection]);
 
   const onSave = useCallback(() => {
     const trimmedUrl = serverUrl.trim();
     const trimmedToken = authToken.trim();
     if (!trimmedUrl || !trimmedToken) return;
-    save({ serverUrl: trimmedUrl, authToken: trimmedToken });
+    save({ serverUrl: trimmedUrl, authToken: trimmedToken, remoteVaultId: remoteVaultId.trim() || DEFAULT_REMOTE_VAULT });
     setDialogOpen(false);
-  }, [serverUrl, authToken, save, setDialogOpen]);
+  }, [serverUrl, authToken, remoteVaultId, save, setDialogOpen]);
 
   const onDisconnect = useCallback(() => {
     disconnect();
@@ -127,6 +139,28 @@ function SyncSettingsForm() {
           <FieldDescription>
             Stored in this browser&apos;s local storage, not in a cookie — anyone with access to
             this browser profile could read it.
+          </FieldDescription>
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="sync-remote-vault">Server vault</FieldLabel>
+          <Input
+            id="sync-remote-vault"
+            list="sync-remote-vaults"
+            placeholder={DEFAULT_REMOTE_VAULT}
+            value={remoteVaultId}
+            onChange={(e) => setRemoteVaultId(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <datalist id="sync-remote-vaults">
+            {serverVaults.map((id) => (
+              <option key={id} value={id} />
+            ))}
+          </datalist>
+          <FieldDescription>
+            Which of the server&apos;s vaults this vault syncs with — a folder on the server.
+            A server with one vault calls it &ldquo;{DEFAULT_REMOTE_VAULT}&rdquo;.
           </FieldDescription>
         </Field>
 
