@@ -114,10 +114,11 @@ export function SyncProvider({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus({ kind: "connecting" });
 
-    Promise.all([import("@/lib/vault/opfs"), import("@/lib/browser/sync-host")])
-      .then(async ([{ OpfsVaultFS }, { SyncHost }]) => {
+    Promise.all([import("@/lib/browser/vault"), import("@/lib/browser/sync-host")])
+      .then(async ([{ getVaultFileSystem }, { SyncHost }]) => {
         if (cancelled) return;
-        const fs = new OpfsVaultFS();
+        // The vault's own file system: writer-lock gated, one write queue.
+        const fs = getVaultFileSystem();
         const { wsUrl, httpUrl } = deriveSyncUrls(config.serverUrl);
         const host = await SyncHost.create({
           fs,

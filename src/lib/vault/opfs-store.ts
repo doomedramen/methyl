@@ -159,7 +159,8 @@ class OpfsPersistBackend {
         const { files, dirs } = await fs.readdir(p);
         return [...dirs, ...files];
       },
-      rm: async (p) => fs.delete(p),
+      // Compaction removes the superseded `updates/` directory as a whole.
+      rm: async (p) => fs.delete(p, { recursive: p.endsWith("/updates") }),
     };
   }
 }

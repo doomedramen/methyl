@@ -1,4 +1,6 @@
 import { OpfsVaultFS } from "@/lib/vault/opfs";
+import { WriterGatedFS } from "@/lib/vault/gated-fs";
+import type { VaultFileSystem } from "@/lib/vault/fs";
 import { OpfsDocStore, OpfsVaultTreeStore } from "@/lib/vault/opfs-store";
 import { VaultEngine } from "@/lib/vault/engine";
 import {
@@ -61,6 +63,18 @@ export function shouldSeedWelcomeNote(): boolean {
 
 let singleton: VaultEngine | null = null;
 let booting: Promise<VaultEngine> | null = null;
+let vaultFs: WriterGatedFS | null = null;
+
+/**
+ * The file system the open vault uses. Anything else that writes into the
+ * vault (the sync host's journal) must share it: it carries the writer-lock
+ * gate and the per-path write queue, which only serialises writes made
+ * through the same instance.
+ */
+export function getVaultFileSystem(): VaultFileSystem {
+  if (!vaultFs) throw new Error("getVaultFileSystem() called before getVault()");
+  return vaultFs;
+}
 
 /**
  * Boot the vault in the browser (single writer per origin).
@@ -102,11 +116,15 @@ export async function getVault(): Promise<VaultEngine> {
 
   booting = (async () => {
     assertStorageAvailable();
-    const fs = new OpfsVaultFS();
+    // Every store write goes through this gate: only the tab holding the
+    // writer lock may touch the vault (§12), whatever code path tries.
+    const fs = new WriterGatedFS(new OpfsVaultFS());
+    vaultFs = fs;
     const treeStore = new OpfsVaultTreeStore(fs);
     const docStore = new OpfsDocStore(fs);
 
     const lock = await acquireVaultWriterLock("local");
+    fs.setWritable(lock.active);
     if (!lock.active) {
       // Second tab: open read-only until a takeover is requested or this
       // tab is naturally promoted once the writer tab releases.
@@ -136,6 +154,7 @@ export async function getVault(): Promise<VaultEngine> {
         }
         becameWriterOnce = true;
         promotionAbort.abort();
+        fs.setWritable(true);
 
         engine.releaseWriterLock = () => writerLock.release();
         if (typeof window !== "undefined") {
@@ -144,6 +163,7 @@ export async function getVault(): Promise<VaultEngine> {
         // From here on this tab is the writer, so it needs the same
         // steal-victim handling the original writer path has.
         onVaultWriterStolen("local", () => {
+          fs.setWritable(false);
           if (typeof window !== "undefined") window.location.reload();
         });
         watchVisibilityForExternalChanges(engine);
@@ -234,6 +254,8 @@ export async function getVault(): Promise<VaultEngine> {
     // simplest correct recovery is the same one used elsewhere in this
     // module — reload, and getVault() will cleanly re-open read-only.
     onVaultWriterStolen("local", () => {
+      // Stop writing now; the reload that follows reopens read-only.
+      fs.setWritable(false);
       if (typeof window !== "undefined") window.location.reload();
     });
     return engine;
@@ -278,7 +300,7 @@ function watchVisibilityForExternalChanges(engine: VaultEngine): void {
  * vault exists yet.
  */
 async function createFreshVault(
-  fs: OpfsVaultFS,
+  fs: VaultFileSystem,
   treeStore: OpfsVaultTreeStore,
   docStore: OpfsDocStore,
 ): Promise<VaultEngine> {

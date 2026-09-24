@@ -79,6 +79,13 @@ function isMarkdownPath(path: string): boolean {
 /** Where the sidecar doc index (SPEC §5) lives, relative to the vault root. */
 const DOC_INDEX_PATH = ".adhd/index.json";
 
+/** Derived-cache writes are best-effort: log and carry on. */
+function skipCachePersist(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("writer lock")) return; // read-only tab: expected
+  console.error("[indexes] failed to persist derived indexes", error);
+}
+
 /**
  * Recovery result from VaultEngine.open().
  * Structured so the caller can surface repair status to the UI (§42).
@@ -346,8 +353,11 @@ export class VaultEngine {
     await Promise.all([this.searchIndex.load(), this.derivedIndexes.load()]);
     const documents = this.allIndexedDocuments();
     this.searchIndex.replaceAll(documents);
-    await this.searchIndex.persist();
-    await this.derivedIndexes.build(documents);
+    // The caches are derived and rebuildable; failing to save them (a
+    // read-only tab may not write, SPEC §12) must not stop the vault opening.
+    // derivedIndexes.build computes in memory before it persists.
+    await this.searchIndex.persist().catch((error) => skipCachePersist(error));
+    await this.derivedIndexes.build(documents).catch((error) => skipCachePersist(error));
     this.searchIndexReady = true;
   }
 
@@ -357,7 +367,7 @@ export class VaultEngine {
         await this.searchIndex.persist();
         await this.derivedIndexes.build(this.allIndexedDocuments());
       })
-      .catch((error) => console.error("[indexes] failed to persist derived indexes", error));
+      .catch((error) => skipCachePersist(error));
     return this.indexPersistChain;
   }
 

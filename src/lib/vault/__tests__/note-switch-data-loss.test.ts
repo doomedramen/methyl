@@ -39,9 +39,9 @@ class SlowVaultFS implements VaultFileSystem {
     await this.delay(null);
     return this.inner.mkdir(path);
   }
-  async delete(path: string) {
+  async delete(path: string, options?: { recursive?: boolean }) {
     await this.delay(null);
-    return this.inner.delete(path);
+    return this.inner.delete(path, options);
   }
   exists(path: string) {
     return this.inner.exists(path).then((v) => this.delay(v));

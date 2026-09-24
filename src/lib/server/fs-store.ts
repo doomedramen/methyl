@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import { join, dirname } from "path";
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
+import { assertDeletable } from "@/lib/vault/fs";
 import {
   atomicCompact,
   cleanupInterrupted,
@@ -218,6 +219,7 @@ class NodePersistBackend {
   }
 
   async removeMaterialized(path: string): Promise<void> {
+    assertDeletable(path);
     const full = join(this.root, path);
     await this.withLock(full, async () => {
       await fs.rm(full, { force: true });
@@ -263,8 +265,10 @@ const ops: AtomicOps = {
       throw err;
     }
   },
+  // Compaction removes the superseded `updates/` directory as a whole and
+  // stray `.tmp` files; nothing else is ever removed recursively.
   rm: async (p) => {
-    await fs.rm(p, { recursive: true, force: true });
+    await fs.rm(p, { recursive: p.endsWith("/updates"), force: true });
   },
 };
 

@@ -1,5 +1,5 @@
 import { normalizePath } from "@/lib/core/paths";
-import type { VaultFileSystem } from "@/lib/vault/fs";
+import { assertDeletable, type VaultFileSystem } from "@/lib/vault/fs";
 
 const ROOT_KEY = "adhd-vault";
 
@@ -141,17 +141,18 @@ export class OpfsVaultFS implements VaultFileSystem {
     await this.dirHandle(splitPath(path), true);
   }
 
-  async delete(path: string): Promise<void> {
+  async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
+    assertDeletable(path);
     return this.serialize(path, async () => {
       const parts = splitPath(path);
       const name = parts.pop()!;
       const dir = await this.dirHandle(parts, false).catch(() => null);
-      if (dir) {
-        try {
-          await dir.removeEntry(name, { recursive: true });
-        } catch {
-          // already gone
-        }
+      if (!dir) return;
+      try {
+        await dir.removeEntry(name, { recursive: options?.recursive === true });
+      } catch (err) {
+        if ((err as DOMException).name === "NotFoundError") return; // already gone
+        throw err;
       }
     });
   }

@@ -13,7 +13,13 @@ export interface VaultFileSystem {
   writeTextAtomic(path: string, text: string): Promise<void>;
 
   mkdir(path: string): Promise<void>;
-  delete(path: string): Promise<void>;
+  /**
+   * Remove a file, or an empty directory. A non-empty directory is only
+   * removed with `{ recursive: true }` — deleting a subtree must be asked
+   * for explicitly, so a wrong path can't take a whole tree with it.
+   * Refuses the vault root and the reserved metadata directories.
+   */
+  delete(path: string, options?: { recursive?: boolean }): Promise<void>;
   exists(path: string): Promise<boolean>;
 
   /** Non-recursive directory listing. */
@@ -21,6 +27,19 @@ export interface VaultFileSystem {
 
   /** Recursively walk every file in the vault, skipping top-level `.adhd`. */
   walk(): AsyncGenerator<{ path: string }>;
+}
+
+/**
+ * Paths no delete may ever target: the vault root and the reserved
+ * metadata directories that hold every document's CRDT state.
+ */
+const PROTECTED_DELETE_PATHS = new Set(["", ".adhd", ".adhd/crdt", ".adhd/crdt/docs", ".adhd/crdt/vault"]);
+
+export function assertDeletable(path: string): void {
+  const normalized = normalizeFilePath(path);
+  if (PROTECTED_DELETE_PATHS.has(normalized) || normalized.split("/").includes("..")) {
+    throw new Error(`refusing to delete protected vault path "${path}"`);
+  }
 }
 
 export function normalizeFilePath(path: string): string {
