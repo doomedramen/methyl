@@ -1,5 +1,6 @@
 "use client";
 
+import { markBoot } from "@/lib/core/boot-marks";
 import dynamic from "next/dynamic";
 import {
   useCallback,
@@ -694,6 +695,7 @@ export function VaultApp() {
 
   useEffect(() => {
     let cancelled = false;
+    markBoot("boot-start");
     // Dynamic import keeps loro-crdt WASM out of the prerender module graph
     // (note-path.ts pulls it in transitively via vault/engine.ts).
     Promise.all([
@@ -702,10 +704,17 @@ export function VaultApp() {
       import("@/lib/vault/note-path"),
     ])
       .then(async ([{ getVault }, , notePath]) => {
+        markBoot("modules-loaded");
         const eng = await getVault();
         if (cancelled) return;
         notePathRef.current = notePath;
         setEngine(eng);
+        markBoot("engine-ready");
+        // Notes load in the background; rows that depend on content (graph
+        // notes) are refreshed once they're all in.
+        void eng.whenAllDocumentsLoaded().then(() => {
+          if (!cancelled) refreshNotes(eng);
+        });
       })
       .catch((e) => {
         console.error(e);

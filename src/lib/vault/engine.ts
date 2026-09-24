@@ -1,3 +1,4 @@
+import { markBoot } from "@/lib/core/boot-marks";
 import { type OpId, type TreeID } from "loro-crdt";
 import { VaultTree, type VaultTreeNode } from "@/lib/vault/tree";
 import { Document, CONTENT_KEY } from "@/lib/core/document";
@@ -79,6 +80,26 @@ function isMarkdownPath(path: string): boolean {
 /** Where the sidecar doc index (SPEC §5) lives, relative to the vault root. */
 const DOC_INDEX_PATH = ".adhd/index.json";
 
+/** How many documents' stored state is read at once when opening a vault. */
+const DOC_LOAD_CONCURRENCY = 16;
+
+/** `Promise.all(items.map(fn))` with at most `limit` calls in flight; keeps order. */
+async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/** How long derived-cache writes wait for more changes to batch. */
+const INDEX_PERSIST_DEBOUNCE_MS = 400;
+
 /** Derived-cache writes are best-effort: log and carry on. */
 function skipCachePersist(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -124,6 +145,14 @@ export class VaultEngine {
   private materializedPaths = new Map<string, string>();
   /** Index paths written while an ingest pass applies its results. */
   private indexTouchesThisPass: Set<string> | null = null;
+  /** In-memory doc index; see loadDocIndex. */
+  private docIndexCache: DocIndex | null = null;
+  private docIndexWriteChain: Promise<void> = Promise.resolve();
+  private docIndexWriteQueued: Promise<void> | null = null;
+  private deferDocIndexWrites = false;
+  /** Pending debounced write of the derived search/backlink/graph caches. */
+  private indexPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  private indexPersistWaiters: Array<() => void> = [];
   private materializedAssetPaths = new Map<string, string>();
   private readonly searchIndex: SearchIndex;
   private readonly derivedIndexes: DerivedIndexes;
@@ -217,6 +246,7 @@ export class VaultEngine {
     treeStore: VaultTreeStore,
     docStore: PersistedDocStore,
     vaultId = "local",
+    options: { lazyDocuments?: boolean } = {},
   ): Promise<{ engine: VaultEngine; recovery: VaultRecoveryReport }> {
     // 1. Load vault-tree CRDT: snapshot + replay updates
     const treeSnap = await treeStore.loadSnapshot();
@@ -228,47 +258,39 @@ export class VaultEngine {
       tree.doc.import(update);
     }
     tree.doc.commit();
+    markBoot("tree-loaded");
 
     const engine = new VaultEngine(tree, treeStore, docStore, vaultId);
 
     // 2. Active document IDs from tree (source of truth)
     const activeIds = tree.documentIds();
-
-    // 3. Load only active documents
-    const migratedLegacyIds: string[] = [];
-    for (const id of activeIds) {
-      const doc = new Document(id);
-      const snapshot = await docStore.loadSnapshot(id);
-      if (snapshot) {
-        doc.doc.import(snapshot);
-      }
-      for (const update of await docStore.loadUpdates(id)) {
-        doc.doc.import(update);
-      }
-      doc.doc.commit();
-
-      // One-time migration: strip any legacy `adhd:id` comment still
-      // living in previously-persisted LoroText (see
-      // Document.migrateLegacyIdComment). This is a real CRDT edit, so
-      // persist it immediately so it survives and syncs.
-      if (doc.migrateLegacyIdComment()) {
-        migratedLegacyIds.push(id);
-        await docStore.appendUpdate(id, doc.doc.export({ mode: "update" }));
-      }
-
-      engine.setDocument(id, doc);
-
-      // Derive the assumed on-disk path from the tree; reconcileMaterialization()
-      // verifies this against reality (missing/stale files, orphaned paths).
-      const node = tree.findByDocumentId(id);
-      const assumedPath = node && buildPathFromNode(tree, node);
-      if (assumedPath) engine.materializedPaths.set(id, assumedPath);
-    }
     for (const node of tree.allNodes()) {
       if (node.kind !== "binary") continue;
       const path = buildPathFromNode(tree, node);
       if (path) engine.materializedAssetPaths.set(String(node.treeId), path);
     }
+
+    // 3. Load only active documents, a few at a time (each is several
+    // storage round-trips; one after another they dominated startup). With
+    // `lazyDocuments` (the browser) this happens in the background and the
+    // engine is usable as soon as the tree is: see loadDocument and
+    // whenAllDocumentsLoaded.
+    for (const id of activeIds) engine.unloadedIds.add(id);
+    engine.allDocumentsLoaded = mapConcurrent(activeIds, DOC_LOAD_CONCURRENCY, (id) =>
+      engine.loadStoredDocument(id),
+    ).then(async () => {
+      markBoot("documents-loaded");
+      // Anything indexed before every document was in is incomplete.
+      engine.searchStale = true;
+      engine.derivedStale = true;
+      if (engine.migratedLegacyIds.length > 0) {
+        await engine.diag("legacy-id-migration", {
+          counts: { migrated: engine.migratedLegacyIds.length },
+          detail: engine.migratedLegacyIds.join(","),
+        });
+      }
+    });
+    if (!options.lazyDocuments) await engine.allDocumentsLoaded;
 
     // 4. Recovery diff — does NOT resurrect deleted docs
     const persistedIds = await docStore.listDocumentIds();
@@ -280,19 +302,78 @@ export class VaultEngine {
       persistedIds,
       missingDocs: activeIds.filter((id) => !persistedSet.has(id)),
       orphanedDocs: persistedIds.filter((id) => !activeSet.has(id)),
-      migratedLegacyIds,
+      migratedLegacyIds: engine.migratedLegacyIds,
     };
 
-    if (migratedLegacyIds.length > 0) {
-      await engine.diag("legacy-id-migration", {
-        counts: { migrated: migratedLegacyIds.length },
-        detail: migratedLegacyIds.join(","),
-      });
-    }
-
     await engine.initializeIndexes();
+    markBoot("indexes-ready");
 
     return { engine, recovery };
+  }
+
+  /** Documents in the tree whose stored state hasn't been read yet. */
+  private unloadedIds = new Set<string>();
+  private documentLoads = new Map<string, Promise<void>>();
+  private allDocumentsLoaded: Promise<void> = Promise.resolve();
+  private migratedLegacyIds: string[] = [];
+
+  /** Resolves once every document the tree had at open has been loaded. */
+  whenAllDocumentsLoaded(): Promise<void> {
+    return this.allDocumentsLoaded;
+  }
+
+  /**
+   * Load one document's stored state now, ahead of the background load
+   * (the note being opened, a room being synced). Resolves to the document,
+   * or undefined if the tree doesn't have it.
+   */
+  async loadDocument(documentId: string): Promise<Document | undefined> {
+    await this.loadStoredDocument(documentId);
+    return this.documents.get(documentId);
+  }
+
+  private loadStoredDocument(id: string): Promise<void> {
+    const inFlight = this.documentLoads.get(id);
+    if (inFlight) return inFlight;
+    if (!this.unloadedIds.has(id)) return Promise.resolve();
+    const load = (async () => {
+      const snapshot = await this.docStore.loadSnapshot(id);
+      const updates = await this.docStore.loadUpdates(id);
+      this.unloadedIds.delete(id);
+      // Deleted while its bytes were being read: don't bring it back.
+      const node = this.tree.findByDocumentId(id);
+      if (!node) return;
+      // A sync may already have created the document (ensureDocument) and
+      // merged remote changes into it; merge the stored state in too.
+      const doc = this.documents.get(id) ?? new Document(id);
+      if (snapshot) doc.doc.import(snapshot);
+      for (const update of updates) doc.doc.import(update);
+      doc.doc.commit();
+
+      // One-time migration: strip any legacy `adhd:id` comment still
+      // living in previously-persisted LoroText (see
+      // Document.migrateLegacyIdComment). This is a real CRDT edit, so
+      // persist it immediately so it survives and syncs.
+      if (doc.migrateLegacyIdComment()) {
+        this.migratedLegacyIds.push(id);
+        try {
+          await this.docStore.appendUpdate(id, doc.doc.export({ mode: "update" }));
+        } catch (error) {
+          // A read-only tab may not write (§12); the writer tab migrates it.
+          console.warn(`[VaultEngine] legacy-id migration of ${id} not persisted here`, error);
+        }
+      }
+
+      // Derive the assumed on-disk path from the tree; reconcileMaterialization()
+      // verifies this against reality (missing/stale files, orphaned paths).
+      const assumedPath = buildPathFromNode(this.tree, node);
+      if (assumedPath && !this.materializedPaths.has(id)) this.materializedPaths.set(id, assumedPath);
+      if (!this.documents.has(id)) this.setDocument(id, doc);
+      else if (this.searchIndexReady) this.indexSearchDocument(id);
+    })();
+    this.documentLoads.set(id, load);
+    void load.finally(() => this.documentLoads.delete(id)).catch(() => undefined);
+    return load;
   }
 
   getDocument(id: string): Document | undefined {
@@ -321,11 +402,13 @@ export class VaultEngine {
 
   /** Search note titles and Markdown content with MiniSearch ranking. */
   search(query: string, limit = 50): DocIndexEntry[] {
+    this.rebuildSearchIfStale();
     return this.searchIndex.search(query, limit);
   }
 
   /** Return notes that contain a wikilink targeting this document. */
   backlinksFor(documentId: string): BacklinkEntry[] {
+    this.recomputeDerivedIfStale();
     return this.derivedIndexes.backlinksFor(documentId);
   }
 
@@ -347,31 +430,77 @@ export class VaultEngine {
       .filter((doc): doc is IndexedDocument => doc !== null);
   }
 
+  /**
+   * Opening the vault doesn't build the indexes: parsing and indexing every
+   * note was a large share of startup, before anything could be shown (spec
+   * item 20). The search index is built on the first search and the
+   * backlink/graph maps on the first read (both from current CRDT content),
+   * then kept up to date incrementally; the caches are written (batched)
+   * after changes, not at startup.
+   */
   private async initializeIndexes(): Promise<void> {
-    // Load first so a corrupt/missing cache follows the same recovery path as
-    // the standalone index APIs; current CRDT content always wins below.
-    await Promise.all([this.searchIndex.load(), this.derivedIndexes.load()]);
-    const documents = this.allIndexedDocuments();
-    this.searchIndex.replaceAll(documents);
-    // The caches are derived and rebuildable; failing to save them (a
-    // read-only tab may not write, SPEC §12) must not stop the vault opening.
-    // derivedIndexes.build computes in memory before it persists.
-    await this.searchIndex.persist().catch((error) => skipCachePersist(error));
-    await this.derivedIndexes.build(documents).catch((error) => skipCachePersist(error));
+    this.searchStale = true;
+    this.derivedStale = true;
     this.searchIndexReady = true;
   }
 
+  /** The search index is built lazily; see initializeIndexes. */
+  private searchStale = false;
+
+  private rebuildSearchIfStale(): void {
+    if (!this.searchStale) return;
+    this.searchStale = false;
+    this.searchIndex.replaceAll(this.allIndexedDocuments());
+  }
+
+  /**
+   * The search, backlink and graph caches are derived (SPEC §3) and only
+   * read at the next startup, so their writes are debounced: a burst of
+   * changes (a sync round, an import) writes them once, not once per note.
+   * The in-memory indexes are always current. Resolves once the write that
+   * includes this change has finished.
+   */
   private queueIndexPersist(): Promise<void> {
+    const done = new Promise<void>((resolve) => this.indexPersistWaiters.push(resolve));
+    if (this.indexPersistTimer) clearTimeout(this.indexPersistTimer);
+    this.indexPersistTimer = setTimeout(() => void this.flushIndexes(), INDEX_PERSIST_DEBOUNCE_MS);
+    (this.indexPersistTimer as { unref?: () => void }).unref?.();
+    return done;
+  }
+
+  /** Write the derived caches now if a write is pending. */
+  async flushIndexes(): Promise<void> {
+    if (this.indexPersistTimer) {
+      clearTimeout(this.indexPersistTimer);
+      this.indexPersistTimer = null;
+    }
+    const waiters = this.indexPersistWaiters.splice(0);
+    if (waiters.length === 0) return this.indexPersistChain;
     this.indexPersistChain = this.indexPersistChain
       .then(async () => {
+        await this.allDocumentsLoaded;
+        this.rebuildSearchIfStale();
         await this.searchIndex.persist();
+        this.derivedStale = false;
         await this.derivedIndexes.build(this.allIndexedDocuments());
       })
-      .catch((error) => skipCachePersist(error));
+      .catch((error) => skipCachePersist(error))
+      .finally(() => waiters.forEach((resolve) => resolve()));
     return this.indexPersistChain;
   }
 
+  /** Backlinks/graph are recomputed lazily, on first read after a change. */
+  private derivedStale = false;
+
+  private recomputeDerivedIfStale(): void {
+    if (!this.derivedStale) return;
+    this.derivedStale = false;
+    this.derivedIndexes.compute(this.allIndexedDocuments());
+  }
+
   private indexSearchDocument(documentId: string): void {
+    // A pending full rebuild will pick this document up.
+    if (this.searchStale) return;
     const indexed = this.indexedDocument(documentId);
     if (indexed) this.searchIndex.add(indexed);
     else this.searchIndex.remove(documentId);
@@ -380,13 +509,15 @@ export class VaultEngine {
   private async updateIndexesForDocument(documentId: string): Promise<void> {
     if (!this.searchIndexReady) return;
     this.indexSearchDocument(documentId);
-    await this.queueIndexPersist();
+    this.derivedStale = true;
+    void this.queueIndexPersist();
   }
 
   private async refreshIndexes(): Promise<void> {
     if (!this.searchIndexReady) return;
-    this.searchIndex.replaceAll(this.allIndexedDocuments());
-    await this.queueIndexPersist();
+    this.searchStale = true;
+    this.derivedStale = true;
+    void this.queueIndexPersist();
   }
 
   /**
@@ -582,6 +713,7 @@ export class VaultEngine {
     documentId: string,
     filePath: string,
   ): Promise<MaterializationCheckpoint | null> {
+    await this.loadStoredDocument(documentId);
     const doc = this.documents.get(documentId);
     if (!doc) return null;
 
@@ -631,6 +763,7 @@ export class VaultEngine {
   async materializeAll(
     rootPath: string,
   ): Promise<Map<string, MaterializationCheckpoint>> {
+    await this.allDocumentsLoaded;
     const checkpoints = new Map<string, MaterializationCheckpoint>();
     for (const node of this.tree.allNodes()) {
       if (node.kind !== "markdown" || !node.documentId) continue;
@@ -700,6 +833,15 @@ export class VaultEngine {
    * known baseline rather than "everything is new".
    */
   async loadDocIndex(): Promise<DocIndex> {
+    // This engine is the index file's only writer, so after the first read
+    // the in-memory copy is authoritative. Re-reading and re-parsing it on
+    // every note write made bulk operations quadratic.
+    if (this.docIndexCache) return this.docIndexCache;
+    this.docIndexCache = await this.readDocIndexFromDisk();
+    return this.docIndexCache;
+  }
+
+  private async readDocIndexFromDisk(): Promise<DocIndex> {
     const bytes = await this.docStore.readMaterialized(DOC_INDEX_PATH);
     if (!bytes) return this.seedDocIndexFromTree();
     let parsed: DocIndex;
@@ -722,11 +864,26 @@ export class VaultEngine {
     return parsed;
   }
 
-  async saveDocIndex(index: DocIndex): Promise<void> {
-    await this.docStore.writeMaterializedAtomic(
-      DOC_INDEX_PATH,
-      new TextEncoder().encode(JSON.stringify(index)),
-    );
+  /**
+   * Replace the index and write it. Writes are coalesced: a save requested
+   * while one is waiting shares that write, which always writes the newest
+   * index. While an ingest pass is applying its results the file isn't
+   * written at all until the pass saves its final index.
+   */
+  saveDocIndex(index: DocIndex): Promise<void> {
+    this.docIndexCache = index;
+    if (this.deferDocIndexWrites) return Promise.resolve();
+    if (this.docIndexWriteQueued) return this.docIndexWriteQueued;
+    const next = this.docIndexWriteChain.then(async () => {
+      this.docIndexWriteQueued = null;
+      await this.docStore.writeMaterializedAtomic(
+        DOC_INDEX_PATH,
+        new TextEncoder().encode(JSON.stringify(this.docIndexCache ?? {})),
+      );
+    });
+    this.docIndexWriteQueued = next;
+    this.docIndexWriteChain = next.catch(() => undefined);
+    return next;
   }
 
   private async seedDocIndexFromTree(): Promise<DocIndex> {
@@ -817,6 +974,15 @@ export class VaultEngine {
     await this.diag("defer-write-external-edit", { detail: `${documentId} ${path}` });
   }
 
+  /**
+   * Drop the cached doc index so the next use re-reads the file. For a tab
+   * that becomes the writer: another tab may have written the index since
+   * this one read it.
+   */
+  forgetCachedDocIndex(): void {
+    if (!this.docIndexWriteQueued) this.docIndexCache = null;
+  }
+
   /** Mirror of touchIndexEntry for the app's own deletions/moves-away. */
   private async dropIndexEntry(path: string): Promise<void> {
     const index = await this.loadDocIndex();
@@ -853,7 +1019,25 @@ export class VaultEngine {
    * placement from the tree (the authority while the app is running) and
    * GCs the leftover.
    */
-  async ingestExternalChanges(): Promise<IngestReport> {
+  /**
+   * Passes never overlap: startup's background reconcile, the browser's
+   * visibility check and the server's watcher can all ask for one.
+   */
+  ingestExternalChanges(): Promise<IngestReport> {
+    const run = this.ingestChain.then(() => this.ingestExternalChangesNow());
+    this.ingestChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private ingestChain: Promise<void> = Promise.resolve();
+
+  private async ingestExternalChangesNow(): Promise<IngestReport> {
+    // Comparing disk with documents that aren't loaded yet would read as
+    // edits and deletions that never happened.
+    await this.allDocumentsLoaded;
     const empty: IngestReport = {
       edited: [],
       moved: [],
@@ -863,7 +1047,9 @@ export class VaultEngine {
     };
 
     const trackedBefore = this.tree.documentIds().length;
-    const prevIndex = await this.loadDocIndex();
+    // A copy: entries written while this pass applies its results must not
+    // change the baseline it compares against.
+    const prevIndex = { ...(await this.loadDocIndex()) };
     let diskPaths = (await this.docStore.listMaterializedPaths()).filter(
       (p) => isMarkdownPath(p) && !isIgnoredExternalPath(p),
     );
@@ -964,6 +1150,9 @@ export class VaultEngine {
     }
 
     this.indexTouchesThisPass = new Set();
+    // The index file is written once, with the final index, at the end.
+    this.deferDocIndexWrites = true;
+    try {
     for (const r of result.resolved) {
       const entryHash = result.index[r.path]!.contentHash;
 
@@ -991,6 +1180,14 @@ export class VaultEngine {
             await this.touchIndexEntry(r.path, r.id, r.cleanContent);
             const state = await this.docStore.readState(r.id);
             const currentContent = doc.getText(CONTENT_KEY).toString();
+            if (!r.rewrite && r.cleanContent === currentContent) {
+              // The file already says what the CRDT says: the app wrote it
+              // and its index update never landed (e.g. the tab closed
+              // first). Nothing to merge — merging would only churn history.
+              await this.touchIndexEntry(r.path, r.id, currentContent, doc.doc.oplogFrontiers());
+              finalIndex[r.path] = result.index[r.path]!;
+              continue;
+            }
 
             // Safety rail: never let an "external edit" that shrinks or
             // empties content win over CRDT changes newer than the index
@@ -1071,6 +1268,10 @@ export class VaultEngine {
       }
 
       finalIndex[r.path] = result.index[r.path]!;
+    }
+
+    } finally {
+      this.deferDocIndexWrites = false;
     }
 
     // Paths this pass wrote back (merged content, re-materialised CRDT)
@@ -1159,6 +1360,7 @@ export class VaultEngine {
     materialized: string[];
     removed: string[];
   }> {
+    await this.allDocumentsLoaded;
     await this.resolveTreeNameCollisions();
     const folders = await this.ingestExternalFolders();
     const ingested = await this.ingestExternalChanges();
@@ -1168,24 +1370,44 @@ export class VaultEngine {
     if (assets.updated.length > 0) ingested.assetsUpdated = assets.updated;
 
     const materialized: string[] = [];
-    const expected = new Set<string>();
+    // The ingest above has just compared every file with the index, so the
+    // index now describes the disk: a document is stale when its content
+    // differs from its index entry. No need to read and hash every file a
+    // second time.
+    const index = await this.loadDocIndex();
+    const onDisk = new Set(await this.docStore.listMaterializedPaths());
     for (const node of this.tree.allNodes()) {
       const path = buildPathFromNode(this.tree, node);
       if (!path) continue;
       if (node.kind === "binary") {
-        expected.add(path);
         this.materializedAssetPaths.set(String(node.treeId), path);
         continue;
       }
       if (node.kind !== "markdown" || !node.documentId) continue;
-      if (!this.documents.has(node.documentId)) continue;
-      expected.add(path);
-      if (await this.isStale(node.documentId, path)) {
+      const doc = this.documents.get(node.documentId);
+      if (!doc) continue;
+      const entry = index[path];
+      const stale =
+        !entry ||
+        entry.id !== node.documentId ||
+        !onDisk.has(path) ||
+        entry.contentHash !== (await sha256Text(doc.getText(CONTENT_KEY).toString()));
+      if (stale) {
         const cp = await this.materializeDocument(node.documentId, path);
         if (cp) materialized.push(path);
       } else {
         this.materializedPaths.set(node.documentId, path);
       }
+    }
+
+    // What the tree expects on disk, computed *now*: reconcile can run in
+    // the background while the app is in use, and a note created meanwhile
+    // must not be swept away as an orphan.
+    const expected = new Set<string>();
+    for (const node of this.tree.allNodes()) {
+      if (node.kind !== "binary" && !(node.kind === "markdown" && node.documentId)) continue;
+      const path = buildPathFromNode(this.tree, node);
+      if (path) expected.add(path);
     }
 
     const removed: string[] = [];
@@ -1267,6 +1489,7 @@ export class VaultEngine {
 
   /** Import a document update (from sync or external source). */
   async importDocumentUpdate(documentId: string, data: Uint8Array): Promise<void> {
+    await this.loadStoredDocument(documentId);
     const doc = this.ensureDocument(documentId);
     doc.doc.import(data);
     await this.updateIndexesForDocument(documentId);
@@ -1305,10 +1528,36 @@ export class VaultEngine {
    * thresholds are breached (§10). Returns whether compaction ran.
    * Call this after every local edit-commit; never touch binary bytes yourself.
    */
-  async persistDocumentIncremental(
+  /**
+   * Persists of one document run one at a time. Two overlapping persists
+   * could otherwise interleave so that one's compaction deletes the update
+   * segment the other appended after that compaction's snapshot was taken.
+   */
+  persistDocumentIncremental(
     documentId: string,
     rules: CompactionRules = DEFAULT_COMPACTION_RULES,
   ): Promise<{ compacted: boolean }> {
+    const previous = this.persistChains.get(documentId) ?? Promise.resolve();
+    const run = previous.then(() => this.persistDocumentNow(documentId, rules));
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.persistChains.set(documentId, settled);
+    void settled.then(() => {
+      if (this.persistChains.get(documentId) === settled) this.persistChains.delete(documentId);
+    });
+    return run;
+  }
+
+  private persistChains = new Map<string, Promise<void>>();
+
+  private async persistDocumentNow(
+    documentId: string,
+    rules: CompactionRules,
+  ): Promise<{ compacted: boolean }> {
+    // Never write a document's file from a copy missing its stored state.
+    await this.loadStoredDocument(documentId);
     const doc = this.documents.get(documentId);
     if (!doc) throw new Error(`Document not found: ${documentId}`);
     doc.doc.commit();
@@ -1391,6 +1640,8 @@ export class VaultEngine {
    * is auto-suffixed by VaultTree.rename rather than rejected.
    */
   async renameDocument(documentId: string, newTitle: string): Promise<void> {
+    // Moves and removes files of every document it touches.
+    await this.allDocumentsLoaded;
     const node = this.tree.findByDocumentId(documentId);
     if (!node) throw new Error(`Document not tracked in tree: ${documentId}`);
     const fileName = newTitle.endsWith(".md") ? newTitle : `${newTitle}.md`;
@@ -1408,6 +1659,8 @@ export class VaultEngine {
    * race a concurrent sync peer that hasn't seen the tree deletion yet.
    */
   async deleteDocument(documentId: string): Promise<void> {
+    // Moves and removes files of every document it touches.
+    await this.allDocumentsLoaded;
     const node = this.tree.findByDocumentId(documentId);
     if (!node) throw new Error(`Document not tracked in tree: ${documentId}`);
     const oldPath = this.materializedPaths.get(documentId) ?? buildPathFromNode(this.tree, node);
@@ -1431,6 +1684,7 @@ export class VaultEngine {
    * that hasn't been ingested is left alone for the ingest to handle.
    */
   async applyTreeToDisk(): Promise<{ removed: string[]; moved: string[] }> {
+    await this.allDocumentsLoaded;
     const removed: string[] = [];
     const moved: string[] = [];
     const live = new Set(this.tree.documentIds());
@@ -1494,6 +1748,7 @@ export class VaultEngine {
     newParentTreeId: TreeID | undefined,
     index?: number,
   ): Promise<void> {
+    await this.allDocumentsLoaded;
     if (newParentTreeId && isDescendant(this.tree, newParentTreeId, treeId)) {
       throw new Error("Cannot move a folder into its own descendant");
     }
@@ -1511,6 +1766,8 @@ export class VaultEngine {
    * the folder rename changes all of their paths too.
    */
   async renameFolder(treeId: TreeID, newName: string): Promise<void> {
+    // Moves and removes files of every document it touches.
+    await this.allDocumentsLoaded;
     this.tree.rename(treeId, newName);
     await this.rematerializeSubtree(treeId);
   }
@@ -1555,6 +1812,8 @@ export class VaultEngine {
    * recovery/GC, only the tree pointer is removed).
    */
   async deleteFolder(treeId: TreeID): Promise<void> {
+    // Moves and removes files of every document it touches.
+    await this.allDocumentsLoaded;
     const node = this.tree.getNode(treeId);
     if (!node) throw new Error(`Node not found: ${treeId}`);
     const docIds = collectDocumentIds(this.tree, treeId);

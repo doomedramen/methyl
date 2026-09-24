@@ -18,20 +18,58 @@ import {
  */
 class OpfsPersistBackend {
   private fs: VaultFileSystem;
+  /**
+   * One operation at a time per CRDT directory, as the Node store does.
+   * Without it, a compaction could delete `updates/` after another persist
+   * of the same document had appended a segment the compaction's snapshot
+   * didn't include — losing that edit — and a loader's temp-file cleanup
+   * could delete a compaction's in-flight `.tmp` files.
+   */
+  private locks = new Map<string, Promise<void>>();
+  /** Directories whose leftover `.tmp` files were already cleaned this session. */
+  private cleaned = new Set<string>();
 
   constructor(fs: VaultFileSystem) {
     this.fs = fs;
   }
 
-  async loadSnapshot(dir: string): Promise<Uint8Array | null> {
-    const cleanup = this.ops();
-    await cleanupInterrupted(cleanup, dir);
-    return this.fs.readFile(`${dir}/snapshot.loro`);
+  private withLock<T>(dir: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(dir) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    this.locks.set(
+      dir,
+      current.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return current;
   }
 
-  async loadUpdates(dir: string): Promise<Uint8Array[]> {
-    const cleanup = this.ops();
-    await cleanupInterrupted(cleanup, dir);
+  /**
+   * Remove `.tmp` files an interrupted compaction left behind. Only a
+   * previous session can have left them (this one's compactions hold the
+   * lock), so each directory is checked once.
+   */
+  private async cleanupOnce(dir: string): Promise<void> {
+    if (this.cleaned.has(dir)) return;
+    await cleanupInterrupted(this.ops(), dir);
+    this.cleaned.add(dir);
+  }
+
+  loadSnapshot(dir: string): Promise<Uint8Array | null> {
+    return this.withLock(dir, async () => {
+      await this.cleanupOnce(dir);
+      return this.fs.readFile(`${dir}/snapshot.loro`);
+    });
+  }
+
+  loadUpdates(dir: string): Promise<Uint8Array[]> {
+    return this.withLock(dir, () => this.loadUpdatesUnlocked(dir));
+  }
+
+  private async loadUpdatesUnlocked(dir: string): Promise<Uint8Array[]> {
+    await this.cleanupOnce(dir);
     const updatesDir = `${dir}/updates`;
     const { files } = await this.fs.readdir(updatesDir);
     const sorted = files.filter((f) => SEGMENT_RE.test(f)).sort();
@@ -43,14 +81,16 @@ class OpfsPersistBackend {
     return out;
   }
 
-  async appendUpdate(dir: string, update: Uint8Array): Promise<void> {
-    const updatesDir = `${dir}/updates`;
-    await this.fs.mkdir(updatesDir);
-    const { files } = await this.fs.readdir(updatesDir);
-    const sorted = files.filter((f) => SEGMENT_RE.test(f));
-    const next = nextSegmentNumber(sorted);
-    await this.fs.writeFile(`${updatesDir}/${segmentName(next)}`, update);
-    await this.bumpState(dir, 1, update.length);
+  appendUpdate(dir: string, update: Uint8Array): Promise<void> {
+    return this.withLock(dir, async () => {
+      const updatesDir = `${dir}/updates`;
+      await this.fs.mkdir(updatesDir);
+      const { files } = await this.fs.readdir(updatesDir);
+      const sorted = files.filter((f) => SEGMENT_RE.test(f));
+      const next = nextSegmentNumber(sorted);
+      await this.fs.writeFile(`${updatesDir}/${segmentName(next)}`, update);
+      await this.bumpState(dir, 1, update.length);
+    });
   }
 
   /** Bump compaction counters in state.json after an append (§10). */
@@ -59,7 +99,7 @@ class OpfsPersistBackend {
     segments: number,
     bytes: number,
   ): Promise<void> {
-    const state = await this.readStateJson<
+    const state = await this.readStateJsonUnlocked<
       { segments: number; updateBytes: number; lastUpdateAt?: number }
       & Record<string, unknown>
     >(dir);
@@ -75,13 +115,19 @@ class OpfsPersistBackend {
     );
   }
 
-  async compact(dir: string, snapshot: Uint8Array, stateJson: string): Promise<void> {
-    await this.fs.mkdir(dir);
-    await atomicCompact(this.ops(), dir, snapshot, stateJson);
+  compact(dir: string, snapshot: Uint8Array, stateJson: string): Promise<void> {
+    return this.withLock(dir, async () => {
+      await this.fs.mkdir(dir);
+      await atomicCompact(this.ops(), dir, snapshot, stateJson);
+    });
   }
 
-  async readStateJson<T>(dir: string): Promise<T | null> {
-    await cleanupInterrupted(this.ops(), dir);
+  readStateJson<T>(dir: string): Promise<T | null> {
+    return this.withLock(dir, () => this.readStateJsonUnlocked<T>(dir));
+  }
+
+  private async readStateJsonUnlocked<T>(dir: string): Promise<T | null> {
+    await this.cleanupOnce(dir);
     const raw = await this.fs.readTextFile(`${dir}/state.json`);
     if (!raw) return null;
     try {

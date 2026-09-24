@@ -109,7 +109,9 @@ class Harness {
     const id = this.pick([...this.notes.keys()]);
     if (!id) return;
     const addition = this.text();
-    this.engine.getDocument(id)!.getText(CONTENT_KEY).insert(0, addition);
+    // As the editor does: the note may still be loading after a lazy open.
+    const doc = this.engine.getDocument(id) ?? (await this.engine.loadDocument(id))!;
+    doc.getText(CONTENT_KEY).insert(0, addition);
     await this.engine.persistDocumentIncremental(id);
     this.notes.get(id)!.content = addition + this.notes.get(id)!.content;
     this.log.push(`edit ${this.notes.get(id)!.path}`);
@@ -205,6 +207,8 @@ class Harness {
    * each touched document).
    */
   private async peerChange(): Promise<void> {
+    // SyncHost loads each room's document before merging into it.
+    await this.engine.whenAllDocumentsLoaded();
     if (!this.peer) {
       const peerFs = new MemoryVaultFS();
       this.peer = await VaultEngine.create(new OpfsVaultTreeStore(peerFs), new OpfsDocStore(peerFs), "local");
@@ -264,13 +268,27 @@ class Harness {
   }
 
   private async restart(): Promise<void> {
-    const { engine } = await VaultEngine.open(new OpfsVaultTreeStore(this.fs), new OpfsDocStore(this.fs), "local");
+    // Half the restarts open the way the browser does: documents load in
+    // the background and the reconcile runs later, so the next steps run
+    // while notes are still loading.
+    const lazy = this.rand() < 0.5;
+    const { engine } = await VaultEngine.open(new OpfsVaultTreeStore(this.fs), new OpfsDocStore(this.fs), "local", {
+      lazyDocuments: lazy,
+    });
     this.engine = engine;
-    await this.engine.reconcileMaterialization();
-    this.log.push("restart");
+    if (lazy) this.pendingReconcile = this.engine.reconcileMaterialization();
+    else await this.engine.reconcileMaterialization();
+    this.log.push(lazy ? "restart (lazy)" : "restart");
   }
 
+  private pendingReconcile: Promise<unknown> | null = null;
+
   async check(): Promise<void> {
+    await this.engine.whenAllDocumentsLoaded();
+    if (this.pendingReconcile) {
+      await this.pendingReconcile;
+      this.pendingReconcile = null;
+    }
     const docIds = this.engine.tree
       .allNodes()
       .filter((n) => n.kind === "markdown" && n.documentId)
@@ -312,5 +330,5 @@ describe("vault engine fuzz", () => {
         );
       }
     }
-  }, 120_000);
+  }, Math.max(120_000, seeds.length * STEPS * 150));
 });

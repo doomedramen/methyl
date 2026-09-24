@@ -492,7 +492,14 @@ export function createSyncServer(options: SyncServerOptions) {
       // SimpleServer can save the tree and a document concurrently. Keep
       // the derived filesystem mirror single-writer so its fixed atomic
       // temp paths and sidecar index cannot race each other.
-      return enqueueMirrorWrite(async () => {
+      //
+      // Not awaited: SimpleServer awaits this handler and only *then* clears
+      // the room's dirty flag, so a client update arriving while the
+      // handler awaited the (slow) mirror had its dirty flag wiped and was
+      // never saved — the durable version stopped short of it and clients
+      // waiting on it (§20) timed out. The durable record above is written
+      // synchronously; returning now leaves no window for that.
+      void enqueueMirrorWrite(async () => {
         const eng = await ensureEngine();
         if (isTree) {
           eng.tree.doc.import(data);
@@ -553,7 +560,7 @@ export function createSyncServer(options: SyncServerOptions) {
             pendingDocMirrors.add(docId);
           }
         }
-      });
+      }).catch((error) => console.error("[sync-server] vault mirror write failed:", error));
     },
   };
 

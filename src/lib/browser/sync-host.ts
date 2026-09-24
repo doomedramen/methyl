@@ -231,8 +231,9 @@ export class SyncHost {
         // instance. ensureDocument() creates the empty landing spot so
         // the incoming room content has somewhere to import into, rather
         // than getRoomDoc returning null and the sync silently dropping
-        // that document's content.
-        return engine.ensureDocument(docId).doc;
+        // that document's content. A stored document still loading in the
+        // background is loaded first, so the sync starts from its real state.
+        return ((await engine.loadDocument(docId)) ?? engine.ensureDocument(docId)).doc;
       },
       getBinaryData: async (nodeId: string) =>
         await engine.readAttachment(nodeId as TreeID),

@@ -1,3 +1,4 @@
+import { markBoot } from "@/lib/core/boot-marks";
 import { OpfsVaultFS } from "@/lib/vault/opfs";
 import { WriterGatedFS } from "@/lib/vault/gated-fs";
 import type { VaultFileSystem } from "@/lib/vault/fs";
@@ -125,10 +126,11 @@ export async function getVault(): Promise<VaultEngine> {
 
     const lock = await acquireVaultWriterLock("local");
     fs.setWritable(lock.active);
+    markBoot("lock-acquired");
     if (!lock.active) {
       // Second tab: open read-only until a takeover is requested or this
       // tab is naturally promoted once the writer tab releases.
-      const { engine } = await VaultEngine.open(treeStore, docStore, "local");
+      const { engine } = await VaultEngine.open(treeStore, docStore, "local", { lazyDocuments: true });
       singleton = engine;
 
       // Queue in the background for the writer lock to become free
@@ -175,6 +177,7 @@ export async function getVault(): Promise<VaultEngine> {
         // seeding the welcome note doesn't apply here — a vault already
         // exists, since a previous tab was writing to it.
         try {
+          engine.forgetCachedDocIndex();
           await engine.reconcileMaterialization();
         } catch (err) {
           console.error("[vault] reconcile on promotion failed", err);
@@ -210,14 +213,17 @@ export async function getVault(): Promise<VaultEngine> {
 
     let engine: VaultEngine;
     if (hasVault) {
-      const opened = await VaultEngine.open(treeStore, docStore, "local");
+      const opened = await VaultEngine.open(treeStore, docStore, "local", { lazyDocuments: true });
       engine = opened.engine;
+      markBoot("vault-opened");
       // Reconcile the on-disk .md tree against the CRDT tree+content: this
       // catches the legacy-id-comment migration (content changed, so the
       // file is now stale), any file that was missing/stale from a crash
       // mid-write, and any orphaned file left behind by a rename/move that
-      // didn't finish persisting.
-      await engine.reconcileMaterialization();
+      // didn't finish persisting. It reads and hashes every note, so it runs
+      // in the background once the app is on screen rather than before
+      // (spec item 20).
+      reconcileInBackground(engine);
     } else if (!shouldSeedWelcomeNote()) {
       // A sync server is already configured on this device: this vault is
       // about to receive whatever the peer(s) it syncs with already have,
@@ -267,6 +273,24 @@ export async function getVault(): Promise<VaultEngine> {
     booting = null;
   }
 }
+
+/**
+ * Run the startup reconcile shortly after the app has rendered. It is safe
+ * alongside normal use: ingest passes are serialised in the engine, and the
+ * orphan sweep decides what to keep from the tree as it is when it sweeps.
+ */
+function reconcileInBackground(engine: VaultEngine): void {
+  const run = () => {
+    engine
+      .reconcileMaterialization()
+      .then(() => markBoot("reconciled"))
+      .catch((err) => console.error("[vault] background reconcile failed", err));
+  };
+  if (typeof window === "undefined") run();
+  else window.setTimeout(run, RECONCILE_DELAY_MS);
+}
+
+const RECONCILE_DELAY_MS = 1500;
 
 /**
  * OPFS has no external writers other than another tab of this same app, so

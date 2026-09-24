@@ -206,6 +206,15 @@ export class SyncCoordinator {
       // 11-12: durable confirm + clear
       const dirtyCleared = await this.confirmDurables(httpUrl, hdr);
 
+      // The vault tree gets the same guarantee as documents (§20): don't
+      // leave its room — and destroy the socket — before the server has
+      // stored this client's tree, or a new note's tree entry can be lost
+      // with the connection.
+      const treeVersion = Object.fromEntries(treeDoc.version().toJSON()) as VV;
+      if (Object.keys(treeVersion).length > 0) {
+        await this.waitForDurable(`vault:${vaultId}`, treeVersion, httpUrl, hdr);
+      }
+
       // 13: advance lastServerSeq. Re-poll after sync: rooms we synced (and
       // the tree) have produced new change-log rows, so reflect them now so
       // the next discovery poll skips everything already durably sent.

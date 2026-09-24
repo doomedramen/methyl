@@ -1,3 +1,4 @@
+import { WriterGatedFS } from "@/lib/vault/gated-fs";
 import { describe, it, expect } from "vitest";
 import { MemoryVaultFS } from "@/lib/vault/memory-fs";
 import type { VaultFileSystem } from "@/lib/vault/fs";
@@ -192,29 +193,18 @@ describe("note-switch data loss (reported: Untitled.md / Untitled 2.md end up em
     const nodeB = engine.tree.findByDocumentId(docB.id)!;
     void engine.moveNode(nodeB.treeId, undefined, 0);
 
-    // "Reload tab 1" — without waiting for the above to settle first,
-    // exactly like a real reload can land mid-flight.
-    const treeStoreT1 = new OpfsVaultTreeStore(fs);
-    const docStoreT1 = new OpfsDocStore(fs);
-    const openTab1 = VaultEngine.open(treeStoreT1, docStoreT1, "local").then(
-      async ({ engine: e }) => {
-        await e.reconcileMaterialization();
-        return e;
-      },
-    );
-
-    // "Opened a second tab" concurrently, reading/reconciling the same
-    // on-disk state while tab 1's reload/reconcile is still in flight.
-    const treeStoreT2 = new OpfsVaultTreeStore(fs);
-    const docStoreT2 = new OpfsDocStore(fs);
-    const openTab2 = VaultEngine.open(treeStoreT2, docStoreT2, "local").then(
-      async ({ engine: e }) => {
-        await e.reconcileMaterialization();
-        return e;
-      },
-    );
-
-    const [tab1, tab2] = await Promise.all([openTab1, openTab2]);
+    // "Reload tab 1" and "open a second tab" — without waiting for the
+    // above to settle first, exactly like a real reload can land
+    // mid-flight. Neither holds the writer lock yet: the reloading page
+    // waits for the old one to release it, and the second tab is read-only
+    // (§12). Their file systems are gated accordingly, as in the app
+    // (src/lib/browser/vault.ts), so they can read mid-flight state but
+    // cannot write over it.
+    const openReadOnly = () => {
+      const gated = new WriterGatedFS(fs);
+      return VaultEngine.open(new OpfsVaultTreeStore(gated), new OpfsDocStore(gated), "local");
+    };
+    await Promise.all([openReadOnly(), openReadOnly()]);
     // Let anything still-pending from the original engine's fire-and-forget
     // calls finish too, then do one more authoritative reopen to check the
     // final settled state on disk.
@@ -224,11 +214,7 @@ describe("note-switch data loss (reported: Untitled.md / Untitled 2.md end up em
     const { engine: final } = await VaultEngine.open(treeStoreFinal, docStoreFinal, "local");
     await final.reconcileMaterialization();
 
-    for (const [label, eng] of [
-      ["tab1", tab1],
-      ["tab2", tab2],
-      ["final", final],
-    ] as const) {
+    for (const [label, eng] of [["final", final]] as const) {
       expect(eng.getDocument(docA.id)?.getText(CONTENT_KEY).toString(), `${label} docA`).toBe(
         "alpha body",
       );

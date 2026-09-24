@@ -121,7 +121,7 @@ describe("NoteEditor stability across re-renders", () => {
     const { container } = render(
       <Harness app={makeApp()} engine={engine} documentId={documentId} />,
     );
-    expect(container.textContent).toContain(`document not loaded: ${documentId}`);
+    expect(container.textContent).toContain("Loading…");
 
     engine.ensureDocument(documentId).setText("content arrived from sync");
 

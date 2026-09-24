@@ -174,8 +174,14 @@ export class DerivedIndexes {
     this.graphEdges = new Map(Object.entries(graph));
   }
 
-  /** Rebuild backlinks + graph edges from parsed markdown metadata. */
+  /** Rebuild backlinks + graph edges from parsed markdown metadata, and save them. */
   async build(docs: IndexedDocument[]): Promise<void> {
+    this.compute(docs);
+    await this.persist();
+  }
+
+  /** Rebuild backlinks + graph edges in memory only. */
+  compute(docs: IndexedDocument[]): void {
     this.backlinks.clear();
     this.graphEdges.clear();
     const byTitle = new Map<string, string>();
@@ -205,7 +211,6 @@ export class DerivedIndexes {
       const outgoing = [...new Set([...targets, ...internal])];
       if (outgoing.length) this.graphEdges.set(doc.id, outgoing);
     }
-    await this.persist();
   }
 
   backlinksFor(id: string): BacklinkEntry[] {

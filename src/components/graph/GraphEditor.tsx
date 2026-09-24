@@ -543,7 +543,9 @@ function GraphEditorInner({
     disposed.current = false;
     let cancelled = false;
     (async () => {
-      const doc = engine.getDocument(documentId);
+      // Documents load in the background after startup; wait for this one.
+      const doc = engine.getDocument(documentId) ?? (await engine.loadDocument(documentId));
+      if (cancelled) return;
       const markdown = doc ? doc.getMarkdown() : "";
       const graph = detectGraphDocument(markdown) ?? { nodes: [], edges: [] };
       const layout = await readGraphLayout(engine.docStore, documentId);

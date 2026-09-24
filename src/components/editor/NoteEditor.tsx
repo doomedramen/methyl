@@ -80,9 +80,12 @@ export function NoteEditor({
   const [documentAvailabilityVersion, setDocumentAvailabilityVersion] = useState(0);
 
   useLayoutEffect(() => {
-    return engine.onDocumentAvailable(documentId, () =>
+    const unsubscribe = engine.onDocumentAvailable(documentId, () =>
       setDocumentAvailabilityVersion((version) => version + 1),
     );
+    // Documents load in the background after startup; load this one first.
+    void engine.loadDocument(documentId);
+    return unsubscribe;
   }, [engine, documentId]);
 
   // `app` is rebuilt by VaultPluginBridge whenever the active note or save
@@ -124,7 +127,9 @@ export function NoteEditor({
 
     const handle = engine.getDocument(documentId);
     if (!handle) {
-      host.textContent = `document not loaded: ${documentId}`;
+      // Still loading (notes load in the background after startup, or
+      // arrive by sync); onDocumentAvailable re-runs this effect.
+      host.textContent = "Loading…";
       return;
     }
 
