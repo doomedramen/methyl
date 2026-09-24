@@ -4,7 +4,7 @@ Status: ready for implementation. This document is a specification, not a claim 
 
 Baseline inspected: `ae75f3d` (`test(a11y): select templates as buttons`). Read the current files before editing; other work may have landed since this inspection.
 
-Scope: the 19 improvements identified in the 2026-09-24 project review. Each item has a problem statement, the required change, and acceptance criteria. Section 8 orders the work; follow that order unless an item is explicitly independent.
+Scope: the 19 improvements identified in the 2026-09-24 project review, plus item 20 (PWA startup time), added after the review. Each item has a problem statement, the required change, and acceptance criteria. Section 8 orders the work; follow that order unless an item is explicitly independent.
 
 Where this document and [SPEC.md](../../SPEC.md) disagree, this document wins for the items it covers. When an item lands, update `TODO.md` (tick or remove the entry) and SPEC.md (where the architecture changed) in the same change.
 
@@ -107,7 +107,7 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 
 **Problem.** Asset and room IDs go from `decodeURIComponent` straight into SQLite keys and conflict IDs (`${id}~${digest}`). Disk paths use the sha256, so there is no traversal, but there are no length or character limits.
 
-**Required change.** In `auth.ts` (or a sibling `validate.ts`): room and asset IDs must match the UUID form produced by `newDocumentId()` in `src/lib/core/doc-id.ts`, or the fixed tree room name, optionally followed by `~` and 12 hex characters for conflict copies. Maximum 128 characters. Reject anything else with `400` before touching the store. `after=` in `/api/changes` must be a non-negative safe integer. Keep the existing 512 MiB upload limit, but make it configurable with `METHYL_MAX_ASSET_BYTES`.
+**Required change.** In `auth.ts`: room and asset IDs must use the alphabet the app actually produces — room IDs look like `doc:<uuid>` or `vault:<id>`, asset IDs are Loro tree IDs (`<counter>@<peer>`), optionally followed by `~` and 12 hex characters for conflict copies. Accept `[A-Za-z0-9][A-Za-z0-9:@._~-]*`, at most 128 characters, never containing `..`. Reject anything else, and any malformed percent-encoding, with `400` before touching the store. `after=` in `/api/changes` must be a non-negative safe integer. Keep the existing 512 MiB upload limit, but make it configurable with `METHYL_MAX_ASSET_BYTES`.
 
 **Acceptance.** Table-driven tests: valid IDs, conflict IDs, empty, over-long, `..`, `/`, NUL, and percent-encoded variants.
 
@@ -299,6 +299,31 @@ Build these in this order; each is its own PR with unit tests for the CodeMirror
 
 ---
 
+## 7.5 PWA startup time (item 20)
+
+**Problem.** Reported in use: an installed PWA on iOS Safari takes about 5 seconds to become usable, even though the app shell and the vault are already on the device. For an offline-first app that should open like a native one, that is the most visible performance problem.
+
+**Required change.**
+
+1. **Measure first.** Add `performance.mark()` calls at: first script execution, React hydration, vault open (OPFS root and tree loaded), index/search ready, first note rendered, and writer lock acquired. Record them in the diagnostics buffer and show them in "Copy diagnostics". Take a baseline on a real iPhone (installed PWA, cold start, warm cache) and on desktop Chrome with 4× CPU throttling, and record the numbers in this section.
+2. **Get the shell on screen immediately.** The sidebar, the last-open note's title, and the note text (from a small cached copy) should render before the full vault has opened. Anything not needed for the first screen (graph editor, Mermaid, KaTeX, the plugin dialogs, recharts) is loaded lazily, not in the entry bundle.
+3. **Don't rebuild what can be cached.** The search index and backlinks are derived state (SPEC §3). Persist them to OPFS with the vault version they were built at; on startup, load the saved copy and update it incrementally in the background instead of rebuilding it before the UI is interactive.
+4. **Cut the OPFS round-trips on the critical path.** Load the tree snapshot and the sidecar index in parallel. Don't read every document's CRDT state at startup; open documents lazily when they are first shown or searched.
+5. **Service worker:** serve the app shell cache-first so a warm start makes no network request before first paint, including when the sync server is unreachable.
+
+**Acceptance.** Warm-cache cold start to an interactive, editable last-open note in **under 1 second** on a recent iPhone and under 500 ms on desktop Chrome, recorded with the marks from step 1. A Playwright test with CPU throttling guards against regressions (for example, at most 2 s to an editable note with 4× throttling and a 500-note vault).
+
+## 7.6 Found while implementing: sync data-loss bugs
+
+Chasing flaky sync tests during phase A turned up four ways the server could lose edits. They were fixed in phase A because they are data loss, and each is covered by a test that fails without the fix:
+
+- A client save rewrote a note file without checking for an un-ingested external edit, overwriting it for good.
+- The three-way merge used the wrong base (the persisted state's frontiers, not the version written to disk), so an external edit could replace unsaved CRDT text.
+- The shrink safety rail compared the disk file with the CRDT's current text rather than with what was last written, so it refused genuine external additions.
+- Publishing an ingested snapshot replaced the live room's cached document, dropping client updates it had received but not yet saved.
+
+A sync round also now waits until the server's durable version covers the client's version before leaving a room (SPEC §20).
+
 ## 8. Order of work
 
 Items in the same phase can run in parallel.
@@ -311,7 +336,7 @@ Items in the same phase can run in parallel.
 | D — auth and sync | 5, then 7 | Tickets from item 5 are the join auth for the new room server. Vault-scoped routes from item 9 must exist first. |
 | E — release | 12 | Tag `v0.1.0` after phase D. |
 | F — structure | 14, 15 | 14 after item 1 (see 6.1). 15 is independent and can move earlier. |
-| G — quality | 16, 17, 18, 19 | Can start any time; 16 and 17 should cover the vault switcher, so run them after phase C. |
+| G — quality | 16, 17, 18, 19, 20 | Can start any time; 16 and 17 should cover the vault switcher, so run them after phase C. 20 (startup time) should be measured before phase C changes the storage layout, and re-measured after. |
 
 ## 9. Verification for the whole programme
 
