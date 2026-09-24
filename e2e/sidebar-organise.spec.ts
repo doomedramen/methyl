@@ -19,7 +19,7 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
  * content, only on the rows/files they create themselves.
  *
  * File assertions read straight from the browser's OPFS
- * (navigator.storage.getDirectory(), root directory "adhd-vault") via
+ * (navigator.storage.getDirectory(), vault directory "methyl/vaults/local") via
  * page.evaluate — there is no server-side vault directory in this setup
  * (see playwright.config.ts for why the sync server isn't used).
  */
@@ -59,7 +59,7 @@ async function walkVaultFiles(page: Page): Promise<string[]> {
       }
     }
     const root = await navigator.storage.getDirectory();
-    const vaultRoot = await root.getDirectoryHandle("adhd-vault");
+    const vaultRoot = await (await (await root.getDirectoryHandle("methyl")).getDirectoryHandle("vaults")).getDirectoryHandle("local");
     await walk(vaultRoot, "");
     return out.sort();
   });

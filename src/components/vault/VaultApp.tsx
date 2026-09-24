@@ -1,5 +1,6 @@
 "use client";
 
+import { OPEN_VAULTS_EVENT } from "@/components/vault/VaultSwitcher";
 import { markBoot } from "@/lib/core/boot-marks";
 import dynamic from "next/dynamic";
 import {
@@ -55,7 +56,7 @@ import type { App, NoteContext, NoteCreationOptions } from "@/lib/plugins/api";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSync } from "@/lib/browser/sync-context";
 import { useTheme } from "next-themes";
-import { Archive, Download, Laptop, Puzzle } from "lucide-react";
+import { Archive, Download, Laptop, Library, Puzzle } from "lucide-react";
 import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
 import {
@@ -452,6 +453,15 @@ function VaultPluginBridge({
   useEffect(() => {
     const disposers = [
       commandRegistry.add("core-commands", {
+        id: "manage-vaults",
+        name: "Vaults: Switch or manage",
+        icon: Library,
+        keywords: ["vault", "switch", "new vault", "delete vault", "import backup"],
+        callback: () => {
+          window.dispatchEvent(new Event(OPEN_VAULTS_EVENT));
+        },
+      }),
+      commandRegistry.add("core-commands", {
         id: "export-vault",
         name: "Export vault (Markdown and attachments)",
         icon: Download,
@@ -695,6 +705,7 @@ export function VaultApp() {
 
   useEffect(() => {
     let cancelled = false;
+    let removeVaultChangedListener: (() => void) | undefined;
     markBoot("boot-start");
     // Dynamic import keeps loro-crdt WASM out of the prerender module graph
     // (note-path.ts pulls it in transitively via vault/engine.ts).
@@ -703,7 +714,7 @@ export function VaultApp() {
       import("@/lib/vault/engine"),
       import("@/lib/vault/note-path"),
     ])
-      .then(async ([{ getVault }, , notePath]) => {
+      .then(async ([{ getVault, VAULT_CHANGED_EVENT }, , notePath]) => {
         markBoot("modules-loaded");
         const eng = await getVault();
         if (cancelled) return;
@@ -715,6 +726,11 @@ export function VaultApp() {
         void eng.whenAllDocumentsLoaded().then(() => {
           if (!cancelled) refreshNotes(eng);
         });
+        // The startup reconcile also runs in the background and may adopt
+        // or fix notes after the tree was first shown.
+        const onVaultChanged = () => refreshNotes(eng);
+        window.addEventListener(VAULT_CHANGED_EVENT, onVaultChanged);
+        removeVaultChangedListener = () => window.removeEventListener(VAULT_CHANGED_EVENT, onVaultChanged);
       })
       .catch((e) => {
         console.error(e);
@@ -722,6 +738,7 @@ export function VaultApp() {
       });
     return () => {
       cancelled = true;
+      removeVaultChangedListener?.();
     };
   }, [refreshNotes]);
 

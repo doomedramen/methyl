@@ -1,5 +1,6 @@
 "use client";
 
+import { VaultSwitcher } from "@/components/vault/VaultSwitcher";
 import { readRenamedKey } from "@/lib/browser/storage-keys";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeID } from "loro-crdt";
@@ -154,7 +155,8 @@ interface AppSidebarProps {
   onNewFolderOpenChange: (open: boolean) => void;
 }
 
-const COLLAPSED_KEY = "methyl.sidebar.collapsedFolders";
+/** Folder tree ids are per vault, so is the collapsed state. */
+const collapsedKey = (vaultId: string) => `methyl.sidebar.collapsedFolders:${vaultId}`;
 
 function collectFolderIds(rows: SidebarRow[], folderIds = new Set<string>()): Set<string> {
   for (const row of rows) {
@@ -165,9 +167,14 @@ function collectFolderIds(rows: SidebarRow[], folderIds = new Set<string>()): Se
   return folderIds;
 }
 
-function loadCollapsed(): Set<string> | null {
+function loadCollapsed(vaultId: string): Set<string> | null {
   try {
-    const raw = readRenamedKey(COLLAPSED_KEY, "adhd.sidebar.collapsedFolders");
+    // The default vault inherits what was saved before vaults existed.
+    const raw =
+      vaultId === "local"
+        ? (localStorage.getItem(collapsedKey(vaultId)) ??
+          readRenamedKey("methyl.sidebar.collapsedFolders", "adhd.sidebar.collapsedFolders"))
+        : localStorage.getItem(collapsedKey(vaultId));
     if (raw) {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr)) return new Set(arr);
@@ -178,9 +185,10 @@ function loadCollapsed(): Set<string> | null {
   return null;
 }
 
-function saveCollapsed(set: Set<string>) {
+function saveCollapsed(vaultId: string | null, set: Set<string>) {
+  if (!vaultId) return;
   try {
-    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(Array.from(set)));
+    window.localStorage.setItem(collapsedKey(vaultId), JSON.stringify(Array.from(set)));
   } catch {
     // best-effort only; state still lives in memory for this session
   }
@@ -397,40 +405,60 @@ export function AppSidebar({
     [onNewFolderOpenChange],
   );
 
-  const [collapsedPreference, setCollapsedPreference] = useState<Set<string> | null>(() =>
-    typeof window === "undefined" ? null : loadCollapsed(),
+  // Collapsed folders, per vault. Until the user toggles one, it's what was
+  // saved for this vault, or else the folders that existed when the vault
+  // first showed (they start collapsed; folders created later start open).
+  const vaultId = engine?.vaultId ?? null;
+  const savedCollapsed = useMemo(() => (vaultId ? loadCollapsed(vaultId) : null), [vaultId]);
+  const [collapsedChoice, setCollapsedChoice] = useState<{ vaultId: string; folders: Set<string> } | null>(null);
+  const [initialFolders, setInitialFolders] = useState<{ vaultId: string; folders: Set<string> } | null>(null);
+  if (vaultId && !savedCollapsed && rows.length > 0 && initialFolders?.vaultId !== vaultId) {
+    // Recorded once per vault, while rendering (React's "adjust state when
+    // a value changes" pattern), so there's no effect and no extra frame.
+    setInitialFolders({ vaultId, folders: collectFolderIds(rows) });
+  }
+  const defaultCollapsed = useMemo(
+    () => savedCollapsed ?? (initialFolders?.vaultId === vaultId ? initialFolders.folders : new Set<string>()),
+    [savedCollapsed, initialFolders, vaultId],
   );
-  const defaultCollapseApplied = useRef(false);
-  useEffect(() => {
-    if (defaultCollapseApplied.current || collapsedPreference !== null || rows.length === 0) return;
-    defaultCollapseApplied.current = true;
-    setCollapsedPreference(collectFolderIds(rows));
-  }, [collapsedPreference, rows]);
-  const collapsed = useMemo(
-    () => collapsedPreference ?? new Set<string>(),
-    [collapsedPreference],
+  const collapsed =
+    collapsedChoice && collapsedChoice.vaultId === vaultId ? collapsedChoice.folders : defaultCollapsed;
+
+  const changeCollapsed = useCallback(
+    (change: (folders: Set<string>) => Set<string> | null) => {
+      if (!vaultId) return;
+      setCollapsedChoice((prev) => {
+        const current = prev && prev.vaultId === vaultId ? prev.folders : defaultCollapsed;
+        const next = change(current);
+        if (!next) return prev;
+        saveCollapsed(vaultId, next);
+        return { vaultId, folders: next };
+      });
+    },
+    [defaultCollapsed, vaultId],
   );
 
-  const toggleCollapsed = useCallback((treeId: TreeID) => {
-    setCollapsedPreference((prev) => {
-      const next = new Set(prev ?? collectFolderIds(rows));
-      if (next.has(treeId)) next.delete(treeId);
-      else next.add(treeId);
-      saveCollapsed(next);
-      return next;
-    });
-  }, [rows]);
+  const toggleCollapsed = useCallback(
+    (treeId: TreeID) =>
+      changeCollapsed((current) => {
+        const next = new Set(current);
+        if (next.has(treeId)) next.delete(treeId);
+        else next.add(treeId);
+        return next;
+      }),
+    [changeCollapsed],
+  );
 
-  const expand = useCallback((treeId: TreeID) => {
-    setCollapsedPreference((prev) => {
-      const current = prev ?? collectFolderIds(rows);
-      if (!current.has(treeId)) return prev;
-      const next = new Set(current);
-      next.delete(treeId);
-      saveCollapsed(next);
-      return next;
-    });
-  }, [rows]);
+  const expand = useCallback(
+    (treeId: TreeID) =>
+      changeCollapsed((current) => {
+        if (!current.has(treeId)) return null;
+        const next = new Set(current);
+        next.delete(treeId);
+        return next;
+      }),
+    [changeCollapsed],
+  );
 
   const flat = useMemo(() => {
     const out: FlatEntry[] = [];
@@ -789,7 +817,8 @@ export function AppSidebar({
           {/* A static decorative SVG: next/image would add nothing here. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.svg" alt="" className="size-6 shrink-0 rounded-md" />
-          <h1 className="min-w-0 truncate text-base font-semibold tracking-tight">Methyl</h1>
+          <h1 className="sr-only">Methyl</h1>
+          <VaultSwitcher ready={Boolean(engine)} />
         </div>
         <div className="flex items-center gap-1">
           <CreateMenu

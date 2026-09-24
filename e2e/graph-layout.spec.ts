@@ -68,7 +68,7 @@ test("auto-arrange lays nodes out and persists the layout", async ({ page }) => 
   await page.waitForTimeout(700);
   const files = await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
-    const vault = await root.getDirectoryHandle("adhd-vault");
+    const vault = await (await (await root.getDirectoryHandle("methyl")).getDirectoryHandle("vaults")).getDirectoryHandle("local");
     const metaDir = await vault.getDirectoryHandle(".methyl", { create: true });
     const meta = await metaDir.getDirectoryHandle("vault-meta", { create: true });
     return (await (await meta.getFileHandle("graph-layout.json")).getFile()).text();

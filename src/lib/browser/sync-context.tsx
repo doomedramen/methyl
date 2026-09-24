@@ -34,7 +34,6 @@ import {
   type SyncConfig,
 } from "@/lib/browser/sync-config";
 
-const VAULT_ID = "local";
 
 export interface SyncContextValue {
   config: SyncConfig | null;
@@ -79,8 +78,8 @@ export function SyncProvider({
     // localStorage only exists in the browser, so the saved config is read
     // after hydration rather than during the server render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setConfig(loadSyncConfig());
-  }, []);
+    setConfig(engine ? loadSyncConfig(engine.vaultId) : null);
+  }, [engine]);
 
   // A read-only tab is promoted to writer in place (§12) — the `engine`
   // reference doesn't change, only its `releaseWriterLock` field — so
@@ -126,7 +125,7 @@ export function SyncProvider({
           wsUrl,
           httpUrl,
           authToken: config.authToken,
-          vaultId: VAULT_ID,
+          vaultId: engine.vaultId,
         });
         if (cancelled) {
           host.stop();
@@ -168,17 +167,17 @@ export function SyncProvider({
   }, []);
 
   const save = useCallback((next: SyncConfig) => {
-    saveSyncConfig(next);
+    if (engine) saveSyncConfig(next, engine.vaultId);
     setConfig(next);
-  }, []);
+  }, [engine]);
 
   const disconnect = useCallback(() => {
     hostRef.current?.stop();
     hostRef.current = null;
-    clearSyncConfig();
+    if (engine) clearSyncConfig(engine.vaultId);
     setConfig(null);
     setStatus({ kind: "idle" });
-  }, []);
+  }, [engine]);
 
   const value = useMemo<SyncContextValue>(
     () => ({

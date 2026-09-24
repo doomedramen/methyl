@@ -168,6 +168,14 @@ default, cross-origin requests are rejected by the browser.
 Ten failed authentication attempts from one address within a minute lock that
 address out (HTTP `429`); each further lockout doubles, up to 15 minutes.
 
+## Vaults
+
+The browser can hold several vaults — separate sets of notes, each with its own sync
+settings. The vault name at the top of the sidebar switches between them; **Manage vaults…**
+(also in the command menu) creates, renames and deletes vaults, and imports a full backup
+(**Export full backup**) as a new vault. A vault's notes live at `/<vault id>/<note path>`
+in the app's URLs.
+
 ## Plugins
 
 Methyl has a small, Obsidian-inspired plugin system. A plugin registers editor

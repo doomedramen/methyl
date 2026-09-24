@@ -1,5 +1,6 @@
 import { LEGACY_META_DIRS, META_DIR } from "@/lib/core/paths";
 import type { VaultFileSystem } from "@/lib/vault/fs";
+import { copyTreeVerified, deleteTree, listFiles } from "@/lib/vault/tree-copy";
 
 /**
  * Move a vault's metadata directory from a legacy name (`.adhd`) to
@@ -17,29 +18,6 @@ import type { VaultFileSystem } from "@/lib/vault/fs";
  */
 const MARKER = (legacy: string) => `${META_DIR}/vault-meta/migrated-from${legacy}`;
 
-async function listFiles(fs: VaultFileSystem, dir: string): Promise<string[]> {
-  const { dirs, files } = await fs.readdir(dir);
-  const out = files.map((name) => `${dir}/${name}`);
-  for (const name of dirs) out.push(...(await listFiles(fs, `${dir}/${name}`)));
-  return out;
-}
-
-async function listDirs(fs: VaultFileSystem, dir: string): Promise<string[]> {
-  const { dirs } = await fs.readdir(dir);
-  const out: string[] = [];
-  for (const name of dirs) {
-    const child = `${dir}/${name}`;
-    out.push(...(await listDirs(fs, child)), child);
-  }
-  return out;
-}
-
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 export interface MetaMigrationReport {
   migrated: string[];
   files: number;
@@ -52,24 +30,12 @@ export async function migrateLegacyMetaDir(fs: VaultFileSystem): Promise<MetaMig
     if (files.length === 0 && !(await fs.exists(MARKER(legacy)))) continue;
 
     if (!(await fs.exists(MARKER(legacy)))) {
-      for (const source of files) {
-        const bytes = await fs.readFile(source);
-        if (!bytes) continue;
-        const target = META_DIR + source.slice(legacy.length);
-        await fs.writeFile(target, bytes);
-        const copied = await fs.readFile(target);
-        if (!copied || !sameBytes(copied, bytes)) {
-          throw new Error(`metadata migration: ${target} did not read back as written; ${legacy} left untouched`);
-        }
-      }
+      report.files += await copyTreeVerified(fs, legacy, META_DIR);
       await fs.writeFile(MARKER(legacy), new TextEncoder().encode(new Date().toISOString()));
-      report.files += files.length;
     }
 
     if (files.length === 0) continue;
-    for (const source of files) await fs.delete(source);
-    for (const dir of await listDirs(fs, legacy)) await fs.delete(dir);
-    await fs.delete(legacy).catch(() => undefined);
+    await deleteTree(fs, legacy);
     report.migrated.push(legacy);
   }
   return report;

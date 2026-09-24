@@ -15,8 +15,12 @@ import { testWebSocketConnection } from "@/lib/sync/websocket";
  * model, but is a real tradeoff worth knowing about.
  */
 
-const STORAGE_KEY = "methyl.sync-config";
+/** One sync configuration per vault (spec item 9). */
+const storageKey = (vaultId: string) => `methyl.sync-config:${vaultId}`;
+/** Before multi-vault: one global configuration, which the default vault inherits. */
+const GLOBAL_STORAGE_KEY = "methyl.sync-config";
 const LEGACY_STORAGE_KEY = "adhd-sync-config";
+const DEFAULT_VAULT_ID = "local";
 
 export interface SyncConfig {
   /** Origin the sync server is reachable at, e.g. "https://methyl.example.com". */
@@ -32,10 +36,22 @@ function hasLocalStorage(): boolean {
   }
 }
 
-export function loadSyncConfig(): SyncConfig | null {
+function readConfig(vaultId: string): string | null {
+  const key = storageKey(vaultId);
+  if (vaultId !== DEFAULT_VAULT_ID) return localStorage.getItem(key);
+  const current = localStorage.getItem(key);
+  if (current !== null) return current;
+  const inherited = readRenamedKey(GLOBAL_STORAGE_KEY, LEGACY_STORAGE_KEY);
+  if (inherited === null) return null;
+  localStorage.setItem(key, inherited);
+  localStorage.removeItem(GLOBAL_STORAGE_KEY);
+  return inherited;
+}
+
+export function loadSyncConfig(vaultId = DEFAULT_VAULT_ID): SyncConfig | null {
   if (!hasLocalStorage()) return null;
   try {
-    const raw = readRenamedKey(STORAGE_KEY, LEGACY_STORAGE_KEY);
+    const raw = readConfig(vaultId);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SyncConfig>;
     if (typeof parsed.serverUrl !== "string" || !parsed.serverUrl) return null;
@@ -46,20 +62,23 @@ export function loadSyncConfig(): SyncConfig | null {
   }
 }
 
-export function saveSyncConfig(config: SyncConfig): void {
+export function saveSyncConfig(config: SyncConfig, vaultId = DEFAULT_VAULT_ID): void {
   if (!hasLocalStorage()) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    localStorage.setItem(storageKey(vaultId), JSON.stringify(config));
   } catch {
     // ignore (private browsing / quota / disabled storage)
   }
 }
 
-export function clearSyncConfig(): void {
+export function clearSyncConfig(vaultId = DEFAULT_VAULT_ID): void {
   if (!hasLocalStorage()) return;
   try {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    localStorage.removeItem(storageKey(vaultId));
+    if (vaultId === DEFAULT_VAULT_ID) {
+      localStorage.removeItem(GLOBAL_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
   } catch {
     // ignore
   }

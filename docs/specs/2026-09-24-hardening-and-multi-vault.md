@@ -187,6 +187,14 @@ OPFS root
 1. *Browser:* on first start with the new code, if `adhd-vault/` exists and `methyl/vaults.json` doesn't, create a vault named "My vault", copy `adhd-vault/` into `methyl/vaults/<newId>/` (renaming `.adhd/` to `.methyl/` during the copy, item 13), verify file count and CRDT bytes, write `vaults.json`, then delete `adhd-vault/`. OPFS has no reliable cross-browser directory move, so always copy, verify, then delete. Carry the existing sync config across as that vault's server binding. Hold a migration Web Lock so only one tab migrates.
 2. *Server:* see the compatibility rule above. Moving an existing `/vault` mount into `/vaults/<name>` is a documented manual step. The server never moves user folders by itself.
 
+**As built (browser half).** Implemented as above, with these choices:
+
+- The URL is `/<vaultId>/<note path>` — the scheme notes already used — rather than `/v/<vaultId>/…`.
+- The vault that existed before keeps the id `local`, so its server tree room (`vault:local`) and existing note URLs don't change. New vaults get random ids.
+- Switching vaults is a full page load of the other vault's URL; nothing per-vault survives it.
+- A vault whose folder has note files but no CRDT tree adopts them at boot instead of showing an empty vault (the state the unexplained wipe left behind).
+- **The server half is built with item 7** (the in-house room server), not in phase C: a single `SimpleServer` can't be namespaced per vault without changing room ids, and item 7 replaces it anyway.
+
 **Acceptance.** Unit tests for the registry, per-vault key namespacing and the migration (including a crash between copy and delete, then rerun). Server e2e test with two vaults: edits in one never show up in the other's changes feed, and a device paired for one gets 403 on the other. Playwright: create a second vault, switch, both vaults keep their notes across reloads, and two tabs hold writer locks on different vaults at once. Add a multi-vault section to SPEC.md and fix the `TODO.md` reference.
 
 ---

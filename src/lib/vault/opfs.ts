@@ -1,7 +1,10 @@
 import { normalizePath, isMetaDirName } from "@/lib/core/paths";
 import { assertDeletable, type VaultFileSystem } from "@/lib/vault/fs";
 
-const ROOT_KEY = "adhd-vault";
+/** Where a vault lives in the origin's OPFS: `methyl/vaults/<vaultId>/`. */
+export function vaultRootParts(vaultId: string): string[] {
+  return ["methyl", "vaults", vaultId];
+}
 
 /**
  * OPFS-backed vault filesystem (§9, §11).
@@ -22,6 +25,13 @@ const ROOT_KEY = "adhd-vault";
  * tmp → rename atomically where the platform supports it.
  */
 export class OpfsVaultFS implements VaultFileSystem {
+  /**
+   * @param rootParts directory path inside the origin's OPFS that this file
+   * system is rooted at — a vault's root (vaultRootParts), or `[]` for the
+   * whole origin (the vault registry and layout migrations use that).
+   */
+  constructor(private readonly rootParts: string[] = vaultRootParts("local")) {}
+
   private root: FileSystemDirectoryHandle | null = null;
   /**
    * Per-path write serialization. OPFS's `createWritable()` truncates on
@@ -56,8 +66,9 @@ export class OpfsVaultFS implements VaultFileSystem {
 
   async ensureRoot(): Promise<FileSystemDirectoryHandle> {
     if (this.root) return this.root;
-    const root = await navigator.storage.getDirectory();
-    this.root = await root.getDirectoryHandle(ROOT_KEY, { create: true });
+    let root = await navigator.storage.getDirectory();
+    for (const part of this.rootParts) root = await root.getDirectoryHandle(part, { create: true });
+    this.root = root;
     return this.root;
   }
 
