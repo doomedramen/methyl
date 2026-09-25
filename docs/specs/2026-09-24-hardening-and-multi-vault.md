@@ -289,6 +289,8 @@ No file over ~600 lines afterwards. Add that as a soft check in `architecture.te
 
 **Acceptance.** Typecheck, unit and e2e tests pass; `npm ls` shows the removed packages gone; the client bundle gets smaller (record before/after in the PR).
 
+**As built.** 34 of 61 components removed (nothing outside `ui/` used them, directly or through a used component), and 11 packages nothing imports and nothing else depends on: `@codemirror/search`, `@shadcn/react`, `embla-carousel-react`, `input-otp`, `react-day-picker`, `recharts`, `rehype-katex`, `rehype-stringify`, `remark-math`, `remark-rehype`, `tailwind-merge` (56 packages fewer installed). Packages that other dependencies need (`@lezer/highlight`, `@loro-dev/flock`, `clsx`, the frontmatter packages and so on) stay. **The client bundle did not shrink:** gzipped JS is 1,153,439 bytes before and after, byte for byte, because the bundler had already dropped the unused components. The gain is a smaller source tree, dependency list and install; the runtime image copies `node_modules`, so it shrinks too (see item 19).
+
 ---
 
 ## 7. Product quality
