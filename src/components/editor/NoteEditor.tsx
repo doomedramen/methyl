@@ -6,7 +6,7 @@ import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
 import type { EditorUser } from "@/lib/editor/sync";
 import { Paperclip } from "lucide-react";
-import { attachmentMarkdownLink, relativeAttachmentPath } from "@/lib/vault/attachments";
+import { attachmentMarkdownLink, pastedFileName, relativeAttachmentPath } from "@/lib/vault/attachments";
 import { useApp, usePluginHost } from "@/lib/plugins/react";
 import { reconfigurePluginCompartment } from "@/lib/plugins/editor";
 
@@ -65,7 +65,7 @@ export function NoteEditor({
   const viewRef = useRef<EditorView | null>(null);
   const focusRequestRef = useRef<number | null>(focusRequest);
   const focusedRequestRef = useRef<number | null>(null);
-  const attachFilesRef = useRef<(files: File[]) => void>(() => undefined);
+  const attachFilesRef = useRef<(files: File[], at?: number) => void>(() => undefined);
   const attachmentChangeRef = useRef(onAttachmentsChanged);
   useLayoutEffect(() => {
     attachmentChangeRef.current = onAttachmentsChanged;
@@ -212,19 +212,21 @@ export function NoteEditor({
           }),
         });
 
-        const attachFiles = async (files: File[]) => {
+        /** Store files as attachments and link them at `at` (a drop), else the selection. */
+        const attachFiles = async (files: File[], at?: number) => {
           if (disposed || readOnly || !view || files.length === 0) return;
           const links: string[] = [];
           try {
             for (const file of files) {
               const bytes = new Uint8Array(await file.arrayBuffer());
-              const node = await engine.createAttachment(file.name || "attachment", bytes);
+              const node = await engine.createAttachment(pastedFileName(file), bytes);
               const path = relativeAttachmentPath(engine, documentId, node.treeId);
               if (path) links.push(attachmentMarkdownLink(node.name, path));
             }
             await engine.persistTreeIncremental();
             if (links.length > 0 && view) {
-              const { from, to } = view.state.selection.main;
+              const drop = at === undefined ? undefined : Math.min(at, view.state.doc.length);
+              const { from, to } = drop === undefined ? view.state.selection.main : { from: drop, to: drop };
               const insert = links.join("\n");
               view.dispatch({
                 changes: { from, to, insert },
@@ -236,7 +238,7 @@ export function NoteEditor({
             console.error("[editor] attachment import failed", error);
           }
         };
-        attachFilesRef.current = (files) => void attachFiles(files);
+        attachFilesRef.current = (files, at) => void attachFiles(files, at);
         const onPaste = (event: ClipboardEvent) => {
           const files = Array.from(event.clipboardData?.files ?? []);
           if (files.length === 0 || readOnly) return;
@@ -250,7 +252,9 @@ export function NoteEditor({
           const files = Array.from(event.dataTransfer?.files ?? []);
           if (files.length === 0 || readOnly) return;
           event.preventDefault();
-          attachFilesRef.current(files);
+          // Link the files where they were dropped, not at the cursor.
+          const at = view?.posAtCoords({ x: event.clientX, y: event.clientY }) ?? undefined;
+          attachFilesRef.current(files, at);
         };
         host.addEventListener("paste", onPaste, true);
         host.addEventListener("dragover", onDragOver);

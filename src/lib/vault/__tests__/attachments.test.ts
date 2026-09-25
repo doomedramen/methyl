@@ -5,6 +5,7 @@ import { VaultEngine } from "@/lib/vault/engine";
 import {
   attachmentMarkdownLink,
   findAttachmentNode,
+  pastedFileName,
   relativeAttachmentPath,
 } from "@/lib/vault/attachments";
 
@@ -39,5 +40,18 @@ describe("attachment paths and portable Markdown", () => {
     expect(attachmentMarkdownLink(asset.name, target)).toBe(
       "[data (raw).csv](Attachments/data%20%28raw%29.csv)",
     );
+  });
+});
+
+describe("pastedFileName", () => {
+  const at = new Date(2026, 8, 24, 15, 30, 12);
+  it("names a clipboard image the way Obsidian does", () => {
+    expect(pastedFileName({ name: "image.png", type: "image/png" }, at)).toBe("Pasted image 20260924153012.png");
+    expect(pastedFileName({ name: "", type: "image/jpeg" }, at)).toBe("Pasted image 20260924153012.jpg");
+  });
+  it("keeps a real file name", () => {
+    expect(pastedFileName({ name: "diagram.png", type: "image/png" }, at)).toBe("diagram.png");
+    expect(pastedFileName({ name: "report.pdf", type: "application/pdf" }, at)).toBe("report.pdf");
+    expect(pastedFileName({ name: "", type: "application/pdf" }, at)).toBe("attachment");
   });
 });
