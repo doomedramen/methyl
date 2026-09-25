@@ -338,6 +338,13 @@ Build these in this order; each is its own PR with unit tests for the CodeMirror
 3. **Slash menu.** `/` at the start of a line or after whitespace opens a `@codemirror/autocomplete` source with: headings 1–3, bullet, numbered and task lists, table, code block, quote, divider, today's date, and templates. Reuse the wikilink autocomplete's structure (`src/lib/editor/wikilink-autocomplete.ts`). The plugin system should be able to add entries.
 4. The remaining `TODO.md` editor items (table helpers, block drag handle, wikilink modifier hint, selection colour) stay in `TODO.md` and are out of scope here.
 
+**As built.**
+
+1. Pasting and dropping files already stored them as attachments and linked them. What's new: a clipboard image (which browsers call `image.png`) is saved as `Pasted image <yyyyMMddHHmmss>.<ext>` (`pastedFileName` in `src/lib/vault/attachments.ts`), and dropped files are linked where they're dropped, not at the cursor. **Deviation:** they still go to the `Attachments/` folder, like every other attachment in this app, rather than the note's folder, so there's one place attachments live.
+2. `src/lib/editor/smart-paste.ts` (a CodeMirror extension; `planPaste` is the pure decision) and `html-to-markdown.ts` (`rehype-parse` → `rehype-remark` → `remark-gfm` → `remark-stringify`, loaded only when rich HTML is pasted). Rich means the HTML has links, emphasis, headings, lists, tables, code, quotes, images or rules; HTML that's only spans and divs pastes as its plain text. Cmd/Ctrl+Shift+V pastes plain text.
+3. `src/lib/editor/slash-menu.ts`: the entries listed, from a registry in `EditorExtensionRegistry`. The built-in entries are part of the editor rather than a plugin: plugin enablement is stored as a list of enabled ids, so a new core plugin would be off in every existing vault. Plugins add entries with `registerSlashCommand(command | () => commands)`. Templates use the function form to list one entry per template.
+4. Tests: `smart-paste.test.ts`, `slash-menu.test.ts`, `pastedFileName` in `attachments.test.ts`, and `e2e/editor-features.spec.ts` (image paste, URL-over-selection, HTML paste, and the `/` menu).
+
 ### 7.4 Smaller Docker image (item 19)
 
 **Problem.** The image is 464 MB, mostly the Debian base, Node and `better-sqlite3`.

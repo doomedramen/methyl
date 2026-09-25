@@ -121,6 +121,9 @@ export class PluginHost {
       registerCompletionSource: (source) => {
         disposers.push(this.editorExtensions.addCompletionSource(reg.manifest.id, source));
       },
+      registerSlashCommand: (source) => {
+        disposers.push(this.editorExtensions.addSlashCommand(reg.manifest.id, source));
+      },
       register: (dispose: () => void) => {
         disposers.push(dispose);
       },

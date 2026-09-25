@@ -1,6 +1,12 @@
 import { type Compartment, type Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { autocompletion, type CompletionSource } from "@codemirror/autocomplete";
+import {
+  builtInSlashCommands,
+  slashCompletionSource,
+  type SlashCommand,
+  type SlashSource,
+} from "@/lib/editor/slash-menu";
 
 /** Guard a single completion source so a throw never breaks the others.
  *  CodeMirror's `autocompletion({ override })` takes an *array* of sources
@@ -27,9 +33,15 @@ interface CompletionEntry {
   source: CompletionSource;
 }
 
+interface SlashEntry {
+  pluginId: string;
+  source: SlashSource;
+}
+
 export class EditorExtensionRegistry {
   private extensions: ExtensionEntry[] = [];
   private completions: CompletionEntry[] = [];
+  private slash: SlashEntry[] = [];
   private listeners = new Set<() => void>();
 
   addExtension(pluginId: string, ext: Extension | Extension[]): () => void {
@@ -52,11 +64,49 @@ export class EditorExtensionRegistry {
     };
   }
 
+  /** Add a `/` menu entry, or a function listing entries (spec item 18). */
+  addSlashCommand(pluginId: string, source: SlashSource): () => void {
+    const entry: SlashEntry = { pluginId, source };
+    this.slash.push(entry);
+    this.emit();
+    return () => {
+      this.slash = this.slash.filter((e) => e !== entry);
+      this.emit();
+    };
+  }
+
+  /**
+   * Every `/` menu entry now: the built-in blocks, then plugins' entries in
+   * registration order. The built-ins aren't a plugin, so the menu works in
+   * vaults whose plugin list predates it. A failing provider is skipped.
+   */
+  slashCommands(): SlashCommand[] {
+    const out: SlashCommand[] = [];
+    const seen = new Set<string>();
+    for (const { source } of [{ source: builtInSlashCommands }, ...this.slash]) {
+      let commands: SlashCommand[];
+      try {
+        commands = typeof source === "function" ? source() : [source];
+      } catch (err) {
+        console.error("[plugins] slash command provider threw:", err);
+        continue;
+      }
+      for (const command of commands) {
+        if (seen.has(command.id)) continue;
+        seen.add(command.id);
+        out.push(command);
+      }
+    }
+    return out;
+  }
+
   buildExtension(): Extension {
     const sources = this.completions.map((c) => wrapCompletionSource(c.source));
+    // The `/` menu reads the registry live, so entries added later show up.
+    sources.push(wrapCompletionSource(slashCompletionSource(() => this.slashCommands())));
     return [
       ...this.extensions.map((e) => e.ext),
-      autocompletion({ override: sources.length > 0 ? sources : undefined }),
+      autocompletion({ override: sources }),
     ];
   }
 
