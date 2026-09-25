@@ -567,7 +567,7 @@ function DragHandle({
       onKeyDown={onKeyDown}
       aria-label={`Move ${name}`}
       data-sidebar-drag-row="true"
-      className="absolute top-1/2 left-0 z-10 grid size-6 -translate-y-1/2 place-items-center rounded-sm bg-sidebar opacity-0 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+      className="pointer-events-none absolute top-1/2 left-0 z-10 grid size-6 -translate-y-1/2 place-items-center rounded-sm bg-sidebar opacity-0 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
     >
       <GripVertical className="size-3.5 text-muted-foreground" aria-hidden="true" />
     </button>
