@@ -53,6 +53,9 @@ export interface PersistedDocStore {
   /** List ordinary vault directories, excluding the reserved metadata tree. */
   listMaterializedDirectories?(): Promise<string[]>;
 
+  /** Remove empty directories at and beneath one path, preserving files. */
+  removeEmptyMaterializedDirectories(path: string): Promise<void>;
+
   /**
    * Remove one materialised file (e.g. the old path after a rename/move, or
    * a file whose tree node is gone). Best-effort cleanup of now-empty

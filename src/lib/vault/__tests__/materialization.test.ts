@@ -80,6 +80,31 @@ describe("materialization: disk mirrors the tree", () => {
     expect(await fs.exists("Projects/note.md")).toBe(false);
   });
 
+  it("does not re-import an empty external directory subtree after deletion", async () => {
+    const { engine, fs, docStore } = await newEngine();
+    await fs.mkdir("__MACOSX/Licences");
+    await engine.ingestExternalFolders();
+    const folder = engine.tree.findByName("__MACOSX").find((node) => node.kind === "directory");
+    expect(folder).toBeDefined();
+
+    await engine.deleteFolder(folder!.treeId);
+    await engine.ingestExternalFolders();
+
+    expect(engine.tree.findByName("__MACOSX")).toHaveLength(0);
+    expect(await docStore.listMaterializedDirectories()).toEqual([]);
+  });
+
+  it("preserves non-empty directories when pruning a deleted subtree", async () => {
+    const { fs, docStore } = await newEngine();
+    await fs.mkdir("__MACOSX/Keep");
+    await fs.writeFile("__MACOSX/Keep/external.bin", new Uint8Array([1]));
+
+    await docStore.removeEmptyMaterializedDirectories("__MACOSX");
+
+    expect(await fs.readFile("__MACOSX/Keep/external.bin")).toEqual(new Uint8Array([1]));
+    expect(await docStore.listMaterializedDirectories()).toEqual(["__MACOSX", "__MACOSX/Keep"]);
+  });
+
   describe("reconcileMaterialization", () => {
     it("re-materialises a doc whose file is missing", async () => {
       const { engine, fs } = await newEngine();

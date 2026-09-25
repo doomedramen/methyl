@@ -1,7 +1,7 @@
 import { META_DIR, isMetaDirName } from "@/lib/core/paths";
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
-import type { VaultFileSystem } from "@/lib/vault/fs";
+import { assertDeletable, type VaultFileSystem } from "@/lib/vault/fs";
 import {
   atomicCompact,
   cleanupInterrupted,
@@ -170,8 +170,28 @@ class OpfsPersistBackend {
 
   async removeMaterialized(path: string): Promise<void> {
     await this.fs.delete(path);
-    // Directories are implicit in OPFS's own tree; no explicit pruning is
-    // needed (an empty FileSystemDirectoryHandle just sits there unused).
+  }
+
+  async removeEmptyMaterializedDirectories(path: string): Promise<void> {
+    assertDeletable(path);
+    if (path.replaceAll("\\", "/").split("/").some(isMetaDirName)) {
+      throw new Error(`refusing to prune vault metadata path "${path}"`);
+    }
+    const prune = async (directory: string): Promise<void> => {
+      const { dirs } = await this.fs.readdir(directory);
+      for (const child of dirs) await prune(`${directory}/${child}`);
+
+      const entries = await this.fs.readdir(directory);
+      if (entries.dirs.length > 0 || entries.files.length > 0) return;
+      try {
+        await this.fs.delete(directory);
+      } catch (error) {
+        // A concurrent write may have made the directory non-empty.
+        if ((error as DOMException).name !== "InvalidModificationError") throw error;
+      }
+    };
+
+    await prune(path);
   }
 
   async writeMaterializedAtomic(path: string, bytes: Uint8Array): Promise<void> {
@@ -270,6 +290,10 @@ export class OpfsDocStore implements PersistedDocStore {
 
   removeMaterialized(path: string): Promise<void> {
     return this.backend.removeMaterialized(path);
+  }
+
+  removeEmptyMaterializedDirectories(path: string): Promise<void> {
+    return this.backend.removeEmptyMaterializedDirectories(path);
   }
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MemoryVaultFS } from "@/lib/vault/memory-fs";
 import { OpfsDocStore, OpfsVaultTreeStore } from "@/lib/vault/opfs-store";
 import { VaultEngine } from "@/lib/vault/engine";
+import { listDirectoryPaths } from "@/lib/vault/engine/tree-ops";
 
 async function engineOn(fs: MemoryVaultFS) {
   return VaultEngine.create(new OpfsVaultTreeStore(fs), new OpfsDocStore(fs), "local");
@@ -52,6 +53,26 @@ describe("applyTreeToDisk after a sync merge", () => {
     expect(moved).toEqual(["Archive/kept.md"]);
     expect(await fs.exists("keep.md")).toBe(false);
     expect(await fs.readTextFile("Archive/kept.md")).toBe("keep\n");
+  });
+
+  it("prunes empty directories removed by a remote tree update", async () => {
+    const fs = new MemoryVaultFS();
+    const local = await engineOn(fs);
+    await fs.mkdir("__MACOSX/Licences");
+    await local.ingestExternalFolders();
+
+    const peer = await engineOn(new MemoryVaultFS());
+    peer.tree.doc.import(local.tree.doc.export({ mode: "snapshot" }));
+    const folder = peer.tree.findByName("__MACOSX")[0]!;
+    peer.tree.delete(folder.treeId);
+    const previousDirectories = listDirectoryPaths(local);
+    local.tree.doc.import(peer.tree.doc.export({ mode: "snapshot" }));
+
+    await local.applyTreeToDisk(previousDirectories);
+    await local.ingestExternalFolders();
+
+    expect(await local.docStore.listMaterializedDirectories?.()).toEqual([]);
+    expect(local.tree.findByName("__MACOSX")).toHaveLength(0);
   });
 
   it("leaves a file alone while it holds an external edit not yet ingested", async () => {

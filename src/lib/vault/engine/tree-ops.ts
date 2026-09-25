@@ -59,13 +59,21 @@ export async function deleteDocument(engine: VaultEngine, documentId: string): P
 }
 
 /**
- * After a tree change merged in from sync, make the files on disk follow
- * the tree: remove the file of a note the tree no longer has, and move
- * the file of a note that was renamed or moved. Without this they only
- * caught up at the next boot's reconcile. A file holding an external edit
- * that hasn't been ingested is left alone for the ingest to handle.
+ * After a tree change merged in from sync, make materialized paths follow
+ * the tree: remove files of deleted notes, move renamed notes, and prune
+ * empty deleted directories. Uningested external edits stay untouched.
  */
-export async function applyTreeToDisk(engine: VaultEngine): Promise<{ removed: string[]; moved: string[] }> {
+export function listDirectoryPaths(engine: VaultEngine): string[] {
+  return engine.tree.allNodes()
+    .filter((node) => node.kind === "directory")
+    .map((node) => buildPathFromNode(engine.tree, node))
+    .filter((path): path is string => path !== null);
+}
+
+export async function applyTreeToDisk(
+  engine: VaultEngine,
+  previousDirectoryPaths: readonly string[] = [],
+): Promise<{ removed: string[]; moved: string[] }> {
   await engine.allDocumentsLoaded;
   const removed: string[] = [];
   const moved: string[] = [];
@@ -90,6 +98,12 @@ export async function applyTreeToDisk(engine: VaultEngine): Promise<{ removed: s
     const current = engine.materializedPaths.get(documentId);
     if (!path || !current || current === path) continue;
     if (await engine.materializeToTreePath(documentId)) moved.push(path);
+  }
+  const currentDirectories = new Set(listDirectoryPaths(engine));
+  for (const path of new Set(previousDirectoryPaths)) {
+    if (!currentDirectories.has(path)) {
+      await engine.docStore.removeEmptyMaterializedDirectories(path);
+    }
   }
   if (removed.length > 0 || moved.length > 0) {
     await engine.diag("apply-tree-to-disk", {
@@ -173,6 +187,7 @@ export async function deleteFolder(engine: VaultEngine, treeId: TreeID): Promise
   await engine.allDocumentsLoaded;
   const node = engine.tree.getNode(treeId);
   if (!node) throw new Error(`Node not found: ${treeId}`);
+  const folderPath = buildPathFromNode(engine.tree, node);
   const docIds = collectDocumentIds(engine.tree, treeId);
   const assetNodes = collectBinaryNodes(engine.tree, treeId);
   const oldPaths: string[] = [];
@@ -193,6 +208,7 @@ export async function deleteFolder(engine: VaultEngine, treeId: TreeID): Promise
     await engine.dropIndexEntry(path);
   }
   for (const path of oldAssetPaths) await engine.materializedRemove(path);
+  if (folderPath) await engine.docStore.removeEmptyMaterializedDirectories(folderPath);
   await engine.refreshIndexes();
   await engine.diag("delete-folder", {
     counts: { docs: docIds.length, assets: assetNodes.length },

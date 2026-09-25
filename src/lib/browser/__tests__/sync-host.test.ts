@@ -197,6 +197,64 @@ describe("SyncHost client driver", () => {
     host.disconnect();
   });
 
+  it("prunes stale empty directories when another device deletes their tree folder", async () => {
+    const vaultId = "empty-folder-delete-sync";
+    const isolatedRoot = mkdtempSync(join(tmpdir(), "adhd-empty-folder-sync-"));
+    const isolatedServer = createSyncServer({
+      port: 0,
+      httpPort: 0,
+      vaultPath: isolatedRoot,
+      authToken: AUTH,
+      saveIntervalMs: 50,
+      watch: false,
+      vaultId,
+    });
+    await isolatedServer.start();
+    const ports = isolatedServer.ports() as { ws: number; http: number };
+    const optionsFor = (engine: VaultEngine, fs: MemoryVaultFS) => ({
+      fs,
+      engine,
+      wsUrl: `ws://127.0.0.1:${ports.ws}`,
+      apiUrl: `http://127.0.0.1:${ports.http}/api/v/${vaultId}`,
+      authToken: AUTH,
+      vaultId,
+    });
+    let hostA: SyncHost | undefined;
+    let hostB: SyncHost | undefined;
+    try {
+      const fsA = new MemoryVaultFS();
+      const engineA = await makeVaultOn(fsA);
+      await fsA.mkdir("__MACOSX/Licences");
+      await engineA.ingestExternalFolders();
+      hostA = await SyncHost.create(optionsFor(engineA, fsA));
+      await hostA.sync();
+
+      const fsB = new MemoryVaultFS();
+      const engineB = await makeVaultOn(fsB);
+      hostB = await SyncHost.create(optionsFor(engineB, fsB));
+      await hostB.sync();
+      const folderB = engineB.tree.findByName("__MACOSX")[0];
+      expect(folderB).toBeDefined();
+      await fsB.mkdir("__MACOSX/Licences");
+      mkdirSync(join(isolatedRoot, "__MACOSX", "Licences"), { recursive: true });
+
+      const folderA = engineA.tree.findByName("__MACOSX")[0]!;
+      await engineA.deleteFolder(folderA.treeId);
+      await hostA.sync();
+      await waitFor(() => !existsSync(join(isolatedRoot, "__MACOSX")));
+      await hostB.sync();
+      await engineB.ingestExternalFolders();
+
+      expect(engineB.tree.findByName("__MACOSX")).toHaveLength(0);
+      expect(await engineB.docStore.listMaterializedDirectories?.()).toEqual([]);
+    } finally {
+      hostA?.disconnect();
+      hostB?.disconnect();
+      await isolatedServer.stop();
+      rmSync(isolatedRoot, { recursive: true, force: true });
+    }
+  });
+
   it("two devices independently seeding a same-named note converge on distinct names after sync, on both clients and the server disk", async () => {
     const fsA = new MemoryVaultFS();
     const engineA = await makeVaultOn(fsA);

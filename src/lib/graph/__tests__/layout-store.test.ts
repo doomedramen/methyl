@@ -34,6 +34,7 @@ function fakeStore(): PersistedDocStore {
     async removeMaterialized(path: string) {
       files.delete(path);
     },
+    async removeEmptyMaterializedDirectories() {},
   };
 }
 

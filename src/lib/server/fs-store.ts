@@ -3,7 +3,7 @@ import { promises as fs } from "fs";
 import { join, dirname } from "path";
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
-import { assertDeletable } from "@/lib/vault/fs";
+import { assertDeletable, normalizeFilePath } from "@/lib/vault/fs";
 import {
   atomicCompact,
   cleanupInterrupted,
@@ -238,6 +238,50 @@ class NodePersistBackend {
       }
     });
   }
+
+  async removeEmptyMaterializedDirectories(path: string): Promise<void> {
+    assertDeletable(path);
+    const relative = normalizeFilePath(path);
+    if (!relative) return;
+    if (relative.split("/").some(isMetaDirName)) {
+      throw new Error(`refusing to prune vault metadata path "${path}"`);
+    }
+    const full = join(this.root, relative);
+
+    await this.withLock(full, async () => {
+      const prune = async (directory: string): Promise<void> => {
+        let stat: import("fs").Stats;
+        try {
+          stat = await fs.lstat(directory);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+          throw error;
+        }
+        if (!stat.isDirectory()) return;
+
+        let entries: import("fs").Dirent[];
+        try {
+          entries = await fs.readdir(directory, { withFileTypes: true });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+          throw error;
+        }
+
+        for (const entry of entries) {
+          if (entry.isDirectory()) await prune(join(directory, entry.name));
+        }
+
+        try {
+          if ((await fs.readdir(directory)).length === 0) await fs.rmdir(directory);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+        }
+      };
+
+      await prune(full);
+    });
+  }
 }
 
 const ops: AtomicOps = {
@@ -330,6 +374,10 @@ export class NodeFSStore implements PersistedDocStore {
 
   removeMaterialized(path: string): Promise<void> {
     return this.backend.removeMaterialized(path);
+  }
+
+  removeEmptyMaterializedDirectories(path: string): Promise<void> {
+    return this.backend.removeEmptyMaterializedDirectories(path);
   }
 }
 

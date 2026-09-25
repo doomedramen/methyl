@@ -548,8 +548,10 @@ export class VaultEngine {
   /** Delete a note: removes it from the vault tree (source of truth for which documents are active) and drops… */
   deleteDocument(documentId: string): Promise<void> { return treeOps.deleteDocument(this, documentId); }
 
-  /** After a tree change merged in from sync, make the files on disk follow the tree: remove the file of a note… */
-  applyTreeToDisk(): Promise<{ removed: string[]; moved: string[] }> { return treeOps.applyTreeToDisk(this); }
+  /** Make materialized files and directories follow a tree update from sync. */
+  applyTreeToDisk(previousDirectoryPaths: readonly string[] = []): Promise<{ removed: string[]; moved: string[] }> {
+    return treeOps.applyTreeToDisk(this, previousDirectoryPaths);
+  }
 
   /** Record a dirty room for tracking sync status. */
   async markDirty(documentId: string): Promise<DirtyRoom> {

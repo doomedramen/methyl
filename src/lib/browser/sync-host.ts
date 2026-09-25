@@ -6,6 +6,7 @@ import { DirtyJournal, type DirtyEntry } from "@/lib/sync/journal";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { SyncScheduler, type SyncStatus } from "@/lib/sync/scheduler";
 import { maybeDropUntouchedSeed } from "@/lib/browser/seed-marker";
+import { listDirectoryPaths } from "@/lib/vault/engine/tree-ops";
 import type { TreeID } from "loro-crdt";
 
 const JOURNAL_PATH = `${META_DIR}/sync/journal.json`;
@@ -92,6 +93,7 @@ export class SyncHost {
 
   /** Run one §34 reconnect round: sync, then persist every touched doc/tree so the OPFS store and the on-screen editor (via loro-codemirror's doc.subscribe) both reflect remote changes. */
   async sync(): Promise<SyncReport> {
+    const previousDirectoryPaths = listDirectoryPaths(this.engine);
     const report = await this.coordinator.sync();
     await this.persistJournal();
 
@@ -103,7 +105,7 @@ export class SyncHost {
       // later one.
       await this.engine.resolveTreeNameCollisions();
       await this.engine.persistTreeIncremental();
-      await this.engine.applyTreeToDisk();
+      await this.engine.applyTreeToDisk(previousDirectoryPaths);
     }
     for (const roomId of report.touchedRoomIds) {
       if (!roomId.startsWith("doc:")) continue;

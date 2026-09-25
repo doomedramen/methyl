@@ -12,6 +12,7 @@ import { createHash, randomUUID } from "crypto";
 import { ServerStore } from "@/lib/server/store";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
 import { VaultEngine, buildPathFromNode } from "@/lib/vault/engine";
+import { listDirectoryPaths } from "@/lib/vault/engine/tree-ops";
 import { watchVaultForExternalChanges, type VaultWatcher } from "@/lib/server/vault-watcher";
 import { AuthLimiter, bearerMatches, clientAddress, isValidObjectId, parseSeq, safeEqual } from "@/lib/server/auth";
 
@@ -481,6 +482,7 @@ export function createSyncServer(options: SyncServerOptions) {
       void enqueueMirrorWrite(async () => {
         const eng = await ensureEngine();
         if (isTree) {
+          const previousDirectoryPaths = listDirectoryPaths(eng);
           eng.tree.doc.import(data);
           eng.tree.doc.commit();
           // A client's tree save can merge in a foreign peer's node that
@@ -493,7 +495,7 @@ export function createSyncServer(options: SyncServerOptions) {
           await eng.persistTreeIncremental();
           // Deleted, renamed and moved notes: the vault folder follows now,
           // not at the next restart.
-          await eng.applyTreeToDisk();
+          await eng.applyTreeToDisk(previousDirectoryPaths);
           for (const node of eng.tree.allNodes()) {
             if (node.kind !== "binary") continue;
             const meta = store.getAssetMeta(String(node.treeId));

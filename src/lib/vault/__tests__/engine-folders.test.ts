@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
@@ -111,5 +111,19 @@ describe("VaultEngine folder operations", () => {
 
     expect(engine.tree.getNode(inner)).toBeUndefined();
     expect(engine.getDocument(doc.id)).toBeUndefined();
+  });
+
+  it("does not re-import empty directories after deleting their folder", async () => {
+    const engine = await newEngine();
+    mkdirSync(join(tmpDir, "__MACOSX", "Licences"), { recursive: true });
+
+    await engine.ingestExternalFolders();
+    const folder = engine.tree.findByName("__MACOSX").find((node) => node.kind === "directory");
+    expect(folder).toBeDefined();
+
+    await engine.deleteFolder(folder!.treeId);
+    await engine.ingestExternalFolders();
+
+    expect(engine.tree.findByName("__MACOSX")).toHaveLength(0);
   });
 });
