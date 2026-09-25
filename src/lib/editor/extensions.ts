@@ -28,6 +28,7 @@ import {
   redo,
 } from "loro-codemirror";
 import { getContentTextFromDoc, type EditorUser } from "@/lib/editor/sync";
+import { smartPaste } from "@/lib/editor/smart-paste";
 import { amoledMinimal, amoledMono, amoledDark } from "@/lib/editor/theme";
 
 /** Undo/redo through Loro's UndoManager (not CodeMirror's native history). */
@@ -66,6 +67,7 @@ export function methylEditorExtensions(opts: {
     amoledMono,
     syntaxHighlighting(defaultHighlightStyle),
     pluginCompartment.of(initialPluginExtension),
+    smartPaste(),
     keymap.of([
       // Markdown-aware Enter/Backspace (continue lists, dedent markup) takes
       // precedence over the generic defaults below.
