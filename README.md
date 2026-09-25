@@ -69,7 +69,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./vault:/vault
+      - ./vaults:/vaults
     environment:
       METHYL_AUTH_TOKEN: ${METHYL_AUTH_TOKEN:?set METHYL_AUTH_TOKEN}
     restart: unless-stopped
@@ -79,9 +79,11 @@ services:
 docker compose up -d
 ```
 
-Open <http://localhost:8080>. Notes live in `./vault` as plain Markdown files, readable
-and editable with any normal tool — `.methyl/` inside it holds sync metadata (CRDT history,
-discovery index), not required to read your notes.
+Open <http://localhost:8080>. The server starts with no server vault folders. Create one from **Sync**
+settings; its notes live in `./vaults/<id>` as plain Markdown files, readable and editable
+with any normal tool. Each vault's `.methyl/` folder holds sync metadata (CRDT history,
+discovery index), not required to read your notes. The root `./vaults` folder also holds
+server-level pairing data in `.methyl-server/`.
 
 **Serve it over https.** Browsers only give a page persistent storage (OPFS, where
 Methyl keeps your vault) in a secure context: `https://`, or `http://localhost` on the
@@ -91,9 +93,9 @@ certificate (Caddy, Traefik, nginx) or expose it through Tailscale.
 
 The image is distroless: Node and the app, no shell or package manager (about 60 MB to
 download). Node lives at `/nodejs/bin/node`, as in the commands below. The server runs as
-uid 1001, the same user as earlier images, so an existing vault stays writable; if the
-vault folder belongs to someone else, give it to that user once:
-`sudo chown -R 1001:1001 ./vault`.
+uid 1001 by default. Make the host vaults folder writable by the container user before
+starting. If your Compose file sets `user:`, use that resolved UID and GID instead of 1001.
+For the default image user, run `sudo chown -R 1001:1001 ./vaults`.
 
 **Updating:**
 
@@ -111,7 +113,7 @@ without a full resend — with the sync database copied through SQLite's online 
 it's consistent mid-write:
 
 ```bash
-docker compose exec methyl /nodejs/bin/node dist/server.cjs backup /vault-backups/$(date +%F)
+docker compose exec methyl /nodejs/bin/node dist/server.cjs backup --vault personal /vault-backups/personal-$(date +%F)
 ```
 
 (mount a `/vault-backups` volume for that, or back up to any path in the container and copy
@@ -121,12 +123,12 @@ it out). A nightly cron entry running the same command is enough for most setups
 now-empty folder and start the server again:
 
 ```bash
-docker compose run --rm methyl dist/server.cjs restore /vault-backups/2026-09-24
+docker compose run --rm methyl dist/server.cjs restore --vault personal /vault-backups/personal-2026-09-24
 docker compose up -d
 ```
 
-Restore refuses to write into a vault folder that isn't empty. With `METHYL_VAULTS_PATH`
-(below), name the vault: `backup --vault work /vault-backups/work-$(date +%F)`.
+Restore refuses to write into a vault folder that isn't empty. Name the server folder with
+`--vault`, for example `backup --vault work /vault-backups/work-$(date +%F)`.
 
 In the browser, **Export vault** (Markdown and attachments, opens anywhere) and **Export full
 backup** (adds the `.methyl/` metadata) are in the command menu (<kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd>).
@@ -141,12 +143,16 @@ Once a server is running (above), point each browser at it:
    origin is a different, unsynced vault.
 2. Open **Sync settings** — from the status popover in the sidebar footer, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> → "Sync settings".
 3. Check the server URL (it starts as the current origin), paste the `METHYL_AUTH_TOKEN`
-   you set above as the **Admin token**, and pick the **Server vault** this browser
-   vault syncs with (a server with one vault calls it `default`).
+   you set above as the **Admin token**, and enter a **Server vault** ID. Choose **Create
+   vault** if it does not exist yet. Repeat for every browser vault, using a different ID
+   for each one.
 4. **Pair and save.** The token is used once, to pair this browser, and isn't kept. The
    server signs the browser in with an HttpOnly cookie, and each sync connection uses a
    ticket that's valid for a minute. Only the tab holding the vault's writer lock (SPEC §12)
    opens a sync connection; other tabs stay read-only and don't duplicate it.
+
+On another device, open each browser vault and pair it with the same server vault ID.
+Methyl keeps each server vault in its own `/vaults/<id>` folder.
 
 The browser vault and the server's mounted folder are separate local copies.
 After connecting Sync, copying a `.md` file or creating a folder in the mounted
@@ -171,8 +177,8 @@ on another origin that use the admin token.
 | --- | --- | --- |
 | `METHYL_AUTH_TOKEN` | *(required)* | The admin token: pairs browsers, and authenticates scripts (`Authorization: Bearer …`). |
 | `METHYL_PORT` / `METHYL_HOST` | `8080` / `0.0.0.0` | Where the server listens. |
-| `METHYL_VAULT_PATH` | `/vault` | The mounted vault folder, served as the vault `default`. Ignored when `METHYL_VAULTS_PATH` is set. |
-| `METHYL_VAULTS_PATH` | *(unset)* | A folder of vaults: each sub-folder is served as its own vault. See [Vaults](#vaults). |
+| `METHYL_VAULTS_PATH` | `/vaults` | Folder of server vaults. Each sub-folder is a separate vault. |
+| `METHYL_VAULT_PATH` | *(unset)* | Optional single-vault override. Set this only when serving one existing folder instead of a vaults root. |
 | `METHYL_WATCH` | `true` | Watch the vault folder for external edits. |
 | `METHYL_ALLOWED_ORIGINS` | *(empty)* | CORS allow-list, see above. |
 | `METHYL_TRUST_PROXY` | `false` | Set to `true` only behind a reverse proxy you control. Failed logins are then counted per `X-Forwarded-For` address instead of per proxy. |
@@ -189,18 +195,19 @@ settings. The vault name at the top of the sidebar switches between them; **Mana
 (**Export full backup**) as a new vault. A vault's notes live at `/<vault id>/<note path>`
 in the app's URLs.
 
-The server can serve several vaults too. Mount a folder of vaults and set
-`METHYL_VAULTS_PATH` to it; each sub-folder named with lower-case letters, digits and
-hyphens (e.g. `personal`, `work`) is a vault, with its own sync database, change feed and
-file watcher. Folders added or removed while the server runs are picked up within a
-second or so. In each browser vault's sync settings, choose the **Server vault** to sync
-with.
+The server starts with no vault folders. Each browser vault has independent sync
+settings. In **Sync** settings, enter a server vault ID using lower-case letters, digits and
+hyphens (e.g. `personal`, `work`), then choose **Create vault**. Methyl creates
+`/vaults/<id>` and starts serving it. Pair and save to sync that browser vault into this
+server vault. New folders added on disk are also picked up within a second or so. Each
+server vault has its own sync database, change feed and watcher.
 
-To move an existing single-vault server over, stop it, move the vault folder into the
-vaults folder under a name (say `/vaults/personal`), set `METHYL_VAULTS_PATH=/vaults`, and
-start it again. The server never moves your folders itself. Browsers keep syncing with
-the vault called `default`, so either name that folder `default` or change each
-browser's **Server vault** setting to the new name.
+Repeat with another ID for each browser vault. On each device, pair the corresponding
+browser vault with the same server ID so its notes sync to that vault.
+
+To use an existing server folder, stop the server and place that folder under the vaults
+root (for example `/vaults/personal`), then start the server. The server never moves your
+folders itself. Set each browser vault's **Server vault** setting to the matching folder name.
 
 Server API, per vault: `/api/v/<vault>/…` and the sync socket at `/sync/<vault>`;
 `GET /api/vaults` lists them. The old unprefixed `/api/…` routes still reach the

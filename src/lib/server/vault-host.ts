@@ -17,6 +17,7 @@ import { DeviceStore, grantAllows } from "@/lib/server/devices";
  * another. Routes:
  *
  *   GET  /api/vaults                → { vaults: [{ id, ready }] } the caller may use
+ *   POST /api/vaults                → create an empty vault folder (admin token only)
  *   *    /api/v/<vaultId>/<route>   → that vault's HTTP API
  *   WS   /sync/<vaultId>            → that vault's sync rooms
  *   *    /api/auth/*                → device pairing (see device-auth.ts)
@@ -67,6 +68,24 @@ interface HostedVault {
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+async function readJsonObject(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const maxBytes = 4096;
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    const buffer = chunk as Buffer;
+    size += buffer.length;
+    if (size > maxBytes) throw new Error("request body is too large");
+    chunks.push(buffer);
+  }
+  if (size === 0) return {};
+  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("expected a JSON object");
+  }
+  return body as Record<string, unknown>;
 }
 
 export class VaultHost {
@@ -302,6 +321,10 @@ export class VaultHost {
   handleApi(req: IncomingMessage, res: ServerResponse): void {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (this.auth.handle(req, res, url.pathname)) return;
+    if (req.method === "POST" && url.pathname === "/api/vaults") {
+      void this.createVault(req, res);
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/vaults") {
       const principal = this.auth.authenticate(req, res);
       if (!principal) return;
@@ -326,6 +349,55 @@ export class VaultHost {
       return;
     }
     vault.api(req, res);
+  }
+
+  /** Create a server vault folder. Only an admin token may create one. */
+  private async createVault(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const principal = this.auth.authenticate(req, res);
+    if (!principal) return;
+    if (principal.kind !== "admin") {
+      sendJson(res, 403, { error: "only the admin token can create server vaults" });
+      return;
+    }
+    if (!this.opts.vaultsPath) {
+      sendJson(res, 409, { error: "server vault creation requires METHYL_VAULTS_PATH" });
+      return;
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req);
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : "invalid request body" });
+      return;
+    }
+
+    const id = body.id;
+    if (typeof id !== "string" || !isServerVaultId(id)) {
+      sendJson(res, 400, { error: "id must use lower-case letters, digits and hyphens (up to 63 characters)" });
+      return;
+    }
+
+    const path = join(this.opts.vaultsPath, id);
+    try {
+      mkdirSync(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        sendJson(res, 409, { error: `server vault "${id}" already exists` });
+      } else {
+        sendJson(res, 500, { error: "could not create server vault folder" });
+      }
+      return;
+    }
+
+    try {
+      this.open(id, path);
+      await this.whenReady(id);
+    } catch {
+      sendJson(res, 500, { error: "server vault folder was created but could not be opened" });
+      return;
+    }
+    sendJson(res, 201, { vault: { id, ready: true } });
   }
 
   /** Route a WebSocket upgrade to the right vault's room server. */
@@ -354,4 +426,3 @@ function decodeURIComponentSafe(segment: string): string | null {
     return null;
   }
 }
-

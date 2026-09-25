@@ -20,9 +20,9 @@ RUN npm run build && npm run build:server
 
 # The runtime tree: Next's standalone output (the server files and only the
 # node_modules files they use), its static assets, the server bundle, and
-# the packages the bundle leaves external. Plus an empty vault folder, since
+# the packages the bundle leaves external. Plus an empty vaults root, since
 # the runtime image has no shell to create one.
-RUN mkdir -p /out/app/.next /out/app/dist /out/vault \
+RUN mkdir -p /out/app/.next /out/app/dist /out/vaults \
     && cp -r .next/standalone/. /out/app/ \
     && cp -r .next/static /out/app/.next/static \
     && cp -r public /out/app/public \
@@ -41,16 +41,15 @@ LABEL org.opencontainers.image.title="Methyl" \
 WORKDIR /app
 ENV NODE_ENV=production \
     METHYL_PORT=8080 \
-    METHYL_HOST=0.0.0.0 \
-    METHYL_VAULT_PATH=/vault
+    METHYL_HOST=0.0.0.0
 
 # uid 1001 is the user earlier images ran as, so existing vault volumes stay
 # writable.
 COPY --from=build --chown=1001:1001 /out/app /app
-COPY --from=build --chown=1001:1001 /out/vault /vault
+COPY --from=build --chown=1001:1001 /out/vaults /vaults
 
 USER 1001:1001
-VOLUME ["/vault"]
+VOLUME ["/vaults"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

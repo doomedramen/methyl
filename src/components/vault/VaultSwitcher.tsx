@@ -146,8 +146,8 @@ function ManageVaultsDialog({
         <DialogHeader>
           <DialogTitle>Vaults</DialogTitle>
           <DialogDescription>
-            Each vault is a separate set of notes with its own sync settings. Opening another vault
-            reloads the app.
+            Each browser vault is separate and has its own sync settings. Create or select its
+            server folder in Sync settings. Opening another vault reloads the app.
           </DialogDescription>
         </DialogHeader>
 

@@ -11,9 +11,9 @@ import { APP_VERSION } from "@/lib/core/version";
 
 const PORT = Number(process.env.METHYL_PORT ?? 8080);
 const HOST = process.env.METHYL_HOST ?? "0.0.0.0";
-// Multi-vault: every sub-folder of METHYL_VAULTS_PATH is a vault. Without
-// it, METHYL_VAULT_PATH is served as the single vault "default".
-const VAULTS_PATH = process.env.METHYL_VAULTS_PATH || undefined;
+// Multi-vault is the default: each sub-folder of /vaults is a separate vault.
+// METHYL_VAULT_PATH remains an explicit single-vault override.
+const VAULTS_PATH = process.env.METHYL_VAULTS_PATH ?? (process.env.METHYL_VAULT_PATH ? undefined : "/vaults");
 const VAULT_PATH = process.env.METHYL_VAULT_PATH ?? "/vault";
 const WATCH = process.env.METHYL_WATCH !== "false";
 const AUTH_TOKEN = process.env.METHYL_AUTH_TOKEN;

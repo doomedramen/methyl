@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useSync } from "@/lib/browser/sync-context";
 import {
   DEFAULT_REMOTE_VAULT,
+  createServerVault,
   getPairing,
   listDevices,
   listServerVaults,
@@ -59,6 +61,7 @@ function SyncSettingsForm() {
   const [showToken, setShowToken] = useState(false);
   const [test, setTest] = useState<TestResult>({ kind: "idle" });
   const [saving, setSaving] = useState(false);
+  const [creatingServerVault, setCreatingServerVault] = useState(false);
   const [pairing, setPairing] = useState<Awaited<ReturnType<typeof getPairing>> | null>(null);
 
   const trimmed = () => ({
@@ -81,7 +84,7 @@ function SyncSettingsForm() {
     if (!validUrl(url)) return setPairing(null);
     const status = await getPairing(url);
     setPairing(status);
-    if (status.paired) setServerVaults(status.vaults);
+    setServerVaults(status.paired ? status.vaults : []);
   }, []);
   useEffect(() => {
     const url = serverUrl.trim();
@@ -111,6 +114,48 @@ function SyncSettingsForm() {
     setTest(result.ok ? { kind: "ok" } : { kind: "error", message });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverUrl, adminToken, remoteVaultId, testConnection]);
+
+  const onCreateServerVault = useCallback(async () => {
+    const { serverUrl: url, adminToken: token, remoteVaultId: id } = trimmed();
+    if (!validUrl(url)) {
+      setTest({ kind: "error", message: "Enter a valid server URL first." });
+      return;
+    }
+    if (!token) {
+      setTest({ kind: "error", message: "Enter the server's admin token to create a vault." });
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(id)) {
+      setTest({ kind: "error", message: "Use a server vault ID with lower-case letters, digits and hyphens." });
+      return;
+    }
+
+    setCreatingServerVault(true);
+    setTest({ kind: "idle" });
+    try {
+      const listed = await listServerVaults({ serverUrl: url, authToken: token });
+      if (!listed.ok) {
+        setTest({ kind: "error", message: listed.error });
+        return;
+      }
+      setServerVaults(listed.vaults);
+      if (listed.vaults.includes(id)) {
+        setTest({ kind: "error", message: `A server vault named "${id}" already exists. Select it and pair this browser.` });
+        return;
+      }
+
+      const created = await createServerVault({ serverUrl: url, adminToken: token, id });
+      if (!created.ok) {
+        setTest({ kind: "error", message: created.error });
+        return;
+      }
+      setServerVaults((current) => [...new Set([...current, id])].sort());
+      toast.success(`Created server vault "${id}"`);
+    } finally {
+      setCreatingServerVault(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverUrl, adminToken, remoteVaultId]);
 
   const onSave = useCallback(async () => {
     const { serverUrl: url, adminToken: token, remoteVaultId: vault } = trimmed();
@@ -154,6 +199,8 @@ function SyncSettingsForm() {
   }, [disconnect, setDialogOpen]);
 
   const paired = pairing?.paired ? pairing : null;
+  const serverVaultId = remoteVaultId.trim() || DEFAULT_REMOTE_VAULT;
+  const serverVaultAlreadyExists = serverVaults.includes(serverVaultId);
 
   return (
     <>
@@ -212,23 +259,37 @@ function SyncSettingsForm() {
 
         <Field>
           <FieldLabel htmlFor="sync-remote-vault">Server vault</FieldLabel>
-          <Input
-            id="sync-remote-vault"
-            list="sync-remote-vaults"
-            placeholder={DEFAULT_REMOTE_VAULT}
-            value={remoteVaultId}
-            onChange={(e) => setRemoteVaultId(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-          />
+          <div className="flex gap-2">
+            <Input
+              id="sync-remote-vault"
+              list="sync-remote-vaults"
+              placeholder={DEFAULT_REMOTE_VAULT}
+              value={remoteVaultId}
+              onChange={(e) => setRemoteVaultId(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              className="min-w-0 flex-1"
+            />
+            {adminToken.trim() && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void onCreateServerVault()}
+                disabled={creatingServerVault || saving || serverVaultAlreadyExists}
+              >
+                {creatingServerVault && <Loader2 data-icon="inline-start" className="animate-spin" />}
+                {serverVaultAlreadyExists ? "Vault exists" : "Create vault"}
+              </Button>
+            )}
+          </div>
           <datalist id="sync-remote-vaults">
             {serverVaults.map((id) => (
               <option key={id} value={id} />
             ))}
           </datalist>
           <FieldDescription>
-            Which of the server&apos;s vaults this vault syncs with — a folder on the server.
-            A server with one vault calls it &ldquo;{DEFAULT_REMOTE_VAULT}&rdquo;.
+            Creates an empty server vault under the server&apos;s vaults directory. Pair and save to
+            sync this browser&apos;s local vault into it. IDs use lower-case letters, digits and hyphens.
           </FieldDescription>
         </Field>
 

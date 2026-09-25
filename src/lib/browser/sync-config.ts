@@ -211,6 +211,26 @@ async function errorOf(res: Response): Promise<string> {
   return `Server responded ${res.status}`;
 }
 
+/** Create an empty server-side vault folder using the admin token. */
+export async function createServerVault(options: {
+  serverUrl: string;
+  adminToken: string;
+  id: string;
+}): Promise<Result<{ id: string }>> {
+  try {
+    const { httpUrl } = deriveSyncUrls(options.serverUrl);
+    const res = await fetch(`${httpUrl}/api/vaults`, {
+      method: "POST",
+      headers: { ...bearer(options.adminToken), "content-type": "application/json" },
+      body: JSON.stringify({ id: options.id }),
+    });
+    if (!res.ok) return { ok: false, error: await errorOf(res) };
+    return { ok: true, id: options.id };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** A readable name for this browser, e.g. "Safari on iPhone". */
 export function describeThisDevice(userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent): string {
   const ua = userAgent;
