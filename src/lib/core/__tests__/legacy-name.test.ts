@@ -21,7 +21,7 @@ const ALLOWED: Record<string, RegExp> = {
   "lib/vault/diagnostics.ts": /CRDT files under `\.adhd\/crdt`/,
   "app/sw.ts": /used to be named `adhd-\*`|startsWith\("adhd-"\)/,
   "components/editor/NoteEditor.tsx": /"adhd-name"/,
-  "components/vault/AppSidebar.tsx": /"adhd\.sidebar\.collapsedFolders"/,
+  "components/vault/sidebar-rows.ts": /"adhd\.sidebar\.collapsedFolders"/,
   // The pre-multi-vault OPFS root and writer lock, which the layout
   // migration moves from and holds.
   "lib/vault/web-locks.ts": /LEGACY_WRITER_LOCK_NAME = "adhd-vault:local:writer"|older build|`adhd-vault` OPFS root/,
