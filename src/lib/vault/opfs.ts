@@ -1,7 +1,10 @@
-import { normalizePath } from "@/lib/core/paths";
-import type { VaultFileSystem } from "@/lib/vault/fs";
+import { normalizePath, isMetaDirName } from "@/lib/core/paths";
+import { assertDeletable, type VaultFileSystem } from "@/lib/vault/fs";
 
-const ROOT_KEY = "adhd-vault";
+/** Where a vault lives in the origin's OPFS: `methyl/vaults/<vaultId>/`. */
+export function vaultRootParts(vaultId: string): string[] {
+  return ["methyl", "vaults", vaultId];
+}
 
 /**
  * OPFS-backed vault filesystem (§9, §11).
@@ -13,7 +16,7 @@ const ROOT_KEY = "adhd-vault";
  *   ├── *.md
  *   ├── attachments...
  *   ├── .trash/
- *   └── .adhd/
+ *   └── .methyl/
  *       ├── device/
  *       ├── crdt/
  *       └── cache/
@@ -22,6 +25,13 @@ const ROOT_KEY = "adhd-vault";
  * tmp → rename atomically where the platform supports it.
  */
 export class OpfsVaultFS implements VaultFileSystem {
+  /**
+   * @param rootParts directory path inside the origin's OPFS that this file
+   * system is rooted at — a vault's root (vaultRootParts), or `[]` for the
+   * whole origin (the vault registry and layout migrations use that).
+   */
+  constructor(private readonly rootParts: string[] = vaultRootParts("local")) {}
+
   private root: FileSystemDirectoryHandle | null = null;
   /**
    * Per-path write serialization. OPFS's `createWritable()` truncates on
@@ -56,21 +66,65 @@ export class OpfsVaultFS implements VaultFileSystem {
 
   async ensureRoot(): Promise<FileSystemDirectoryHandle> {
     if (this.root) return this.root;
-    const root = await navigator.storage.getDirectory();
-    this.root = await root.getDirectoryHandle(ROOT_KEY, { create: true });
+    let root = await navigator.storage.getDirectory();
+    for (const part of this.rootParts) root = await root.getDirectoryHandle(part, { create: true });
+    this.root = root;
     return this.root;
   }
 
+  /**
+   * Directory handles by path. Resolving a path walks it one
+   * getDirectoryHandle() call per segment from the root; every file access
+   * did that walk again, which dominated startup on large vaults (spec item
+   * 20). Entries are dropped when this instance deletes a directory, and
+   * all of them when an operation finds a cached handle has gone stale
+   * (e.g. another tab removed the directory) — see withFreshHandles.
+   */
+  private dirCache = new Map<string, FileSystemDirectoryHandle>();
+
   private async dirHandle(pathParts: string[], create = true) {
+    const key = pathParts.join("/");
+    const cached = this.dirCache.get(key);
+    if (cached) return cached;
     const root = await this.ensureRoot();
     let cur = root;
+    let path = "";
     for (const part of pathParts) {
+      path = path ? `${path}/${part}` : part;
+      const known = this.dirCache.get(path);
+      if (known) {
+        cur = known;
+        continue;
+      }
       cur = await cur.getDirectoryHandle(part, { create });
+      this.dirCache.set(path, cur);
     }
     return cur;
   }
 
-  async fileHandle(path: string, create = true) {
+  private forgetDirs(path: string): void {
+    const key = normalizePath(path);
+    for (const cached of [...this.dirCache.keys()]) {
+      if (cached === key || cached.startsWith(`${key}/`)) this.dirCache.delete(cached);
+    }
+  }
+
+  /** Run `op`; if a cached handle turned out stale, clear the cache and retry once. */
+  private async withFreshHandles<T>(op: () => Promise<T>): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if ((err as DOMException).name !== "NotFoundError" || this.dirCache.size === 0) throw err;
+      this.dirCache.clear();
+      return op();
+    }
+  }
+
+  async fileHandle(path: string, create = true): Promise<FileSystemFileHandle | null> {
+    return this.withFreshHandles(() => this.fileHandleOnce(path, create));
+  }
+
+  private async fileHandleOnce(path: string, create: boolean): Promise<FileSystemFileHandle | null> {
     const parts = splitPath(path);
     const name = parts.pop()!;
     const dir = await this.dirHandle(parts, create).catch((err) => {
@@ -93,7 +147,7 @@ export class OpfsVaultFS implements VaultFileSystem {
     const entries = (dir as unknown as { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }).entries();
     for await (const [name, handle] of entries) {
       const rel = prefix ? `${prefix}/${name}` : name;
-      if (name === ".adhd") continue;
+      if (isMetaDirName(name)) continue;
       if (handle.kind === "file") {
         yield { path: rel, handle: handle as FileSystemFileHandle };
       } else {
@@ -102,7 +156,7 @@ export class OpfsVaultFS implements VaultFileSystem {
     }
   }
 
-  /** Walk all vault files, skipping .adhd. */
+  /** Walk all vault files, skipping the metadata directory. */
   async *walk(): AsyncGenerator<{ path: string; handle: FileSystemFileHandle }> {
     const root = await this.ensureRoot();
     yield* this.walkImpl(root, "");
@@ -117,7 +171,7 @@ export class OpfsVaultFS implements VaultFileSystem {
       await writable.close();
       if (opts?.atomic !== false) {
         try {
-          await (handle as any).flush?.();
+          await (handle as FileSystemFileHandle & { flush?: () => Promise<void> }).flush?.();
         } catch {
           // flush not available on this platform; close() already persisted
         }
@@ -141,17 +195,20 @@ export class OpfsVaultFS implements VaultFileSystem {
     await this.dirHandle(splitPath(path), true);
   }
 
-  async delete(path: string): Promise<void> {
+  async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
+    assertDeletable(path);
     return this.serialize(path, async () => {
       const parts = splitPath(path);
       const name = parts.pop()!;
       const dir = await this.dirHandle(parts, false).catch(() => null);
-      if (dir) {
-        try {
-          await dir.removeEntry(name, { recursive: true });
-        } catch {
-          // already gone
-        }
+      if (!dir) return;
+      try {
+        await dir.removeEntry(name, { recursive: options?.recursive === true });
+      } catch (err) {
+        if ((err as DOMException).name === "NotFoundError") return; // already gone
+        throw err;
+      } finally {
+        this.forgetDirs(path);
       }
     });
   }
@@ -191,17 +248,22 @@ export class OpfsVaultFS implements VaultFileSystem {
 
   /** List directory entries. Returns { dirs: string[], files: string[] }. */
   async readdir(path: string): Promise<{ dirs: string[]; files: string[] }> {
-    const parts = path ? splitPath(path) : [];
-    const dir = await this.dirHandle(parts, false).catch(() => null);
-    if (!dir) return { dirs: [], files: [] };
-    const dirs: string[] = [];
-    const files: string[] = [];
-    const entries = (dir as unknown as { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }).entries();
-    for await (const [name, handle] of entries) {
-      if (handle.kind === "directory") dirs.push(name);
-      else files.push(name);
-    }
-    return { dirs, files };
+    return this.withFreshHandles(async () => {
+      const parts = path ? splitPath(path) : [];
+      const dir = await this.dirHandle(parts, false).catch((err) => {
+        if ((err as DOMException).name === "NotFoundError") return null;
+        throw err;
+      });
+      if (!dir) return { dirs: [], files: [] };
+      const dirs: string[] = [];
+      const files: string[] = [];
+      const entries = (dir as unknown as { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }).entries();
+      for await (const [name, handle] of entries) {
+        if (handle.kind === "directory") dirs.push(name);
+        else files.push(name);
+      }
+      return { dirs, files };
+    });
   }
 }
 

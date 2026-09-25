@@ -10,9 +10,11 @@ import { LoroDoc } from "loro-crdt";
 describe("synchost debug", () => {
   it("joins tree + doc rooms without hang", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "adhd-dbg-"));
-    const wsPort = 23111, httpPort = 23112;
-    const server = createSyncServer({ port: wsPort, httpPort, vaultPath: tmp, authToken: "t", saveIntervalMs: 50 });
+    // OS-assigned ports: a fixed pair here once sat inside the range other
+    // test files picked from at random, so parallel runs could collide.
+    const server = createSyncServer({ port: 0, httpPort: 0, vaultPath: tmp, authToken: "t", saveIntervalMs: 50 });
     await server.start();
+    const { ws: wsPort, http: httpPort } = server.ports();
 
     const treeDoc = new LoroDoc();
     treeDoc.getText("tree").insert(0, "root");
@@ -29,7 +31,7 @@ describe("synchost debug", () => {
       getBinaryData: async () => null,
       getMissingBinaryIds: async () => [],
     };
-    const c = new SyncCoordinator({ wsUrl: `ws://127.0.0.1:${wsPort}`, httpUrl: `http://127.0.0.1:${httpPort}`, authToken: "t", vaultId: "v" }, new DirtyJournal(), hooks);
+    const c = new SyncCoordinator({ wsUrl: `ws://127.0.0.1:${wsPort}`, apiUrl: `http://127.0.0.1:${httpPort}/api`, authToken: "t", vaultId: "v" }, new DirtyJournal(), hooks);
     console.log("sync start");
     // 4000ms left ~1s of headroom under the (default) 5000ms test timeout —
     // too tight when many other test files are also spinning up real

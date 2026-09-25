@@ -6,7 +6,7 @@ import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
  *
  * Layout (§10):
  *
- *   .adhd/crdt/docs/<docId>/
+ *   .methyl/crdt/docs/<docId>/
  *     snapshot.loro
  *     updates/
  *       000001.loro
@@ -45,18 +45,18 @@ export interface PersistedDocStore {
 
   /**
    * List every materialised path in the vault (vault-relative, `/`-joined,
-   * excludes `.adhd`). Used for boot-time reconciliation — finding on-disk
+   * excludes `.methyl`). Used for boot-time reconciliation — finding on-disk
    * files that do not yet correspond to a tree node.
    */
   listMaterializedPaths(): Promise<string[]>;
 
-  /** List ordinary vault directories, excluding the reserved `.adhd` tree. */
+  /** List ordinary vault directories, excluding the reserved metadata tree. */
   listMaterializedDirectories?(): Promise<string[]>;
 
   /**
    * Remove one materialised file (e.g. the old path after a rename/move, or
    * a file whose tree node is gone). Best-effort cleanup of now-empty
-   * parent directories; never touches `.adhd`.
+   * parent directories; never touches `.methyl`.
    */
   removeMaterialized(path: string): Promise<void>;
 }
@@ -66,7 +66,7 @@ export interface PersistedDocStore {
  * it IS the single vault-level CRDT.
  *
  * Layout:
- *   .adhd/crdt/vault/
+ *   .methyl/crdt/vault/
  *     snapshot.loro
  *     updates/
  *     state.json

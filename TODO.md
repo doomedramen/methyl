@@ -2,21 +2,28 @@
 
 Work that [SPEC.md](SPEC.md) doesn't already describe: bugs found in use, gaps
 between the spec and what's built, and polish. Features the spec covers
-(attachments, graph view, Mermaid/math, export, multi-vault, mobile/iOS
-limits) live there, not here — only their *deviations* are listed below.
+(attachments, graph view, Mermaid/math, export, mobile/iOS limits) live there,
+not here — only their *deviations* are listed below. Multiple vaults are
+described in README.md and SPEC.md §33.
 
 ## Bugs
 
 - [ ] **Vault wipe, cause unconfirmed.** A browser vault once lost its tree and
-      every CRDT file under `.adhd/crdt`. Never reproduced. Safety rails (empty-scan
-      guard, index rebuild, mass-deletion refusal, reserved-path guard) and a
-      diagnostics ring buffer are in place; if it recurs, read the buffer via
-      "Copy diagnostics" in the status popover.
-- [ ] **`src/lib/vault/tree.ts` reads as binary** to `grep` and `file` — some stray
-      byte in the file. Harmless so far; find and remove it.
-- [ ] **Lint:** `set-state-in-effect` error and an unused `event` in
-      `AppSidebar.tsx`, plus warnings in `engine.ts`, `store.ts`, `carousel.tsx`.
-      All predate the current work.
+      every CRDT file under `.adhd/crdt`. Never reproduced. Since then: every browser
+      delete was recursive (now opt-in, and the vault root and `.adhd/crdt` dirs are
+      refused outright); read-only and lock-stolen tabs could write (now gated on the
+      writer lock at the file-system level); and several sync paths lost edits (fixed,
+      see the spec's §7.6). A model-based fuzz test
+      (`src/lib/vault/__tests__/engine-fuzz.test.ts`, `FUZZ_RUNS`/`FUZZ_SEED`) covers
+      in-app, external and synced changes plus restarts, and hasn't reproduced a wipe.
+      If it recurs, read the diagnostics buffer via "Copy diagnostics".
+- [ ] **Delete vs. external edit conflict.** A note deleted on another device while
+      its file is edited on the server's disk keeps the file until the next restart,
+      whose orphan sweep removes it; the external edit survives only in the CRDT. Decide
+      whether the edit should resurrect the note.
+- [x] **`src/lib/vault/tree.ts` reads as binary** — no longer: `file` reports
+      UTF-8 text and there are no control bytes left in it.
+- [x] **Lint** is clean and runs in CI and pre-commit with `--max-warnings=0`.
 - [ ] **Cmd/Ctrl-click on a wikilink is unverified with a real mouse.** It works
       when the event is dispatched directly; the automation tool's modifier-click
       never reached the page.
@@ -27,19 +34,27 @@ limits) live there, not here — only their *deviations* are listed below.
       content through the MiniSearch index.
 - [x] **Backlinks.** A "what links here" panel lists notes that link to the
       active note and opens them on selection.
-- [ ] **Sync isn't live.** Remote changes arrive on the next discovery round
-      (~15s), not pushed: `loro-websocket`'s `SimpleServer` has no public API to
-      broadcast into an already-joined room. Fixing it means patching the
-      vendored package.
-- [ ] **Sync token is stored in `localStorage`.** Fine for a LAN deployment,
-      readable by anything with access to the browser profile. SPEC §31 describes
-      a pairing flow that isn't implemented.
-- [ ] **No release tag**, so no version is shown anywhere and the diagnostics
-      summary reports `NEXT_PUBLIC_APP_VERSION` only if it's set at build time.
-      `latest` currently tracks `main`.
+- [x] **Sync is live.** The server's own room server (replacing loro-websocket's
+      SimpleServer) pushes server-side changes into open rooms, and `/api/events`
+      tells running clients to sync the moment anything changes; polling is a
+      30-second fallback.
+- [x] **Sync token is stored in `localStorage`.** Done: browsers pair once with
+      the admin token (SPEC §31) and are then signed in by an HttpOnly cookie;
+      sync sockets join with 60-second tickets. Stored tokens are migrated.
+- [ ] **No release tag yet.** Versioning is in place (the app, diagnostics and
+      `/healthz` report the tag or `0.0.0-<sha>`; `latest` follows releases; see
+      CHANGELOG.md). What's left: tag `v0.1.0` on `main` once this work is merged.
 - [ ] **Upstream bug not reported:** `loro-codemirror`'s `LoroSyncPluginValue`
       swallows the first view update when the initial content already matches
       (worked around in `NoteEditor.tsx`). Repro: `loro-codemirror-swallow.test.ts`.
+      The issue is drafted, with a standalone repro, in
+      [docs/upstream/loro-codemirror-first-edit.md](docs/upstream/loro-codemirror-first-edit.md);
+      it needs filing at loro-dev/loro-codemirror, and the link recorded here.
+
+- [ ] **Arrow keys in the sidebar.** Rows are reached with Tab (note, actions,
+      drag handle); Up/Down between rows would help. A true `role="tree"` would need
+      each row's actions moved into its context menu, since a treeitem can't contain
+      buttons (spec item 17).
 
 ## Editor polish
 

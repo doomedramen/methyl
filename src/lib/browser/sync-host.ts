@@ -1,3 +1,5 @@
+import { subscribeToChanges } from "@/lib/sync/events";
+import { META_DIR } from "@/lib/core/paths";
 import type { VaultFileSystem } from "@/lib/vault/fs";
 import { SyncCoordinator, type SyncHooks, type SyncReport } from "@/lib/sync/coordinator";
 import { DirtyJournal, type DirtyEntry } from "@/lib/sync/journal";
@@ -6,20 +8,28 @@ import { SyncScheduler, type SyncStatus } from "@/lib/sync/scheduler";
 import { maybeDropUntouchedSeed } from "@/lib/browser/seed-marker";
 import type { TreeID } from "loro-crdt";
 
-const JOURNAL_PATH = ".adhd/sync/journal.json";
+const JOURNAL_PATH = `${META_DIR}/sync/journal.json`;
 const DISCOVERY_POLL_MS = 2_000;
+/** While the server's change stream is connected, polling is only a fallback. */
+const DISCOVERY_POLL_WITH_EVENTS_MS = 30_000;
+/** A burst of change events (a sync round saves several rooms) is checked once. */
+const EVENT_DEBOUNCE_MS = 50;
 
 export interface JournalSnapshot {
   entries: DirtyEntry[];
   lastServerSeq: number;
+  /** The API the seq belongs to; another server or server vault starts again from 0. */
+  remote?: string;
 }
 
 export interface SyncHostOptions {
   fs: VaultFileSystem;
   engine: VaultEngine;
   wsUrl: string;
-  httpUrl: string;
-  authToken: string;
+  apiUrl: string;
+  /** Admin token (tests, scripts); a paired browser uses its cookie and `getJoinAuth`. */
+  authToken?: string;
+  getJoinAuth?: () => Promise<string>;
   vaultId: string;
   maxConcurrentDocs?: number;
   maxConcurrentBinaries?: number;
@@ -40,21 +50,25 @@ export class SyncHost {
   private lastStatus: SyncStatus = { kind: "idle" };
   private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private discoveryRunning = false;
+  private discoveryRequestedAgain = false;
+  private events: AbortController | null = null;
+  private eventsConnected = false;
 
-  private readonly httpUrl: string;
-  private readonly authToken: string;
+  private readonly apiUrl: string;
+  private readonly authHeaders: Record<string, string>;
 
   private constructor(options: SyncHostOptions, journal: DirtyJournal) {
     this.fs = options.fs;
     this.engine = options.engine;
     this.journal = journal;
-    this.httpUrl = options.httpUrl;
-    this.authToken = options.authToken;
+    this.apiUrl = options.apiUrl;
+    this.authHeaders = options.authToken ? { authorization: `Bearer ${options.authToken}` } : {};
     this.coordinator = new SyncCoordinator(
       {
         wsUrl: options.wsUrl,
-        httpUrl: options.httpUrl,
+        apiUrl: options.apiUrl,
         authToken: options.authToken,
+        getJoinAuth: options.getJoinAuth,
         vaultId: options.vaultId,
         maxConcurrentDocs: options.maxConcurrentDocs,
         maxConcurrentBinaries: options.maxConcurrentBinaries,
@@ -72,7 +86,7 @@ export class SyncHost {
   }
 
   static async create(options: SyncHostOptions): Promise<SyncHost> {
-    const journal = await loadJournal(options.fs);
+    const journal = await loadJournal(options.fs, options.apiUrl);
     return new SyncHost(options, journal);
   }
 
@@ -89,10 +103,13 @@ export class SyncHost {
       // later one.
       await this.engine.resolveTreeNameCollisions();
       await this.engine.persistTreeIncremental();
+      await this.engine.applyTreeToDisk();
     }
     for (const roomId of report.touchedRoomIds) {
       if (!roomId.startsWith("doc:")) continue;
       const docId = roomId.slice(4);
+      // A note the merged tree just deleted has nothing left to persist.
+      if (!this.engine.getDocument(docId)) continue;
       try {
         await this.engine.persistDocumentIncremental(docId);
       } catch (err) {
@@ -110,12 +127,40 @@ export class SyncHost {
   start(): void {
     this.scheduler.start();
     this.scheduleDiscoveryPoll(0);
+    this.subscribeToChanges();
+  }
+
+  /**
+   * Listen to the server's change stream (/api/events) and check for new
+   * changes the moment one is announced, instead of on the next poll.
+   */
+  private subscribeToChanges(): void {
+    if (this.events) return;
+    const events = new AbortController();
+    this.events = events;
+    void subscribeToChanges({
+      url: `${this.apiUrl}/events`,
+      headers: this.authHeaders,
+      signal: events.signal,
+      onConnect: () => {
+        this.eventsConnected = true;
+        // Anything missed while disconnected.
+        this.scheduleDiscoveryPoll(0);
+      },
+      onDisconnect: () => {
+        this.eventsConnected = false;
+      },
+      onChange: () => this.scheduleDiscoveryPoll(EVENT_DEBOUNCE_MS),
+    });
   }
 
   /** Stop the reconnect loop and disconnect any open WS. */
   stop(): void {
     this.scheduler.stop();
     this.stopDiscoveryPoll();
+    this.events?.abort();
+    this.events = null;
+    this.eventsConnected = false;
     this.disconnect();
     this.emitStatus({ kind: "idle" });
   }
@@ -172,12 +217,17 @@ export class SyncHost {
   }
 
   private async pollDiscovery(): Promise<void> {
-    if (!this.scheduler.isRunning || this.discoveryRunning) return;
+    if (!this.scheduler.isRunning) return;
+    if (this.discoveryRunning) {
+      // Asked again mid-check (a change event): check once more after it.
+      this.discoveryRequestedAgain = true;
+      return;
+    }
     this.discoveryRunning = true;
     try {
       const response = await fetch(
-        `${this.httpUrl}/api/changes?after=${this.journal.getLastServerSeq()}`,
-        { headers: { authorization: `Bearer ${this.authToken}` } },
+        `${this.apiUrl}/changes?after=${this.journal.getLastServerSeq()}`,
+        { headers: this.authHeaders },
       );
       if (response.ok) {
         const body = await response.json() as { changes?: unknown[] };
@@ -191,19 +241,23 @@ export class SyncHost {
       // deliberately silent.
     } finally {
       this.discoveryRunning = false;
-      this.scheduleDiscoveryPoll(DISCOVERY_POLL_MS);
+      const again = this.discoveryRequestedAgain;
+      this.discoveryRequestedAgain = false;
+      this.scheduleDiscoveryPoll(
+        again ? 0 : this.eventsConnected ? DISCOVERY_POLL_WITH_EVENTS_MS : DISCOVERY_POLL_MS,
+      );
     }
   }
 
   async persistJournal(): Promise<void> {
-    await saveJournal(this.fs, this.journal.snapshot());
+    await saveJournal(this.fs, { ...this.journal.snapshot(), remote: this.apiUrl });
   }
 
   /** Whether the server already has any recorded content for this vault. */
   private async serverHasContent(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.httpUrl}/api/changes?after=0`, {
-        headers: { authorization: `Bearer ${this.authToken}` },
+      const res = await fetch(`${this.apiUrl}/changes?after=0`, {
+        headers: this.authHeaders,
       });
       if (!res.ok) return false; // can't tell — safest to assume empty and keep the seed
       const body = (await res.json()) as { changes: unknown[] };
@@ -228,8 +282,9 @@ export class SyncHost {
         // instance. ensureDocument() creates the empty landing spot so
         // the incoming room content has somewhere to import into, rather
         // than getRoomDoc returning null and the sync silently dropping
-        // that document's content.
-        return engine.ensureDocument(docId).doc;
+        // that document's content. A stored document still loading in the
+        // background is loaded first, so the sync starts from its real state.
+        return ((await engine.loadDocument(docId)) ?? engine.ensureDocument(docId)).doc;
       },
       getBinaryData: async (nodeId: string) =>
         await engine.readAttachment(nodeId as TreeID),
@@ -258,12 +313,18 @@ export class SyncHost {
 
 export async function loadJournal(
   fs: VaultFileSystem,
+  remote?: string,
 ): Promise<DirtyJournal> {
   const raw = await fs.readTextFile(JOURNAL_PATH);
   if (!raw) return new DirtyJournal();
   try {
     const snapshot = JSON.parse(raw) as JournalSnapshot;
-    return new DirtyJournal(snapshot.entries ?? [], snapshot.lastServerSeq ?? 0);
+    // A seq from a different server vault means nothing here: discover
+    // from the start. Local dirty entries still need sending either way.
+    // (A journal from before `remote` was recorded belongs to the same
+    // server's default vault, reached by the legacy routes: keep its seq.)
+    const sameRemote = !remote || !snapshot.remote || snapshot.remote === remote;
+    return new DirtyJournal(snapshot.entries ?? [], sameRemote ? (snapshot.lastServerSeq ?? 0) : 0);
   } catch {
     return new DirtyJournal();
   }
@@ -273,7 +334,7 @@ export async function saveJournal(
   fs: VaultFileSystem,
   snapshot: JournalSnapshot,
 ): Promise<void> {
-  await fs.mkdir(".adhd/sync");
+  await fs.mkdir(`${META_DIR}/sync`);
   await fs.writeTextAtomic(
     JOURNAL_PATH,
     JSON.stringify(snapshot),

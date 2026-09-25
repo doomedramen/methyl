@@ -12,7 +12,7 @@ import type { SharePayload } from "@/lib/vault/share-payload";
  * §17). A distinct cache name keeps it out of the precache/runtime-cache
  * cleanup Serwist does on activate.
  */
-const SHARE_CACHE = "adhd-share-pending";
+const SHARE_CACHE = "methyl-share-pending";
 const SHARE_KEY = "share-pending";
 
 // Injected by `serwist build`:
@@ -42,7 +42,7 @@ const serwist = new Serwist({
   skipWaiting: false,
   clientsClaim: true,
   navigationPreload: true,
-  cacheId: "adhd-app",
+  cacheId: "methyl-app",
   // There's no more prerendered `out/index.html` to fall back to — `/` is
   // now a server-rendered (but static) Next page, precached by URL like any
   // other entry (see serwist.config.js's `precachePrerendered`). Every
@@ -59,7 +59,7 @@ const serwist = new Serwist({
     {
       matcher: /\.(?:wasm)(?:\?.*)?$/,
       handler: new CacheFirst({
-        cacheName: "adhd-wasm",
+        cacheName: "methyl-wasm",
       }),
     },
     {
@@ -113,6 +113,16 @@ async function formDataToSharePayload(form: FormData): Promise<SharePayload> {
 }
 
 serwist.addEventListeners();
+
+// Runtime caches used to be named `adhd-*`; drop them once this worker
+// takes over (vault data never lives in Cache Storage — SPEC §17).
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("adhd-")).map((k) => caches.delete(k)))),
+  );
+});
 
 // Lets the waiting worker activate on the page's schedule instead of ours
 // (see the skipWaiting: false comment above).

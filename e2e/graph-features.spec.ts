@@ -38,9 +38,9 @@ async function addTodo(page: Page): Promise<void> {
 async function readLayoutFile(page: Page): Promise<string> {
   return page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
-    const vault = await root.getDirectoryHandle("adhd-vault");
-    const adhd = await vault.getDirectoryHandle(".adhd", { create: true });
-    const meta = await adhd.getDirectoryHandle("vault-meta", { create: true });
+    const vault = await (await (await root.getDirectoryHandle("methyl")).getDirectoryHandle("vaults")).getDirectoryHandle("local");
+    const metaDir = await vault.getDirectoryHandle(".methyl", { create: true });
+    const meta = await metaDir.getDirectoryHandle("vault-meta", { create: true });
     return (await (await meta.getFileHandle("graph-layout.json")).getFile()).text();
   });
 }

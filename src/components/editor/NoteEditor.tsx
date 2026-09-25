@@ -1,21 +1,20 @@
 "use client";
 
+import { readRenamedKey } from "@/lib/browser/storage-keys";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { EditorView } from "@codemirror/view";
-import type { EditorSession } from "@/lib/editor/session";
 import type { EditorUser } from "@/lib/editor/sync";
 import { Paperclip } from "lucide-react";
-import { attachmentMarkdownLink, relativeAttachmentPath } from "@/lib/vault/attachments";
+import { attachmentMarkdownLink, pastedFileName, relativeAttachmentPath } from "@/lib/vault/attachments";
 import { useApp, usePluginHost } from "@/lib/plugins/react";
 import { reconfigurePluginCompartment } from "@/lib/plugins/editor";
 
-const NAME_KEY = "adhd-name";
+const NAME_KEY = "methyl.name";
 
 function loadUser(): EditorUser {
-  const name =
-    (typeof window !== "undefined" && localStorage.getItem(NAME_KEY)) || "You";
-  return { name, colorClassName: "cm-adhd-you" };
+  const name = (typeof window !== "undefined" && readRenamedKey(NAME_KEY, "adhd-name")) || "You";
+  return { name, colorClassName: "cm-methyl-you" };
 }
 
 /**
@@ -66,7 +65,7 @@ export function NoteEditor({
   const viewRef = useRef<EditorView | null>(null);
   const focusRequestRef = useRef<number | null>(focusRequest);
   const focusedRequestRef = useRef<number | null>(null);
-  const attachFilesRef = useRef<(files: File[]) => void>(() => undefined);
+  const attachFilesRef = useRef<(files: File[], at?: number) => void>(() => undefined);
   const attachmentChangeRef = useRef(onAttachmentsChanged);
   useLayoutEffect(() => {
     attachmentChangeRef.current = onAttachmentsChanged;
@@ -81,9 +80,12 @@ export function NoteEditor({
   const [documentAvailabilityVersion, setDocumentAvailabilityVersion] = useState(0);
 
   useLayoutEffect(() => {
-    return engine.onDocumentAvailable(documentId, () =>
+    const unsubscribe = engine.onDocumentAvailable(documentId, () =>
       setDocumentAvailabilityVersion((version) => version + 1),
     );
+    // Documents load in the background after startup; load this one first.
+    void engine.loadDocument(documentId);
+    return unsubscribe;
   }, [engine, documentId]);
 
   // `app` is rebuilt by VaultPluginBridge whenever the active note or save
@@ -93,6 +95,13 @@ export function NoteEditor({
   useLayoutEffect(() => {
     appRef.current = app;
   }, [app]);
+  // The editor is created once per document; read the persistence callbacks
+  // through a ref so a parent re-render with new callbacks is still seen
+  // without tearing the editor down.
+  const callbacksRef = useRef({ onDirtyChange, onPersisting, onPersisted, onSaveError });
+  useLayoutEffect(() => {
+    callbacksRef.current = { onDirtyChange, onPersisting, onPersisted, onSaveError };
+  }, [onDirtyChange, onPersisting, onPersisted, onSaveError]);
 
   useLayoutEffect(() => {
     focusRequestRef.current = focusRequest;
@@ -118,7 +127,9 @@ export function NoteEditor({
 
     const handle = engine.getDocument(documentId);
     if (!handle) {
-      host.textContent = `document not loaded: ${documentId}`;
+      // Still loading (notes load in the background after startup, or
+      // arrive by sync); onDocumentAvailable re-runs this effect.
+      host.textContent = "Loading…";
       return;
     }
 
@@ -144,7 +155,7 @@ export function NoteEditor({
           createUndoManager,
           getContentTextFromDoc,
         } = syncMod;
-        const { adhdEditorExtensions, editorBaseTheme } = extMod;
+        const { methylEditorExtensions, editorBaseTheme } = extMod;
 
         const undoManager = createUndoManager(handle.doc);
         const ephemeral = createCursorEphemeral();
@@ -160,18 +171,22 @@ export function NoteEditor({
           documentId,
           maxDirtyMs: 3_000,
           onPersisted: () => {
-            if (inSync()) onPersisted?.(documentId);
-            else onSaveError?.(documentId);
+            if (inSync()) callbacksRef.current.onPersisted?.(documentId);
+            else callbacksRef.current.onSaveError?.(documentId);
           },
-          onPersistStart: () => onPersisting?.(documentId),
-          onPersistError: () => onSaveError?.(documentId),
+          onPersistStart: () => callbacksRef.current.onPersisting?.(documentId),
+          onPersistError: () => callbacksRef.current.onSaveError?.(documentId),
         });
         view = new EditorView({
           parent: host,
           state: EditorState.create({
             doc: getContentTextFromDoc(session.doc).toString(),
             extensions: [
-              adhdEditorExtensions({
+              // CodeMirror's content is a role="textbox"; give it a name, and
+              // an explicit tabindex so its scroller counts as keyboard
+              // reachable (a bare contenteditable doesn't, to some checkers).
+              EditorView.contentAttributes.of({ "aria-label": "Note text", tabindex: "0" }),
+              methylEditorExtensions({
                 doc: session.doc,
                 ephemeral,
                 user,
@@ -185,11 +200,11 @@ export function NoteEditor({
               EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
                   session.schedulePersist();
-                  onDirtyChange?.(documentId, true);
+                  callbacksRef.current.onDirtyChange?.(documentId, true);
                   // Catch edits that never reach the LoroText, so no persist fires.
                   if (verifyTimer) clearTimeout(verifyTimer);
                   verifyTimer = setTimeout(() => {
-                    if (!disposed && !inSync()) onSaveError?.(documentId);
+                    if (!disposed && !inSync()) callbacksRef.current.onSaveError?.(documentId);
                   }, 5_000);
                 }
               }),
@@ -197,19 +212,21 @@ export function NoteEditor({
           }),
         });
 
-        const attachFiles = async (files: File[]) => {
+        /** Store files as attachments and link them at `at` (a drop), else the selection. */
+        const attachFiles = async (files: File[], at?: number) => {
           if (disposed || readOnly || !view || files.length === 0) return;
           const links: string[] = [];
           try {
             for (const file of files) {
               const bytes = new Uint8Array(await file.arrayBuffer());
-              const node = await engine.createAttachment(file.name || "attachment", bytes);
+              const node = await engine.createAttachment(pastedFileName(file), bytes);
               const path = relativeAttachmentPath(engine, documentId, node.treeId);
               if (path) links.push(attachmentMarkdownLink(node.name, path));
             }
             await engine.persistTreeIncremental();
             if (links.length > 0 && view) {
-              const { from, to } = view.state.selection.main;
+              const drop = at === undefined ? undefined : Math.min(at, view.state.doc.length);
+              const { from, to } = drop === undefined ? view.state.selection.main : { from: drop, to: drop };
               const insert = links.join("\n");
               view.dispatch({
                 changes: { from, to, insert },
@@ -221,7 +238,7 @@ export function NoteEditor({
             console.error("[editor] attachment import failed", error);
           }
         };
-        attachFilesRef.current = (files) => void attachFiles(files);
+        attachFilesRef.current = (files, at) => void attachFiles(files, at);
         const onPaste = (event: ClipboardEvent) => {
           const files = Array.from(event.clipboardData?.files ?? []);
           if (files.length === 0 || readOnly) return;
@@ -235,7 +252,9 @@ export function NoteEditor({
           const files = Array.from(event.dataTransfer?.files ?? []);
           if (files.length === 0 || readOnly) return;
           event.preventDefault();
-          attachFilesRef.current(files);
+          // Link the files where they were dropped, not at the cursor.
+          const at = view?.posAtCoords({ x: event.clientX, y: event.clientY }) ?? undefined;
+          attachFilesRef.current(files, at);
         };
         host.addEventListener("paste", onPaste, true);
         host.addEventListener("dragover", onDragOver);
@@ -257,7 +276,9 @@ export function NoteEditor({
         // reload. Consuming the flag ourselves, right after mount, on a
         // harmless no-op dispatch — scheduled after the plugin's own
         // microtask so it "wins" the swallow instead of a real edit —
-        // fixes this without patching the vendored package.
+        // fixes this without patching the vendored package. Upstream report
+        // (to file): docs/upstream/loro-codemirror-first-edit.md. Remove this
+        // once fixed; loro-codemirror-swallow.test.ts starts failing then.
         Promise.resolve().then(() => {
           if (disposed || !view) return;
           view.dispatch({ selection: view.state.selection });
@@ -285,7 +306,7 @@ export function NoteEditor({
 
         const flush = () => {
           if (!session.isDirty()) {
-            onPersisted?.(documentId);
+            callbacksRef.current.onPersisted?.(documentId);
             return;
           }
           void session.flush();
@@ -358,6 +379,9 @@ export function NoteEditor({
             type="file"
             multiple
             className="sr-only"
+            // Opened only by the "Attach file" button above.
+            tabIndex={-1}
+            aria-hidden="true"
             onChange={(event) => {
               const files = Array.from(event.target.files ?? []);
               event.target.value = "";

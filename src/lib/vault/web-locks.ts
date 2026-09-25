@@ -29,8 +29,15 @@ export interface VaultLock {
 }
 
 function lockName(vaultId: string, kind: "writer" | "op", scope?: string): string {
-  return scope ? `adhd-vault:${vaultId}:${kind}:${scope}` : `adhd-vault:${vaultId}:${kind}`;
+  return scope ? `methyl:${vaultId}:${kind}:${scope}` : `methyl:${vaultId}:${kind}`;
 }
+
+/**
+ * The single vault's writer lock before multi-vault. A tab of an older build
+ * still holds this while it writes the old `adhd-vault` OPFS root; the
+ * layout migration takes it first so that tab can't write mid-copy.
+ */
+export const LEGACY_WRITER_LOCK_NAME = "adhd-vault:local:writer";
 
 export function vaultWriterLockName(vaultId: string): string {
   return lockName(vaultId, "writer");
@@ -51,7 +58,7 @@ export function vaultOpLockName(vaultId: string, scope: string): string {
  * still the writer.
  */
 function stealChannelName(vaultId: string): string {
-  return `adhd-vault:${vaultId}:writer-steal`;
+  return `methyl:${vaultId}:writer-steal`;
 }
 
 function announceSteal(vaultId: string): void {

@@ -1,5 +1,6 @@
 import { extractIdFromMarkdown, stripIdComment } from "@/lib/core/doc-id";
 import { sha256Text } from "@/lib/core/hash";
+import type { OpId } from "loro-crdt";
 
 /**
  * Sidecar document index (§5 / §26 of SPEC.md).
@@ -10,8 +11,8 @@ import { sha256Text } from "@/lib/core/hash";
  *   - For reconciling *external* filesystem changes (disk watcher, server
  *     rescans, crash recovery) we keep a hidden sidecar index mapping
  *     relative path → { id, contentHash, mtime }. This is the on-disk
- *     analogue of the tree, persisted at `.adhd/index.json` alongside the
- *     `.adhd/crdt/` layout (see PersistedDocStore in @/lib/vault/store).
+ *     analogue of the tree, persisted at `.methyl/index.json` alongside the
+ *     `.methyl/crdt/` layout (see PersistedDocStore in @/lib/vault/store).
  *
  * `.md` files themselves stay 100% clean: no id comment, ever — in the
  * editor's LoroText or on disk. Legacy files that still carry the old
@@ -24,6 +25,12 @@ export interface DocIndexEntry {
   contentHash: string;
   size: number;
   mtime: number;
+  /**
+   * The document's CRDT version when the app wrote this content to disk:
+   * the base for three-way merging a later external edit (SPEC §24).
+   * Absent when the file's content doesn't correspond to a known version.
+   */
+  frontiers?: OpId[];
 }
 
 /** relative path -> entry */
@@ -153,6 +160,10 @@ export async function reconcileVault(
       contentHash: hash,
       size: cleanContent.length,
       mtime: file.mtime ?? Date.now(),
+      // Unchanged since the app wrote it: still at the recorded version.
+      ...(prevEntry && prevEntry.id === id && prevEntry.contentHash === hash && prevEntry.frontiers
+        ? { frontiers: prevEntry.frontiers }
+        : {}),
     };
   }
 

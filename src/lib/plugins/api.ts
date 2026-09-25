@@ -1,8 +1,12 @@
+import type { SlashSource } from "@/lib/editor/slash-menu";
 import type { LucideIcon } from "lucide-react";
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { CompletionSource } from "@codemirror/autocomplete";
 import type { WikilinkCandidate } from "@/lib/vault/wikilink";
+
+// The `/` menu API for plugins (spec item 18).
+export { insertBlock, type SlashCommand, type SlashSource } from "@/lib/editor/slash-menu";
 
 export { type WikilinkCandidate };
 
@@ -94,6 +98,7 @@ export interface PluginContext {
   addCommand(cmd: Command): Command;
   registerEditorExtension(ext: Extension | Extension[]): void;
   registerCompletionSource(source: CompletionSource): void;
+  registerSlashCommand(source: SlashSource): void;
   register(dispose: () => void): void;
   loadData<T>(): Promise<T | null>;
   saveData(data: unknown): Promise<void>;
@@ -136,6 +141,11 @@ export abstract class Plugin {
 
   registerCompletionSource(source: CompletionSource): void {
     contexts.get(this)?.registerCompletionSource(source);
+  }
+
+  /** Add an entry to the editor's `/` menu, or a function listing entries. */
+  registerSlashCommand(source: SlashSource): void {
+    contexts.get(this)?.registerSlashCommand(source);
   }
 
   register(dispose: () => void): void {

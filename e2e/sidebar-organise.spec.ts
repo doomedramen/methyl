@@ -19,7 +19,7 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
  * content, only on the rows/files they create themselves.
  *
  * File assertions read straight from the browser's OPFS
- * (navigator.storage.getDirectory(), root directory "adhd-vault") via
+ * (navigator.storage.getDirectory(), vault directory "methyl/vaults/local") via
  * page.evaluate — there is no server-side vault directory in this setup
  * (see playwright.config.ts for why the sync server isn't used).
  */
@@ -49,7 +49,7 @@ async function walkVaultFiles(page: Page): Promise<string[]> {
         }
       ).entries();
       for await (const [name, handle] of entries) {
-        if (prefix === "" && (name === ".adhd" || name === ".trash")) continue;
+        if (prefix === "" && (name === ".methyl" || name === ".trash")) continue;
         const path = prefix ? `${prefix}/${name}` : name;
         if (handle.kind === "directory") {
           await walk(handle as FileSystemDirectoryHandle, path);
@@ -59,14 +59,14 @@ async function walkVaultFiles(page: Page): Promise<string[]> {
       }
     }
     const root = await navigator.storage.getDirectory();
-    const vaultRoot = await root.getDirectoryHandle("adhd-vault");
+    const vaultRoot = await (await (await root.getDirectoryHandle("methyl")).getDirectoryHandle("vaults")).getDirectoryHandle("local");
     await walk(vaultRoot, "");
     return out.sort();
   });
 }
 
 /** All materialized note paths in the vault, relative to its root, sorted.
- *  Skips the app's own bookkeeping (`.adhd/`, `.trash/`). Writes go
+ *  Skips the app's own bookkeeping (`.methyl/`, `.trash/`). Writes go
  *  tmp-file → rename (see OpfsVaultFS in src/lib/vault/opfs.ts), so right
  *  after a UI action there can briefly be `*.md.tmp`/`*.tmp.crswap`
  *  leftovers in the listing; poll until the tree is quiescent (no `.tmp`

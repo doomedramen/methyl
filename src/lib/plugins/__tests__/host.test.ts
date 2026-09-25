@@ -166,7 +166,7 @@ describe("PluginHost", () => {
 
     // Disposing never touched storage — it's still whatever was there
     // before host1 existed (nothing, here).
-    expect(await storage.read(".adhd/plugins.json")).toBeNull();
+    expect(await storage.read(".methyl/plugins.json")).toBeNull();
 
     // A fresh host sharing the same CommandRegistry can now enable cleanly.
     // Reuse class A; its onload will suspend again, but nothing is racing
@@ -179,7 +179,7 @@ describe("PluginHost", () => {
 
     expect(commands.list(null)).toHaveLength(1);
     expect(host2.list().find((s) => s.manifest.id === "plugin-a")?.state).toBe("enabled");
-    const persisted = await storage.read(".adhd/plugins.json");
+    const persisted = await storage.read(".methyl/plugins.json");
     expect(persisted).not.toBeNull();
     const parsed = JSON.parse(new TextDecoder().decode(persisted!)) as { enabled: string[] };
     expect(parsed.enabled).toEqual(["plugin-a"]);
@@ -231,10 +231,10 @@ describe("PluginHost", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it("loads .adhd/hotkeys.json overrides via enableFromStorage before enabling plugins", async () => {
+  it("loads .methyl/hotkeys.json overrides via enableFromStorage before enabling plugins", async () => {
     const storage = new InMemoryPluginStorage();
     await storage.write(
-      ".adhd/hotkeys.json",
+      ".methyl/hotkeys.json",
       new TextEncoder().encode(JSON.stringify({ "plugin-a:cmd": [{ modifiers: ["Mod", "Shift"], key: "j" }] })),
     );
     const host = new PluginHost(makeApp(), storage);

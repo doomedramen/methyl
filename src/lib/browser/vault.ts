@@ -1,7 +1,13 @@
-import { OpfsVaultFS } from "@/lib/vault/opfs";
+import { migrateLegacyMetaDir } from "@/lib/vault/meta-migration";
+import { markBoot } from "@/lib/core/boot-marks";
+import { OpfsVaultFS, vaultRootParts } from "@/lib/vault/opfs";
+import { migrateLegacyVaultRoot, rememberVault, resolveVault, type VaultInfo } from "@/lib/browser/vault-registry";
+import { WriterGatedFS } from "@/lib/vault/gated-fs";
+import type { VaultFileSystem } from "@/lib/vault/fs";
 import { OpfsDocStore, OpfsVaultTreeStore } from "@/lib/vault/opfs-store";
 import { VaultEngine } from "@/lib/vault/engine";
 import {
+  LEGACY_WRITER_LOCK_NAME,
   acquireVaultWriterLock,
   onVaultWriterStolen,
   waitForVaultWriterPromotion,
@@ -55,12 +61,49 @@ function setAccessStatus(next: VaultAccessStatus): void {
  * out as its own pure function so the decision is unit-testable without
  * OPFS/Web Locks — getVault() itself needs a real browser to exercise.
  */
-export function shouldSeedWelcomeNote(): boolean {
-  return loadSyncConfig() === null;
+export function shouldSeedWelcomeNote(vaultId?: string): boolean {
+  return loadSyncConfig(vaultId) === null;
 }
 
 let singleton: VaultEngine | null = null;
 let booting: Promise<VaultEngine> | null = null;
+let vaultFs: WriterGatedFS | null = null;
+let currentVault: VaultInfo | null = null;
+
+/** The vault this page has open (set once getVault() has resolved it). */
+export function getCurrentVault(): VaultInfo | null {
+  return currentVault;
+}
+
+/** The whole origin's OPFS, where the vault registry and every vault live. */
+export function originFileSystem(): VaultFileSystem {
+  return new OpfsVaultFS([]);
+}
+
+/**
+ * Before any vault opens: move the pre-multi-vault layout into place (under
+ * the old writer lock, so a tab of an older build can't write the old root
+ * mid-copy), then pick the vault this page shows.
+ */
+async function openVaultLayout(): Promise<VaultInfo> {
+  const origin = originFileSystem();
+  await navigator.locks.request(LEGACY_WRITER_LOCK_NAME, () => migrateLegacyVaultRoot(origin));
+  const vault = await resolveVault(origin, window.location.pathname);
+  rememberVault(vault.id);
+  currentVault = vault;
+  return vault;
+}
+
+/**
+ * The file system the open vault uses. Anything else that writes into the
+ * vault (the sync host's journal) must share it: it carries the writer-lock
+ * gate and the per-path write queue, which only serialises writes made
+ * through the same instance.
+ */
+export function getVaultFileSystem(): VaultFileSystem {
+  if (!vaultFs) throw new Error("getVaultFileSystem() called before getVault()");
+  return vaultFs;
+}
 
 /**
  * Boot the vault in the browser (single writer per origin).
@@ -102,15 +145,25 @@ export async function getVault(): Promise<VaultEngine> {
 
   booting = (async () => {
     assertStorageAvailable();
-    const fs = new OpfsVaultFS();
+    const vault = await openVaultLayout();
+    const vaultId = vault.id;
+    // Every store write goes through this gate: only the tab holding the
+    // writer lock may touch the vault (§12), whatever code path tries.
+    const fs = new WriterGatedFS(new OpfsVaultFS(vaultRootParts(vaultId)));
+    vaultFs = fs;
     const treeStore = new OpfsVaultTreeStore(fs);
     const docStore = new OpfsDocStore(fs);
 
-    const lock = await acquireVaultWriterLock("local");
+    const lock = await acquireVaultWriterLock(vaultId);
+    fs.setWritable(lock.active);
+    markBoot("lock-acquired");
+    // `.adhd/` → `.methyl/`: before anything reads the stores. Only the
+    // writer tab may write, so only it migrates.
+    if (lock.active) await migrateLegacyMetaDir(fs);
     if (!lock.active) {
       // Second tab: open read-only until a takeover is requested or this
       // tab is naturally promoted once the writer tab releases.
-      const { engine } = await VaultEngine.open(treeStore, docStore, "local");
+      const { engine } = await VaultEngine.open(treeStore, docStore, vaultId, { lazyDocuments: true });
       singleton = engine;
 
       // Queue in the background for the writer lock to become free
@@ -136,6 +189,7 @@ export async function getVault(): Promise<VaultEngine> {
         }
         becameWriterOnce = true;
         promotionAbort.abort();
+        fs.setWritable(true);
 
         engine.releaseWriterLock = () => writerLock.release();
         if (typeof window !== "undefined") {
@@ -143,7 +197,8 @@ export async function getVault(): Promise<VaultEngine> {
         }
         // From here on this tab is the writer, so it needs the same
         // steal-victim handling the original writer path has.
-        onVaultWriterStolen("local", () => {
+        onVaultWriterStolen(vaultId, () => {
+          fs.setWritable(false);
           if (typeof window !== "undefined") window.location.reload();
         });
         watchVisibilityForExternalChanges(engine);
@@ -155,6 +210,7 @@ export async function getVault(): Promise<VaultEngine> {
         // seeding the welcome note doesn't apply here — a vault already
         // exists, since a previous tab was writing to it.
         try {
+          engine.forgetCachedDocIndex();
           await engine.reconcileMaterialization();
         } catch (err) {
           console.error("[vault] reconcile on promotion failed", err);
@@ -164,13 +220,13 @@ export async function getVault(): Promise<VaultEngine> {
       };
 
       const takeOver = () => {
-        void acquireVaultWriterLock("local", { steal: true }).then((stolen) => {
+        void acquireVaultWriterLock(vaultId, { steal: true }).then((stolen) => {
           if (stolen.active) void becomeWriter(stolen);
         });
       };
       setAccessStatus({ kind: "read-only", takeOver });
 
-      waitForVaultWriterPromotion("local", promotionAbort.signal)
+      waitForVaultWriterPromotion(vaultId, promotionAbort.signal)
         .then((promoted) => {
           if (!promoted.active) return;
           void becomeWriter(promoted);
@@ -190,15 +246,25 @@ export async function getVault(): Promise<VaultEngine> {
 
     let engine: VaultEngine;
     if (hasVault) {
-      const opened = await VaultEngine.open(treeStore, docStore, "local");
+      const opened = await VaultEngine.open(treeStore, docStore, vaultId, { lazyDocuments: true });
       engine = opened.engine;
+      markBoot("vault-opened");
       // Reconcile the on-disk .md tree against the CRDT tree+content: this
       // catches the legacy-id-comment migration (content changed, so the
       // file is now stale), any file that was missing/stale from a crash
       // mid-write, and any orphaned file left behind by a rename/move that
-      // didn't finish persisting.
-      await engine.reconcileMaterialization();
-    } else if (!shouldSeedWelcomeNote()) {
+      // didn't finish persisting. It reads and hashes every note, so it runs
+      // in the background once the app is on screen rather than before
+      // (spec item 20).
+      reconcileInBackground(engine);
+    } else if ((await docStore.listMaterializedPaths()).length > 0) {
+      // No vault tree, but files on disk: the CRDT state is missing (the
+      // "vault wipe" left exactly this), or files were put here before the
+      // app ever ran. Adopt them — a new tree, no welcome note — instead of
+      // showing an empty vault with the notes invisible beside it.
+      engine = await VaultEngine.create(treeStore, docStore, vaultId);
+      reconcileInBackground(engine);
+    } else if (!shouldSeedWelcomeNote(vaultId)) {
       // A sync server is already configured on this device: this vault is
       // about to receive whatever the peer(s) it syncs with already have,
       // so seeding a local welcome note here would race a *different*
@@ -214,9 +280,9 @@ export async function getVault(): Promise<VaultEngine> {
       // the seed is simpler and avoids that case entirely; the tradeoff is
       // an empty vault, with no onboarding note, until the first sync
       // round completes.)
-      engine = await VaultEngine.create(treeStore, docStore, "local");
+      engine = await VaultEngine.create(treeStore, docStore, vaultId);
     } else {
-      engine = await createFreshVault(fs, treeStore, docStore);
+      engine = await createFreshVault(fs, treeStore, docStore, vaultId);
     }
     engine.releaseWriterLock = () => lock.release();
     singleton = engine;
@@ -233,7 +299,9 @@ export async function getVault(): Promise<VaultEngine> {
     // tab's in-memory state is now stale (no longer the writer), and the
     // simplest correct recovery is the same one used elsewhere in this
     // module — reload, and getVault() will cleanly re-open read-only.
-    onVaultWriterStolen("local", () => {
+    onVaultWriterStolen(vaultId, () => {
+      // Stop writing now; the reload that follows reopens read-only.
+      fs.setWritable(false);
       if (typeof window !== "undefined") window.location.reload();
     });
     return engine;
@@ -245,6 +313,35 @@ export async function getVault(): Promise<VaultEngine> {
     booting = null;
   }
 }
+
+/**
+ * Run the startup reconcile shortly after the app has rendered. It is safe
+ * alongside normal use: ingest passes are serialised in the engine, and the
+ * orphan sweep decides what to keep from the tree as it is when it sweeps.
+ */
+function reconcileInBackground(engine: VaultEngine): void {
+  const run = () => {
+    engine
+      .reconcileMaterialization()
+      .then(({ ingested, removed }) => {
+        markBoot("reconciled");
+        const changed =
+          ingested.edited.length + ingested.moved.length + ingested.copied.length +
+          ingested.created.length + ingested.deleted.length + removed.length +
+          (ingested.foldersCreated?.length ?? 0) + (ingested.assetsCreated?.length ?? 0);
+        // The app is already on screen: tell it to re-read the tree.
+        if (changed > 0) window.dispatchEvent(new Event(VAULT_CHANGED_EVENT));
+      })
+      .catch((err) => console.error("[vault] background reconcile failed", err));
+  };
+  if (typeof window === "undefined") run();
+  else window.setTimeout(run, RECONCILE_DELAY_MS);
+}
+
+const RECONCILE_DELAY_MS = 1500;
+
+/** Window event: the vault changed outside the UI's own actions (background reconcile). */
+export const VAULT_CHANGED_EVENT = "methyl:vault-changed";
 
 /**
  * OPFS has no external writers other than another tab of this same app, so
@@ -278,11 +375,12 @@ function watchVisibilityForExternalChanges(engine: VaultEngine): void {
  * vault exists yet.
  */
 async function createFreshVault(
-  fs: OpfsVaultFS,
+  fs: VaultFileSystem,
   treeStore: OpfsVaultTreeStore,
   docStore: OpfsDocStore,
+  vaultId: string,
 ): Promise<VaultEngine> {
-  const engine = await VaultEngine.create(treeStore, docStore, "local");
+  const engine = await VaultEngine.create(treeStore, docStore, vaultId);
   const welcome = `# Welcome
 
 This is your Methyl vault. Everything lives in your browser's file system

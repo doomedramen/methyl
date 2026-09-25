@@ -1,5 +1,4 @@
 import { LoroDoc, type OpId } from "loro-crdt";
-import type { Document } from "@/lib/core/document";
 import type { MaterializationCheckpoint } from "@/lib/core/types";
 
 /**

@@ -1,5 +1,6 @@
+import { isMetaDirName } from "@/lib/core/paths";
 import type { VaultFileSystem } from "@/lib/vault/fs";
-import { normalizeFilePath } from "@/lib/vault/fs";
+import { assertDeletable, normalizeFilePath } from "@/lib/vault/fs";
 
 /**
  * In-memory VaultFileSystem. Used by tests and server-side dev flows.
@@ -35,12 +36,16 @@ export class MemoryVaultFS implements VaultFileSystem {
     // Directories are implicit in the flat map
   }
 
-  async delete(path: string): Promise<void> {
+  async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
+    assertDeletable(path);
     const key = normalizeFilePath(path);
-    this.files.delete(key);
-    for (const k of [...this.files.keys()]) {
-      if (k.startsWith(key + "/")) this.files.delete(k);
+    const children = [...this.files.keys()].filter((k) => k.startsWith(key + "/"));
+    // Same rule as OPFS removeEntry: a non-empty directory needs recursive.
+    if (children.length > 0 && options?.recursive !== true) {
+      throw new DOMException(`"${path}" is a non-empty directory`, "InvalidModificationError");
     }
+    this.files.delete(key);
+    for (const k of children) this.files.delete(k);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -69,7 +74,7 @@ export class MemoryVaultFS implements VaultFileSystem {
 
   async *walk(): AsyncGenerator<{ path: string }> {
     for (const key of [...this.files.keys()].sort()) {
-      if (key === ".adhd" || key.startsWith(".adhd/")) continue;
+      if (isMetaDirName(key.split("/")[0]!)) continue;
       yield { path: key };
     }
   }

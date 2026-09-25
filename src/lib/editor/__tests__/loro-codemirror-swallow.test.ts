@@ -69,6 +69,9 @@ function bulkInsertUpdate(text: string): FakeViewUpdate {
   };
 }
 
+// Upstream report: docs/upstream/loro-codemirror-first-edit.md. The first
+// test asserts the bug on purpose: when it fails, upstream has fixed it —
+// remove the warm-up dispatch in NoteEditor.tsx and this file.
 describe("loro-codemirror LoroSyncPluginValue: first-update swallow (vendored bug)", () => {
   it("without a warm-up dispatch, the user's first bulk insert never reaches the LoroText", async () => {
     const LoroSyncPluginValue = await loadLoroSyncPluginValue();

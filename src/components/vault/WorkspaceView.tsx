@@ -273,6 +273,11 @@ function WorkspacePaneView({
       event.preventDefault();
       store.focusTab(pane.tabs[index]!.id);
       onTabActivated?.(pane.tabs[index]!.id);
+      return;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      closeTab(pane.tabs[index]!.id);
     }
   };
 
@@ -327,6 +332,7 @@ function WorkspacePaneView({
                   aria-selected={active}
                   aria-controls={workspacePanelId(tab.id)}
                   tabIndex={effectiveRovingTabId === tab.id ? 0 : -1}
+                  aria-keyshortcuts="Delete"
                   className="min-w-0 flex-1 truncate px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onFocus={() => setRovingTabId(tab.id)}
                   onKeyDown={(event) => handleTabKeyDown(event, index)}
@@ -337,10 +343,14 @@ function WorkspacePaneView({
                 >
                   {tabTitle}
                 </button>
-                <button
-                  type="button"
-                  className="workspace-tab-close relative flex size-8 shrink-0 items-center justify-center text-muted-foreground focus-visible:opacity-100"
-                  aria-label={`Close ${tabTitle}`}
+                {/* A tablist may contain only tabs (WAI-ARIA tabs pattern), so
+                    the × is a pointer and touch affordance only; keyboard and
+                    screen-reader users close the focused tab with Delete. */}
+                <span
+                  aria-hidden="true"
+                  data-tab-close="true"
+                  title={`Close ${tabTitle}`}
+                  className="workspace-tab-close relative flex size-8 shrink-0 cursor-pointer items-center justify-center text-muted-foreground"
                   onClick={(event) => {
                     event.stopPropagation();
                     closeTab(tab.id);
@@ -349,7 +359,7 @@ function WorkspacePaneView({
                   <span className="workspace-tab-close-visual grid size-6 place-items-center rounded-sm hover:bg-muted hover:text-foreground">
                     <X className="size-3.5" />
                   </span>
-                </button>
+                </span>
               </div>
             );
           })}

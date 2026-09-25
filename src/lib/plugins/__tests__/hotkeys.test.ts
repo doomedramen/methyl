@@ -30,7 +30,7 @@ describe("HotkeyManager", () => {
   it("a user override in hotkeys.json beats the default", async () => {
     const storage = new InMemoryPluginStorage();
     await storage.write(
-      ".adhd/hotkeys.json",
+      ".methyl/hotkeys.json",
       new TextEncoder().encode(JSON.stringify({ "p:cmd": [{ modifiers: ["Mod", "Shift"], key: "k" }] })),
     );
     const manager = new HotkeyManager(storage);
@@ -41,7 +41,7 @@ describe("HotkeyManager", () => {
 
   it("an empty array override unbinds the command", async () => {
     const storage = new InMemoryPluginStorage();
-    await storage.write(".adhd/hotkeys.json", new TextEncoder().encode(JSON.stringify({ "p:cmd": [] })));
+    await storage.write(".methyl/hotkeys.json", new TextEncoder().encode(JSON.stringify({ "p:cmd": [] })));
     const manager = new HotkeyManager(storage);
     await manager.loadOverrides();
     manager.setDefault("p:cmd", [{ modifiers: ["Mod"], key: "k" }]);

@@ -25,16 +25,19 @@ import type { ReactNode } from "react";
 import type { VaultEngine } from "@/lib/vault/engine";
 import type { SyncHost as SyncHostType, SyncStatus } from "@/lib/browser/sync-host";
 import type { SyncReport } from "@/lib/sync/coordinator";
+import { TREE_VAULT_ID } from "@/lib/sync/rooms";
 import {
   clearSyncConfig,
   deriveSyncUrls,
+  fetchServerVersion,
+  fetchSyncTicket,
   loadSyncConfig,
+  pairDevice,
   saveSyncConfig,
   testSyncConnection,
   type SyncConfig,
 } from "@/lib/browser/sync-config";
 
-const VAULT_ID = "local";
 
 export interface SyncContextValue {
   config: SyncConfig | null;
@@ -46,6 +49,8 @@ export interface SyncContextValue {
   save: (config: SyncConfig) => void;
   disconnect: () => void;
   testConnection: (config: SyncConfig) => ReturnType<typeof testSyncConnection>;
+  /** The sync server's version, once known. */
+  serverVersion: string | null;
 }
 
 const SyncContext = createContext<SyncContextValue | null>(null);
@@ -69,13 +74,28 @@ export function SyncProvider({
   const [config, setConfig] = useState<SyncConfig | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ kind: "idle" });
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
   const hostRef = useRef<SyncHostType | null>(null);
   const onRemoteChangeRef = useRef(onRemoteChange);
-  onRemoteChangeRef.current = onRemoteChange;
+  useEffect(() => {
+    onRemoteChangeRef.current = onRemoteChange;
+  }, [onRemoteChange]);
+
+  // Settings saved before the vault finished opening: the shell (and so
+  // the Sync dialog) renders before the engine exists, and the config is
+  // stored per vault. Persist them once the vault is known instead of
+  // letting the load below replace them with "not set up".
+  const pendingSaveRef = useRef<SyncConfig | null>(null);
 
   useEffect(() => {
-    setConfig(loadSyncConfig());
-  }, []);
+    if (!engine) return;
+    const pending = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    if (pending) saveSyncConfig(pending, engine.vaultId);
+    // localStorage only exists in the browser, so the saved config is read
+    // after hydration rather than during the server render.
+    setConfig(pending ?? loadSyncConfig(engine.vaultId));
+  }, [engine]);
 
   // A read-only tab is promoted to writer in place (§12) — the `engine`
   // reference doesn't change, only its `releaseWriterLock` field — so
@@ -99,28 +119,55 @@ export function SyncProvider({
 
   const canSync = !!engine && !!engine.releaseWriterLock;
 
+  // A config saved before device pairing holds the admin token. Pair this
+  // browser with it once, then drop it from localStorage either way (spec
+  // item 5); if pairing fails, ask for the token again in Sync settings.
+  useEffect(() => {
+    if (!engine || !config?.authToken) return;
+    let cancelled = false;
+    const { authToken, ...rest } = config;
+    void pairDevice({ serverUrl: config.serverUrl, adminToken: authToken, remoteVaultId: config.remoteVaultId })
+      .then((result) => {
+        saveSyncConfig(rest, engine.vaultId);
+        if (cancelled) return;
+        setConfig(rest);
+        if (!result.ok) {
+          setStatus({ kind: "error", message: `Pair this browser again: ${result.error}` });
+          setDialogOpen(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, config]);
+
   // Start/stop the host whenever the engine becomes syncable or config changes.
   useEffect(() => {
     let cancelled = false;
-    if (!canSync || !engine || !config) {
-      setStatus({ kind: "idle" });
-      return;
-    }
+    // A stored token is migrated to pairing first (above).
+    if (!canSync || !engine || !config || config.authToken) return;
 
+    // Reset before the async start below; the host reports its own status
+    // from then on.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus({ kind: "connecting" });
 
-    Promise.all([import("@/lib/vault/opfs"), import("@/lib/browser/sync-host")])
-      .then(async ([{ OpfsVaultFS }, { SyncHost }]) => {
+    Promise.all([import("@/lib/browser/vault"), import("@/lib/browser/sync-host")])
+      .then(async ([{ getVaultFileSystem }, { SyncHost }]) => {
         if (cancelled) return;
-        const fs = new OpfsVaultFS();
-        const { wsUrl, httpUrl } = deriveSyncUrls(config.serverUrl);
+        // The vault's own file system: writer-lock gated, one write queue.
+        const fs = getVaultFileSystem();
+        const { wsUrl, apiUrl } = deriveSyncUrls(config.serverUrl, config.remoteVaultId);
         const host = await SyncHost.create({
           fs,
           engine,
           wsUrl,
-          httpUrl,
-          authToken: config.authToken,
-          vaultId: VAULT_ID,
+          apiUrl,
+          // HTTP calls carry the device cookie; each round's socket joins
+          // with a fresh ticket.
+          getJoinAuth: () => fetchSyncTicket(config.serverUrl, config.remoteVaultId),
+          // The server vault's tree room, whatever this vault's local id.
+          vaultId: TREE_VAULT_ID,
         });
         if (cancelled) {
           host.stop();
@@ -140,9 +187,29 @@ export function SyncProvider({
       cancelled = true;
       hostRef.current?.stop();
       hostRef.current = null;
+      setStatus({ kind: "idle" });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSync, engine, config?.serverUrl, config?.authToken]);
+  }, [canSync, engine, config?.serverUrl, config?.remoteVaultId, config?.authToken]);
+
+  // The server's version, to show it and warn when it and the app differ.
+  // Re-read after each successful round: the server may have been updated.
+  const synced = status.kind === "synced";
+  useEffect(() => {
+    let cancelled = false;
+    const url = config?.serverUrl;
+    if (!url) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setServerVersion(null);
+      return;
+    }
+    void fetchServerVersion(url).then((version) => {
+      if (!cancelled) setServerVersion(version);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [config?.serverUrl, synced]);
 
   // Reconnect promptly on network/visibility signals rather than waiting for
   // the next backoff-scheduled attempt.
@@ -161,17 +228,19 @@ export function SyncProvider({
   }, []);
 
   const save = useCallback((next: SyncConfig) => {
-    saveSyncConfig(next);
+    if (engine) saveSyncConfig(next, engine.vaultId);
+    else pendingSaveRef.current = next;
     setConfig(next);
-  }, []);
+  }, [engine]);
 
   const disconnect = useCallback(() => {
     hostRef.current?.stop();
     hostRef.current = null;
-    clearSyncConfig();
+    pendingSaveRef.current = null;
+    if (engine) clearSyncConfig(engine.vaultId);
     setConfig(null);
     setStatus({ kind: "idle" });
-  }, []);
+  }, [engine]);
 
   const value = useMemo<SyncContextValue>(
     () => ({
@@ -183,8 +252,9 @@ export function SyncProvider({
       save,
       disconnect,
       testConnection: testSyncConnection,
+      serverVersion,
     }),
-    [config, status, canSync, dialogOpen, save, disconnect],
+    [config, status, canSync, dialogOpen, save, disconnect, serverVersion],
   );
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;

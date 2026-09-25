@@ -18,8 +18,8 @@ const DOC_B = "doc:beta";
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "adhd-coord-"));
-  wsPort = 22000 + Math.floor(Math.random() * 1000);
-  httpPort = wsPort + 1;
+  wsPort = 0;
+  httpPort = 0;
   server = createSyncServer({
     port: wsPort,
     httpPort,
@@ -28,6 +28,8 @@ beforeAll(async () => {
     saveIntervalMs: 50,
   });
   await server.start();
+  // Bound to OS-assigned ports (0 above), so parallel test files never collide.
+  ({ ws: wsPort, http: httpPort } = server.ports() as { ws: number; http: number });
 });
 
 afterAll(async () => {
@@ -75,7 +77,7 @@ describe("SyncCoordinator §34", () => {
     const coordinator = new SyncCoordinator(
       {
         wsUrl: "ws://127.0.0.1:1",
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: VAULT,
         connectionTimeoutMs: 50,
@@ -103,7 +105,7 @@ describe("SyncCoordinator §34", () => {
     const coordinator = new SyncCoordinator(
       {
         wsUrl: `ws://127.0.0.1:${wsPort}`,
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: VAULT,
       },
@@ -156,7 +158,7 @@ describe("SyncCoordinator §34", () => {
     const coordinator = new SyncCoordinator(
       {
         wsUrl: `ws://127.0.0.1:${wsPort}`,
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: VAULT,
       },

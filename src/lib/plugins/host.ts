@@ -1,3 +1,4 @@
+import { META_DIR } from "@/lib/core/paths";
 import { Plugin, bindPluginContext, API_VERSION, type App, type PluginContext, type PluginManifest } from "@/lib/plugins/api";
 import type { PluginStorage } from "@/lib/plugins/storage";
 import { CommandRegistry } from "@/lib/plugins/commands";
@@ -21,10 +22,10 @@ interface Registration {
   error?: string;
 }
 
-const PLUGINS_JSON_PATH = ".adhd/plugins.json";
+const PLUGINS_JSON_PATH = `${META_DIR}/plugins.json`;
 
 function pluginDataPath(id: string): string {
-  return `.adhd/plugins/${id}/data.json`;
+  return `${META_DIR}/plugins/${id}/data.json`;
 }
 
 function compareVersions(a: string, b: string): number {
@@ -73,7 +74,7 @@ export class PluginHost {
 
   /**
    * @param persist Whether a state change here should be written to
-   *   `.adhd/plugins.json`. Defaults to `true` (an explicit user toggle,
+   *   `.methyl/plugins.json`. Defaults to `true` (an explicit user toggle,
    *   e.g. from `PluginsDialog`). `enableFromStorage()` passes `false` for
    *   its own replay of already-persisted ids: a plugin that fails to load
    *   during that automatic boot pass (a transient error, a temporarily
@@ -119,6 +120,9 @@ export class PluginHost {
       },
       registerCompletionSource: (source) => {
         disposers.push(this.editorExtensions.addCompletionSource(reg.manifest.id, source));
+      },
+      registerSlashCommand: (source) => {
+        disposers.push(this.editorExtensions.addSlashCommand(reg.manifest.id, source));
       },
       register: (dispose: () => void) => {
         disposers.push(dispose);
@@ -185,7 +189,7 @@ export class PluginHost {
     this.emit();
   }
 
-  /** Enable every plugin listed in `.adhd/plugins.json`, or every `isCore`
+  /** Enable every plugin listed in `<META_DIR>/plugins.json`, or every `isCore`
    *  plugin when the file is absent (spec §1). Call once at boot. */
   async enableFromStorage(): Promise<void> {
     await this.hotkeys.loadOverrides();
@@ -206,7 +210,7 @@ export class PluginHost {
       // persist=false: this is replaying already-persisted (or defaulted)
       // state, not a user decision — see enable()'s doc comment. A plugin
       // that fails here (transient error, temporarily broken environment)
-      // must not get written into .adhd/plugins.json as "disabled", or the
+      // must not get written into .methyl/plugins.json as "disabled", or the
       // next boot would see the file as present-but-excluding-it forever,
       // permanently defeating the isCore default for that id.
       if (this.registrations.has(id)) await this.enable(id, false);

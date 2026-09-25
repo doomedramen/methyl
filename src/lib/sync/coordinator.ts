@@ -11,8 +11,16 @@ import { testWebSocketConnection } from "@/lib/sync/websocket";
 
 export interface SyncCoordinatorOptions {
   wsUrl: string;
-  httpUrl: string;
-  authToken: string;
+  /** HTTP API base: `<origin>/api/v/<vaultId>` (or `<origin>/api` for the legacy default vault). */
+  apiUrl: string;
+  /**
+   * The server's admin token (scripts, tests, clients paired before device
+   * pairing). A paired browser leaves it unset: its HTTP calls carry the
+   * device cookie, and room joins use a ticket from `getJoinAuth`.
+   */
+  authToken?: string;
+  /** A fresh sync ticket for this round's socket (POST /api/auth/ws-ticket). */
+  getJoinAuth?: () => Promise<string>;
   vaultId: string;
   maxConcurrentDocs?: number;   // §34: 8 on mobile
   maxConcurrentBinaries?: number; // §34: 2 on mobile
@@ -57,6 +65,21 @@ function bounded(limit: number): [acquire: () => Promise<void>, release: () => v
       }),
     () => { active--; if (queue.length > 0) queue.shift()?.(); },
   ];
+}
+
+/**
+ * The loro client's constructor starts connecting with a bare
+ * `this.connect()`, whose promise nobody observes. Destroying the client
+ * before that connection settles (a round stopped mid-connect) then rejects
+ * it with "Destroyed" as an unhandled rejection. Mark every connect()
+ * promise handled; callers still get the same promise and see its outcome.
+ */
+export class SyncClient extends LoroWebsocketClient {
+  override connect(...args: Parameters<LoroWebsocketClient["connect"]>) {
+    const connecting = super.connect(...args);
+    connecting.catch(() => {});
+    return connecting;
+  }
 }
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
@@ -129,14 +152,17 @@ export class SyncCoordinator {
   /* ── §34 core loop ─────────────────────────────────────────────── */
 
   private async loop(): Promise<SyncReport> {
-    const { wsUrl, httpUrl, authToken, vaultId } = this.opts;
-    const hdr = { authorization: `Bearer ${authToken}` };
+    const { wsUrl, apiUrl, authToken, vaultId } = this.opts;
+    const hdr: Record<string, string> = authToken ? { authorization: `Bearer ${authToken}` } : {};
 
     // 2-4: connect WS
     console.log("coord: connecting");
     await testWebSocketConnection(wsUrl, this.opts.connectionTimeoutMs);
     await this.opts.beforeConnect?.();
-    const client = new LoroWebsocketClient({ url: wsUrl, disablePing: true } as LoroWebsocketClientOptions);
+    // Tickets last 60 s until redeemed, so fetch one per round, just before use.
+    const joinAuth = authToken ?? (await this.opts.getJoinAuth?.());
+    if (!joinAuth) throw new Error("Sync has no credentials: pair this device in Sync settings.");
+    const client = new SyncClient({ url: wsUrl, disablePing: true } as LoroWebsocketClientOptions);
     this.client = client;
     let treeRoom: { waitForReachingServerVersion(): Promise<void>; leave(): void } | null = null;
     try {
@@ -151,7 +177,7 @@ export class SyncCoordinator {
         client.join({
           roomId: `vault:${vaultId}`,
           crdtAdaptor: treeAdaptor,
-          auth: new TextEncoder().encode(authToken),
+          auth: new TextEncoder().encode(joinAuth),
         }),
         "Vault room join",
         this.opts.connectionTimeoutMs,
@@ -167,7 +193,7 @@ export class SyncCoordinator {
       // 7: discovery poll
       const lastSeq = this.journal.getLastServerSeq();
       console.log("coord: discovery after", lastSeq);
-      const changesRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
+      const changesRes = await fetch(`${apiUrl}/changes?after=${lastSeq}`, { headers: hdr });
       const { changes: serverChanges } = await changesRes.json() as {
         reset?: boolean;
         changes: Array<{ objectId: string; seq: number; type?: string }>;
@@ -198,18 +224,27 @@ export class SyncCoordinator {
 
       // 9: sync doc rooms
       const touchedRoomIds: string[] = [];
-      const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds);
+      const docsSynced = await this.syncDocs(documents, client, joinAuth, touchedRoomIds, apiUrl, hdr);
 
       // 10: sync binaries
-      const binariesSynced = await this.syncBinaries(binaries, httpUrl, hdr);
+      const binariesSynced = await this.syncBinaries(binaries, apiUrl, hdr);
 
       // 11-12: durable confirm + clear
-      const dirtyCleared = await this.confirmDurables(httpUrl, hdr);
+      const dirtyCleared = await this.confirmDurables(apiUrl, hdr);
+
+      // The vault tree gets the same guarantee as documents (§20): don't
+      // leave its room — and destroy the socket — before the server has
+      // stored this client's tree, or a new note's tree entry can be lost
+      // with the connection.
+      const treeVersion = Object.fromEntries(treeDoc.version().toJSON()) as VV;
+      if (Object.keys(treeVersion).length > 0) {
+        await this.waitForDurable(`vault:${vaultId}`, treeVersion, apiUrl, hdr);
+      }
 
       // 13: advance lastServerSeq. Re-poll after sync: rooms we synced (and
       // the tree) have produced new change-log rows, so reflect them now so
       // the next discovery poll skips everything already durably sent.
-      const afterRes = await fetch(`${httpUrl}/api/changes?after=${lastSeq}`, { headers: hdr });
+      const afterRes = await fetch(`${apiUrl}/changes?after=${lastSeq}`, { headers: hdr });
       const { changes: afterChanges } = await afterRes.json() as {
         changes: Array<{ objectId: string; seq: number; type?: string }>;
       };
@@ -231,8 +266,10 @@ export class SyncCoordinator {
   private async syncDocs(
     roomIds: string[],
     client: LoroWebsocketClient,
-    authToken: string,
+    joinAuth: string,
     touched: string[],
+    apiUrl: string,
+    hdr: Record<string, string>,
   ): Promise<number> {
     if (roomIds.length === 0) return 0;
     const [acquire, release] = bounded(this.opts.maxConcurrentDocs);
@@ -251,7 +288,7 @@ export class SyncCoordinator {
           client.join({
             roomId: id,
             crdtAdaptor: adaptor,
-            auth: new TextEncoder().encode(authToken),
+            auth: new TextEncoder().encode(joinAuth),
           }),
           `Document room join (${id})`,
           this.opts.connectionTimeoutMs,
@@ -269,6 +306,12 @@ export class SyncCoordinator {
           const vv = Object.fromEntries(doc.version().toJSON()) as VV;
           if (Object.keys(vv).length > 0) {
             this.journal.markDirty(id, vv);
+            // Stay in the room until the server has stored everything this
+            // client has (§20). Leaving — and destroying the socket at the
+            // end of the round — straight after reaching the *server's*
+            // version could drop this client's own update still in flight,
+            // and the round would report a sync the server never received.
+            await this.waitForDurable(id, vv, apiUrl, hdr);
           }
           count++;
           touched.push(id);
@@ -281,11 +324,40 @@ export class SyncCoordinator {
     return count;
   }
 
+  /**
+   * Poll the server's durable version for `roomId` until it covers
+   * `target`, or give up after the connection timeout. Giving up is not an
+   * error: the room stays dirty in the journal and the next round retries.
+   */
+  private async waitForDurable(
+    roomId: string,
+    target: VV,
+    apiUrl: string,
+    hdr: Record<string, string>,
+  ): Promise<boolean> {
+    const deadline = Date.now() + this.opts.connectionTimeoutMs;
+    let delay = 25;
+    for (;;) {
+      try {
+        const res = await fetch(`${apiUrl}/durable/${encodeURIComponent(roomId)}`, { headers: hdr });
+        if (res.ok) {
+          const body = (await res.json()) as { durableVersion: string };
+          if (coversVersion(vvFromBase64(body.durableVersion), target)) return true;
+        }
+      } catch {
+        // Network hiccup: fall through to the retry below.
+      }
+      if (Date.now() + delay > deadline) return false;
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 2, 250);
+    }
+  }
+
   /* ── binary transfer (bounded concurrency) ─────────────────────── */
 
   private async syncBinaries(
     ids: string[],
-    httpUrl: string,
+    apiUrl: string,
     hdr: Record<string, string>,
   ): Promise<number> {
     if (ids.length === 0) return 0;
@@ -297,7 +369,7 @@ export class SyncCoordinator {
       try {
         const data = await this.hooks.getBinaryData(id);
         if (data) {
-          const response = await fetch(`${httpUrl}/api/assets/${encodeURIComponent(id)}`, {
+          const response = await fetch(`${apiUrl}/assets/${encodeURIComponent(id)}`, {
             method: "PUT",
             headers: { ...hdr, "content-type": "application/octet-stream" },
             body: data.slice().buffer as ArrayBuffer,
@@ -306,7 +378,7 @@ export class SyncCoordinator {
           return;
         }
         if (!this.hooks.writeBinaryData) return;
-        const response = await fetch(`${httpUrl}/api/assets/${encodeURIComponent(id)}`, {
+        const response = await fetch(`${apiUrl}/assets/${encodeURIComponent(id)}`, {
           headers: hdr,
         });
         if (!response.ok) return;
@@ -321,7 +393,7 @@ export class SyncCoordinator {
   /* ── durable poll (exponential backoff, 3 rounds) ───────────────── */
 
   private async confirmDurables(
-    httpUrl: string,
+    apiUrl: string,
     hdr: Record<string, string>,
   ): Promise<number> {
     let cleared = 0;
@@ -333,7 +405,7 @@ export class SyncCoordinator {
       const results = await Promise.allSettled(
         pending.map(async (entry) => {
           const res = await fetch(
-            `${httpUrl}/api/durable/${encodeURIComponent(entry.roomId)}`,
+            `${apiUrl}/durable/${encodeURIComponent(entry.roomId)}`,
             { headers: hdr },
           );
           if (!res.ok) return null;

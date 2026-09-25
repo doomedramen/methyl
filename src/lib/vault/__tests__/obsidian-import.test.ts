@@ -32,7 +32,7 @@ describe("Obsidian vault import", () => {
         entry("assets/diagram.png", new Uint8Array([1, 2, 3])),
         entry(".obsidian/app.json", "{}"),
         entry(".trash/deleted.md", "gone"),
-        entry(".adhd/index.json", "{}"),
+        entry(".methyl/index.json", "{}"),
       ],
       ({ path }) => {
         progress.push(path);

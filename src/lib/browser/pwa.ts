@@ -89,7 +89,7 @@ async function unregisterDevServiceWorker(): Promise<void> {
     // Only Serwist's own caches; vault data lives in OPFS, not Cache Storage.
     const keys = await caches.keys();
     await Promise.all(
-      keys.filter((k) => k.startsWith("serwist-") || k === "adhd-wasm").map((k) => caches.delete(k)),
+      keys.filter((k) => k.startsWith("serwist-") || k === "methyl-wasm" || k.startsWith("adhd-")).map((k) => caches.delete(k)),
     );
   } catch (err) {
     console.warn("[pwa] dev service worker cleanup failed", err);
@@ -104,7 +104,6 @@ export function usePwa() {
     quota: null,
     updateReady: false,
   });
-  const notified = useRef(false);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {

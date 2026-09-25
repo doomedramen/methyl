@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
 import { VaultEngine } from "@/lib/vault/engine";
-import { CONTENT_KEY } from "@/lib/core/document";
 import { createEditorSession } from "@/lib/editor/session";
 import { getContentTextFromDoc } from "@/lib/editor/sync";
 import { mkdtempSync, rmSync } from "fs";

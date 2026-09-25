@@ -60,7 +60,7 @@ describe("editor sync primitives", () => {
     // Two docs with distinct peers, each with its own ephemeral store
     const a = new LoroDoc();
     const storeA = createCursorEphemeral();
-    const b = new LoroDoc();
+    // Peer B only needs its own ephemeral store to receive A's cursor.
     const storeB = createCursorEphemeral();
 
     const userA = { name: "Alice", colorClassName: "cm-adhd-red" };

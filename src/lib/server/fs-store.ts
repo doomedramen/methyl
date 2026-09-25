@@ -1,7 +1,9 @@
+import { META_DIR, isMetaDirName } from "@/lib/core/paths";
 import { promises as fs } from "fs";
 import { join, dirname } from "path";
 import type { PersistedDocStore, VaultTreeStore } from "@/lib/vault/store";
 import type { PersistedDocState, PersistedTreeState } from "@/lib/core/types";
+import { assertDeletable } from "@/lib/vault/fs";
 import {
   atomicCompact,
   cleanupInterrupted,
@@ -16,8 +18,8 @@ import {
  * in recovery tests. Writes are crash-safe: data file → tmp → fsync → rename.
  *
  * Layout:
- *   .adhd/crdt/docs/<docId>/   snapshot.loro + updates/ + state.json
- *   .adhd/crdt/vault/          snapshot.loro + updates/ + state.json
+ *   .methyl/crdt/docs/<docId>/   snapshot.loro + updates/ + state.json
+ *   .methyl/crdt/vault/          snapshot.loro + updates/ + state.json
  */
 class NodePersistBackend {
   readonly root: string;
@@ -137,7 +139,7 @@ class NodePersistBackend {
   }
 
   async listDocDirs(): Promise<string[]> {
-    const docsDir = join(this.root, ".adhd/crdt/docs");
+    const docsDir = join(this.root, META_DIR, "crdt/docs");
     let entries: import("fs").Dirent[];
     try {
       entries = await fs.readdir(docsDir, { withFileTypes: true });
@@ -182,7 +184,7 @@ class NodePersistBackend {
         throw err;
       }
       for (const entry of entries) {
-        if (rel === "" && entry.name === ".adhd") continue;
+        if (rel === "" && isMetaDirName(entry.name)) continue;
         const relPath = rel ? `${rel}/${entry.name}` : entry.name;
         if (entry.isDirectory()) {
           await walk(join(dir, entry.name), relPath);
@@ -207,7 +209,7 @@ class NodePersistBackend {
       }
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        if (rel === "" && entry.name === ".adhd") continue;
+        if (rel === "" && isMetaDirName(entry.name)) continue;
         const relPath = rel ? `${rel}/${entry.name}` : entry.name;
         out.push(relPath);
         await walk(join(dir, entry.name), relPath);
@@ -218,6 +220,7 @@ class NodePersistBackend {
   }
 
   async removeMaterialized(path: string): Promise<void> {
+    assertDeletable(path);
     const full = join(this.root, path);
     await this.withLock(full, async () => {
       await fs.rm(full, { force: true });
@@ -263,8 +266,10 @@ const ops: AtomicOps = {
       throw err;
     }
   },
+  // Compaction removes the superseded `updates/` directory as a whole and
+  // stray `.tmp` files; nothing else is ever removed recursively.
   rm: async (p) => {
-    await fs.rm(p, { recursive: true, force: true });
+    await fs.rm(p, { recursive: p.endsWith("/updates"), force: true });
   },
 };
 
@@ -276,7 +281,7 @@ export class NodeFSStore implements PersistedDocStore {
   }
 
   private dir(docId: string): string {
-    return join(this.backend.root, ".adhd/crdt/docs", docId);
+    return join(this.backend.root, META_DIR, "crdt/docs", docId);
   }
 
   listDocumentIds(): Promise<string[]> {
@@ -336,7 +341,7 @@ export class NodeVaultTreeStore implements VaultTreeStore {
   }
 
   private dir(): string {
-    return join(this.backend.root, ".adhd/crdt/vault");
+    return join(this.backend.root, META_DIR, "crdt/vault");
   }
 
   loadSnapshot(): Promise<Uint8Array | null> {

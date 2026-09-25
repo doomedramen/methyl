@@ -1,3 +1,4 @@
+import { META_DIR } from "@/lib/core/paths";
 import type { VaultFileSystem } from "@/lib/vault/fs";
 import type { VaultEngine } from "@/lib/vault/engine";
 import { CONTENT_KEY } from "@/lib/core/document";
@@ -9,14 +10,14 @@ import { sha256Text } from "@/lib/core/hash";
  * whether this vault is still *just* that untouched seed — and if so,
  * drop it before merging rather than letting it survive as a duplicate
  * sibling of whatever the peer(s) it's syncing with already have. This is
- * a vault-local meta key (a plain file under `.adhd/`, never synced —
- * VaultEngine's fs-store/materialize paths never touch `.adhd/vault-meta`
+ * a vault-local meta key (a plain file under `.methyl/`, never synced —
+ * VaultEngine's fs-store/materialize paths never touch `.methyl/vault-meta`
  * so it can't collide with anything real), not a guess based on the
  * note's name or content.
  */
 
-const SEED_META_PATH = ".adhd/vault-meta/seed.json";
-const SEED_CHECKED_PATH = ".adhd/vault-meta/seed-check-done";
+const SEED_META_PATH = `${META_DIR}/vault-meta/seed.json`;
+const SEED_CHECKED_PATH = `${META_DIR}/vault-meta/seed-check-done`;
 
 export interface SeedMarker {
   documentId: string;
@@ -29,7 +30,7 @@ export async function writeSeedMarker(
   content: string,
 ): Promise<void> {
   const contentSha256 = await sha256Text(content);
-  await fs.mkdir(".adhd/vault-meta");
+  await fs.mkdir(`${META_DIR}/vault-meta`);
   await fs.writeTextAtomic(
     SEED_META_PATH,
     JSON.stringify({ documentId, contentSha256 } satisfies SeedMarker),
@@ -79,7 +80,7 @@ export async function maybeDropUntouchedSeed(
 ): Promise<void> {
   const already = await fs.readTextFile(SEED_CHECKED_PATH);
   if (already) return;
-  await fs.mkdir(".adhd/vault-meta");
+  await fs.mkdir(`${META_DIR}/vault-meta`);
   await fs.writeTextAtomic(SEED_CHECKED_PATH, "1");
 
   const marker = await readSeedMarker(fs);

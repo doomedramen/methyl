@@ -1,7 +1,19 @@
 import type { NextConfig } from "next";
+import { execFileSync } from "node:child_process";
+
+// The release tag, or 0.0.0-<sha> (scripts/app-version.mjs), inlined into
+// the client so the UI and diagnostics can show it.
+const appVersion = execFileSync(process.execPath, ["scripts/app-version.mjs"], { encoding: "utf8" }).trim();
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // The Docker image ships .next/standalone: the server files and only the
+  // node_modules files they use (traced), not the whole dependency tree.
+  output: "standalone",
+  // Images aren't optimised (below), so sharp and its native libraries,
+  // which Next traces anyway, aren't needed at runtime.
+  outputFileTracingExcludes: { "*": ["node_modules/sharp/**", "node_modules/@img/**"] },
+  env: { NEXT_PUBLIC_APP_VERSION: appVersion },
   images: {
     // No self-hosted image optimization (no sharp) — avoids the extra
     // CPU/deps for a single-user, self-hosted app.

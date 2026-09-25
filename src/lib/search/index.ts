@@ -1,8 +1,9 @@
+import { META_DIR } from "@/lib/core/paths";
 import MiniSearch, { type AsPlainObject } from "minisearch";
 import type { DocIndexEntry, ParsedDocument } from "@/lib/core/types";
 import type { PersistedDocStore } from "@/lib/vault/store";
 
-const CACHE_ROOT = ".adhd/cache";
+const CACHE_ROOT = `${META_DIR}/cache`;
 const SEARCH_FILE = `${CACHE_ROOT}/search.json`;
 const BACKLINKS_FILE = `${CACHE_ROOT}/backlinks.json`;
 const GRAPH_FILE = `${CACHE_ROOT}/graph.json`;
@@ -62,7 +63,7 @@ function miniSearchOptions() {
 }
 
 /**
- * Full-text index over note content (§13). Persisted to .adhd/cache/search.json.
+ * Full-text index over note content (§13). Persisted to .methyl/cache/search.json.
  * Tracks documents itself because MiniSearch cannot enumerate stored documents.
  */
 export class SearchIndex {
@@ -174,8 +175,14 @@ export class DerivedIndexes {
     this.graphEdges = new Map(Object.entries(graph));
   }
 
-  /** Rebuild backlinks + graph edges from parsed markdown metadata. */
+  /** Rebuild backlinks + graph edges from parsed markdown metadata, and save them. */
   async build(docs: IndexedDocument[]): Promise<void> {
+    this.compute(docs);
+    await this.persist();
+  }
+
+  /** Rebuild backlinks + graph edges in memory only. */
+  compute(docs: IndexedDocument[]): void {
     this.backlinks.clear();
     this.graphEdges.clear();
     const byTitle = new Map<string, string>();
@@ -205,7 +212,6 @@ export class DerivedIndexes {
       const outgoing = [...new Set([...targets, ...internal])];
       if (outgoing.length) this.graphEdges.set(doc.id, outgoing);
     }
-    await this.persist();
   }
 
   backlinksFor(id: string): BacklinkEntry[] {

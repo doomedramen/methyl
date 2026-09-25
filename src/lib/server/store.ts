@@ -55,7 +55,16 @@ export class ServerStore {
   }
 
   close(): void {
+    this.changeListeners.clear();
     this.db.close();
+  }
+
+  private readonly changeListeners = new Set<(seq: number) => void>();
+
+  /** Be told the sequence number of every change recorded from now on. */
+  onChange(listener: (seq: number) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
   }
 
   getNextSeq(): number {
@@ -77,7 +86,7 @@ export class ServerStore {
       .prepare(
         "SELECT roomId, durableVersion, snapshot, serverSeq FROM rooms WHERE roomId = ?",
       )
-      .get(roomId) as any;
+      .get(roomId) as ReturnType<ServerStore["getRoom"]>;
   }
 
   upsertRoom(
@@ -110,6 +119,7 @@ export class ServerStore {
         "INSERT INTO changes (seq, objectId, type, timestamp) VALUES (?, ?, ?, ?)",
       )
       .run(seq, objectId, type, Date.now());
+    for (const listener of this.changeListeners) listener(seq);
   }
 
   getChangesAfter(afterSeq: number): {
@@ -131,7 +141,7 @@ export class ServerStore {
     }
     const changes = this.db
       .prepare("SELECT seq, objectId, type, timestamp FROM changes WHERE seq > ? ORDER BY seq")
-      .all(afterSeq) as any[];
+      .all(afterSeq) as ReturnType<ServerStore["getChangesAfter"]>["changes"];
     return { reset: false, changes, minRetainedSeq: minRetained };
   }
 
@@ -181,7 +191,7 @@ export class ServerStore {
       .prepare(
         "SELECT roomId, crdtType, serverSeq, lastSaved FROM rooms ORDER BY serverSeq",
       )
-      .all() as any[];
+      .all() as ReturnType<ServerStore["listRooms"]>;
   }
 
   /** Record asset discovery metadata. Returns the newly allocated serverSeq. */
@@ -208,6 +218,6 @@ export class ServerStore {
     | undefined {
     return this.db
       .prepare("SELECT nodeId, sha256, size, serverSeq FROM assets WHERE nodeId = ?")
-      .get(nodeId) as any;
+      .get(nodeId) as ReturnType<ServerStore["getAssetMeta"]>;
   }
 }

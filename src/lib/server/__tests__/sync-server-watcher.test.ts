@@ -76,7 +76,7 @@ describe("sync-server vault watcher integration", () => {
         fs: clientFs,
         engine: clientEngine,
         wsUrl: `ws://127.0.0.1:${wsPort}`,
-        httpUrl: `http://127.0.0.1:${httpPort}`,
+        apiUrl: `http://127.0.0.1:${httpPort}/api`,
         authToken: AUTH,
         vaultId: "bootimport",
       });
@@ -180,7 +180,7 @@ describe("sync-server vault watcher integration", () => {
       fs: clientFs,
       engine: clientEngine,
       wsUrl: `ws://127.0.0.1:${wsPort}`,
-      httpUrl: `http://127.0.0.1:${httpPort}`,
+      apiUrl: `http://127.0.0.1:${httpPort}/api`,
       authToken: AUTH,
       vaultId,
     });
@@ -237,7 +237,7 @@ describe("sync-server vault watcher integration", () => {
       fs: clientFs,
       engine: clientEngine,
       wsUrl: `ws://127.0.0.1:${wsPort}`,
-      httpUrl: `http://127.0.0.1:${httpPort}`,
+      apiUrl: `http://127.0.0.1:${httpPort}/api`,
       authToken: AUTH,
       vaultId,
     });
@@ -346,7 +346,7 @@ describe("sync-server vault watcher integration", () => {
       const node = server.getEngine()!.tree.findByName("external.png")[0]!;
       const meta = server.store.getAssetMeta(String(node.treeId))!;
       expect(meta.size).toBe(bytes.length);
-      expect(readFileSync(join(tmpDir, ".adhd/server/assets", meta.sha256))).toEqual(bytes);
+      expect(readFileSync(join(tmpDir, ".methyl/server/assets", meta.sha256))).toEqual(bytes);
     } finally {
       await server.stop();
       rmSync(tmpDir, { recursive: true, force: true });

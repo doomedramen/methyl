@@ -8,9 +8,11 @@
  *   - On failure, retries with exponential backoff (`baseBackoffMs` *
  *     2^attempt, capped at `maxBackoffMs`), and reports "offline" instead
  *     of "error" when `navigator.onLine` is known to be false.
- *   - `kick()` (e.g. from a `online`/`visibilitychange` listener) cancels
- *     any pending backoff wait and retries immediately, resetting the
- *     attempt counter.
+ *   - `kick()` (e.g. from a `online`/`visibilitychange` listener, or a
+ *     server change event) cancels any pending wait and runs immediately,
+ *     resetting the attempt counter. A kick while a round is running runs
+ *     another round as soon as it finishes: that round may have started
+ *     before whatever prompted the kick.
  *   - `stop()` halts the loop; a subsequent `start()` begins fresh.
  */
 
@@ -41,6 +43,7 @@ export class SyncScheduler {
   private attempt = 0;
   private stopped = true;
   private running = false;
+  private kickedWhileRunning = false;
 
   constructor(opts: SchedulerOptions) {
     this.opts = opts;
@@ -68,7 +71,8 @@ export class SyncScheduler {
     if (this.stopped) return;
     this.attempt = 0;
     this.cancelTimer();
-    if (!this.running) void this.tick();
+    if (this.running) this.kickedWhileRunning = true;
+    else void this.tick();
   }
 
   private cancelTimer(): void {
@@ -86,15 +90,17 @@ export class SyncScheduler {
   private async tick(): Promise<void> {
     if (this.stopped || this.running) return;
     this.running = true;
+    this.kickedWhileRunning = false;
     this.opts.onStatus?.({ kind: "connecting" });
     try {
       await this.opts.run();
       this.running = false;
       this.attempt = 0;
       this.opts.onStatus?.({ kind: "synced", at: (this.opts.now ?? Date.now)() });
-      this.schedule(this.opts.intervalMs ?? 15_000);
+      this.schedule(this.kickedWhileRunning ? 0 : (this.opts.intervalMs ?? 15_000));
     } catch (err) {
       this.running = false;
+      this.kickedWhileRunning = false;
       const base = this.opts.baseBackoffMs ?? 1_000;
       const max = this.opts.maxBackoffMs ?? 30_000;
       const delay = Math.min(max, base * 2 ** this.attempt);

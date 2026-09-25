@@ -1,5 +1,6 @@
 "use client";
 
+import { APP_VERSION, versionsDiffer } from "@/lib/core/version";
 import { CloudAlert, CloudOff, RefreshCw, Settings2 } from "lucide-react";
 import type { SyncStatus } from "@/lib/browser/sync-host";
 import { useSync } from "@/lib/browser/sync-context";
@@ -60,12 +61,18 @@ function lastSyncedLabel(status: SyncStatus): string | null {
 
 /** "Sync" row for the footer status popover — plain language, no jargon. */
 export function SyncStatusRow() {
-  const { status, canSync, setDialogOpen } = useSync();
+  const { status, canSync, setDialogOpen, serverVersion } = useSync();
   const copy = COPY[status.kind];
-  const description =
+  const base =
     status.kind === "error" && "message" in status && status.message
       ? `${copy.description} (${status.message})`
       : lastSyncedLabel(status) ?? copy.description;
+  // Client and server from different releases may not understand each
+  // other fully: say so, so the user updates one side.
+  const description =
+    serverVersion && versionsDiffer(APP_VERSION, serverVersion)
+      ? `${base} The server runs Methyl ${serverVersion} and this app is ${APP_VERSION}; update the older one.`
+      : base;
 
   return (
     <Item

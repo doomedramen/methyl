@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
+import { LoroDoc } from "loro-crdt";
 import { tmpdir } from "os";
 import { createSyncServer } from "@/lib/server/sync-server";
 import { SyncHost } from "@/lib/browser/sync-host";
@@ -18,8 +19,8 @@ const VAULT = "host-vault";
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "adhd-host-"));
-  wsPort = 23000 + Math.floor(Math.random() * 1000);
-  httpPort = wsPort + 1;
+  wsPort = 0;
+  httpPort = 0;
   server = createSyncServer({
     port: wsPort,
     httpPort,
@@ -28,6 +29,8 @@ beforeAll(async () => {
     saveIntervalMs: 50,
   });
   await server.start();
+  // Bound to OS-assigned ports (0 above), so parallel test files never collide.
+  ({ ws: wsPort, http: httpPort } = server.ports() as { ws: number; http: number });
 });
 
 afterAll(async () => {
@@ -54,7 +57,7 @@ function makeHostOptions(engine: VaultEngine, fs: MemoryVaultFS) {
     fs,
     engine,
     wsUrl: `ws://127.0.0.1:${wsPort}`,
-    httpUrl: `http://127.0.0.1:${httpPort}`,
+    apiUrl: `http://127.0.0.1:${httpPort}/api`,
     authToken: AUTH,
     vaultId: VAULT,
   };
@@ -103,7 +106,7 @@ describe("SyncHost client driver", () => {
     expect(host.journal.getLastServerSeq()).toBeGreaterThan(0);
 
     // Journal was persisted after sync
-    const raw = await fs.readTextFile(".adhd/sync/journal.json");
+    const raw = await fs.readTextFile(".methyl/sync/journal.json");
     expect(raw).toBeTruthy();
   });
 
@@ -310,12 +313,45 @@ function waitFor(check: () => boolean, timeoutMs = 5000, stepMs = 25): Promise<v
   });
 }
 
+describe("live sync (change events)", () => {
+  it("an edit on one running device reaches another running device without a manual sync", async () => {
+    const fsA = new MemoryVaultFS();
+    const a = await makeVaultOn(fsA);
+    const note = a.createDocument(undefined, "live.md", "first line\n");
+    note.doc.commit();
+    const hostA = await SyncHost.create({ ...makeHostOptions(a, fsA), intervalMs: 60_000 });
+    await hostA.sync();
+
+    const fsB = new MemoryVaultFS();
+    const b = await makeVaultOn(fsB);
+    const hostB = await SyncHost.create({ ...makeHostOptions(b, fsB), intervalMs: 60_000 });
+    await hostB.sync();
+    hostB.start();
+    try {
+      expect(b.getDocument(note.id)?.getText("content").toString()).toBe("first line\n");
+
+      a.getDocument(note.id)!.getText("content").insert(0, "live edit\n");
+      a.getDocument(note.id)!.doc.commit();
+      const pushedAt = Date.now();
+      await hostA.sync();
+
+      // No sync() on B: its change stream announces the edit and it runs a
+      // round by itself — well inside the old 15s polling interval.
+      await waitFor(() => b.getDocument(note.id)?.getText("content").toString().startsWith("live edit") ?? false, 10_000);
+      expect(Date.now() - pushedAt).toBeLessThan(5_000);
+    } finally {
+      hostB.stop();
+      hostA.disconnect();
+    }
+  }, 30_000);
+});
+
 describe("SyncHost sees disk edits made after a room has already been joined", () => {
   // A dedicated server (watching a real filesystem tmp vault) rather than
   // the shared in-memory-fs server above: this exercises the actual
-  // watcher -> ServerStore -> live-room-cache path (recordRoomSave /
-  // patchCachedRoomIfLoaded in sync-server.ts), which only matters once a
-  // real .md file gets edited on disk.
+  // watcher -> ServerStore -> live room path (recordRoomSave /
+  // RoomServer.push in sync-server.ts), which only matters once a real .md
+  // file gets edited on disk.
   let tmp: string;
   let diskServer: ReturnType<typeof createSyncServer>;
   let diskWsPort: number;
@@ -325,8 +361,8 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
 
   beforeAll(async () => {
     tmp = mkdtempSync(join(tmpdir(), "adhd-disk-sync-"));
-    diskWsPort = 24500 + Math.floor(Math.random() * 1000);
-    diskHttpPort = diskWsPort + 1;
+    diskWsPort = 0;
+    diskHttpPort = 0;
     diskServer = createSyncServer({
       port: diskWsPort,
       httpPort: diskHttpPort,
@@ -337,6 +373,8 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
       vaultId: DISK_VAULT,
     });
     await diskServer.start();
+    // Bound to OS-assigned ports (0 above), so parallel test files never collide.
+    ({ ws: diskWsPort, http: diskHttpPort } = diskServer.ports() as { ws: number; http: number });
   });
 
   afterAll(async () => {
@@ -354,52 +392,86 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
       fs,
       engine,
       wsUrl: `ws://127.0.0.1:${diskWsPort}`,
-      httpUrl: `http://127.0.0.1:${diskHttpPort}`,
+      apiUrl: `http://127.0.0.1:${diskHttpPort}/api`,
       authToken: DISK_AUTH,
       vaultId: DISK_VAULT,
     });
 
-    // First round: creates the room server-side (so it gets cached in
-    // SimpleServer's in-memory `rooms` Map — see patchCachedRoomIfLoaded's
-    // doc comment) and lets the Node-side vault mirror materialise the .md.
+    // First round: creates the room server-side (so the room server holds
+    // it in memory) and lets the Node-side vault mirror materialise the .md.
     await host.sync();
     await waitFor(() => existsSync(join(tmp, "disk-edit.md")));
 
-    // Baseline change-log position: recordRoomSave patches the live room
-    // cache before recording the change row — waiting for a new "doc" row
-    // therefore proves the cached snapshot is current too, unlike polling
-    // doc text (which can observe the engine mutate independently).
+    // Wait until the server's stored room snapshot holds the disk edit.
+    // recordRoomSave patches the live room cache before it stores the
+    // snapshot, so this also proves a rejoin will see it. (Waiting for "any
+    // new doc change row" raced: the client's own periodic room save from
+    // the first round could land after the baseline and satisfy it early.)
     const roomId = `doc:${doc.id}`;
-    const baselineSeq = Math.max(0, ...diskServer.store.getChangesAfter(0).changes.map((c) => c.seq));
 
     // Edit the file directly on the server's disk, exactly like an external
     // editor would — bypassing the sync protocol entirely.
     writeFileSync(join(tmp, "disk-edit.md"), "original content\nedited on disk\n");
 
     // The watcher chain (chokidar stability window + ingest debounce + an
-    // fs-scanning ingest pass) is normally <1s, but a loaded box (e.g. many
-    // vitest worker processes each running their own real fs watcher and
-    // WebSocket server, as Task A3's 30x `vitest run` flaky-hunt does) can
-    // stretch it well past a tight deadline — poll for it with generous
-    // headroom instead of racing it (same class of flake as the
-    // seeded-vault waits above). Bumped from 10s to 25s after that hunt
-    // reproduced a spurious timeout under heavy parallel load (see
-    // docs/superpowers/plans/2026-09-18-plugins-roadmap.md, Task A3).
-    await waitFor(
-      () =>
-        diskServer.store
-          .getChangesAfter(baselineSeq)
-          .changes.some((c) => c.objectId === roomId && c.type === "doc"),
-      25000,
-    );
+    // fs-scanning ingest pass) is normally <1s, but a loaded box can stretch
+    // it well past a tight deadline, so poll with generous headroom.
+    await waitFor(() => {
+      const snapshot = diskServer.store.getRoom(roomId)?.snapshot;
+      if (!snapshot) return false;
+      return LoroDoc.fromSnapshot(snapshot).getText("content").toString().includes("edited on disk");
+    }, 25000);
 
     // Second sync round: the room was already joined+left once above, so
-    // without patchCachedRoomIfLoaded this would still see the pre-edit
-    // snapshot no matter how many rounds run.
+    // it's still in the room server's memory; RoomServer.push must have
+    // brought the disk edit into it.
     await host.sync();
 
     const clientText = engine.getDocument(doc.id)!.getText("content").toString();
     expect(clientText).toBe("original content\nedited on disk\n");
+
+    host.disconnect();
+  }, 30000);
+
+  it("a client save arriving before the watcher ingests a disk edit merges instead of overwriting it", async () => {
+    const fs = new MemoryVaultFS();
+    const engine = await makeVaultOn(fs);
+    const doc = engine.createDocument(undefined, "race.md", "line one\n");
+    engine.getDocument(doc.id)!.doc.commit();
+
+    const host = await SyncHost.create({
+      fs,
+      engine,
+      wsUrl: `ws://127.0.0.1:${diskWsPort}`,
+      apiUrl: `http://127.0.0.1:${diskHttpPort}/api`,
+      authToken: DISK_AUTH,
+      vaultId: DISK_VAULT,
+    });
+    await host.sync();
+    const file = join(tmp, "race.md");
+    await waitFor(() => existsSync(file) && readFileSync(file, "utf8") === "line one\n");
+
+    // An external editor appends a line; before the watcher's stability and
+    // debounce window has passed, the client edits the same note and syncs.
+    writeFileSync(file, "line one\nfrom disk\n");
+    const text = engine.getDocument(doc.id)!.getText("content");
+    text.insert(0, "from client\n");
+    engine.getDocument(doc.id)!.doc.commit();
+    // Keep syncing, as the app's scheduler does: under load a round can end
+    // before its update is durable, and the next round finishes the job.
+    // Without the fix the disk edit is overwritten, so no number of rounds
+    // brings it back.
+    const converged = () => {
+      const onDisk = readFileSync(file, "utf8");
+      return onDisk.includes("from disk") && onDisk.includes("from client");
+    };
+    const deadline = Date.now() + 25_000;
+    while (!converged() && Date.now() < deadline) {
+      await host.sync();
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(readFileSync(file, "utf8")).toContain("from disk");
+    expect(readFileSync(file, "utf8")).toContain("from client");
 
     host.disconnect();
   }, 30000);
@@ -411,7 +483,7 @@ describe("SyncHost sees disk edits made after a room has already been joined", (
       fs,
       engine,
       wsUrl: `ws://127.0.0.1:${diskWsPort}`,
-      httpUrl: `http://127.0.0.1:${diskHttpPort}`,
+      apiUrl: `http://127.0.0.1:${diskHttpPort}/api`,
       authToken: DISK_AUTH,
       vaultId: DISK_VAULT,
       intervalMs: 60_000,

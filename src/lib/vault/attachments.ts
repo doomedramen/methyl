@@ -180,6 +180,33 @@ export function relativeAttachmentPath(
   ].map(encodePathSegment).join("/");
 }
 
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+  "image/avif": "avif",
+  "image/heic": "heic",
+};
+
+/**
+ * The name to store a pasted file under. Browsers call an image copied from
+ * the screen or another app just `image.png`; those get Obsidian's name,
+ * `Pasted image 20260924153012.png` (local time), so pasted images don't
+ * collide and imported vaults stay consistent. Real file names are kept.
+ */
+export function pastedFileName(file: { name: string; type: string }, now: Date = new Date()): string {
+  const generic = !file.name || /^image\.[a-z0-9]+$/i.test(file.name);
+  if (!generic || !file.type.startsWith("image/")) return file.name || "attachment";
+  const ext = IMAGE_EXTENSIONS[file.type] ?? file.name.split(".").pop() ?? "png";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp =
+    `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+    `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return `Pasted image ${stamp}.${ext}`;
+}
+
 export function attachmentMarkdownLink(
   name: string,
   relativePath: string,

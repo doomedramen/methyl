@@ -1,5 +1,5 @@
 import { FilePlus, LayoutTemplate } from "lucide-react";
-import { Plugin, API_VERSION, type NoteCreationOptions, type PluginManifest } from "@/lib/plugins/api";
+import { Plugin, API_VERSION, insertBlock, type NoteCreationOptions, type PluginManifest } from "@/lib/plugins/api";
 
 export const CORE_TEMPLATES_MANIFEST: PluginManifest = {
   id: "core-templates",
@@ -70,6 +70,15 @@ export class CoreTemplatesPlugin extends Plugin {
       keywords: ["template", "templates", "new", "note"],
       callback: () => this.app.workspace.openDialog("templates:create"),
     });
+    // "/" menu: one entry per template, inserting its text at the cursor.
+    this.registerSlashCommand(() =>
+      this.templates.map((template) => ({
+        id: `template-${template.id}`,
+        label: `Template: ${template.name}`,
+        keywords: ["template", template.name],
+        apply: insertBlock(template.content),
+      })),
+    );
   }
 
   getTemplates(): readonly Template[] {

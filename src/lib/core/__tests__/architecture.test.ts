@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Document, CONTENT_KEY } from "@/lib/core/document";
 import { VaultTree } from "@/lib/vault/tree";
-import { extractIdFromMarkdown, insertIdComment } from "@/lib/core/doc-id";
+import { insertIdComment } from "@/lib/core/doc-id";
 import { sha256Text } from "@/lib/core/hash";
 import { parseMarkdown } from "@/lib/core/markdown";
 import { mergeExternalEdit } from "@/lib/core/merge";
@@ -24,7 +24,6 @@ Hello from the original`,
     );
 
     const snap = base.snapshot();
-    const baseFrontiers = base.frontiers();
 
     // Phone creates its own doc fork
     const phone = Document.fromSnapshot(base.id, snap);
@@ -123,7 +122,7 @@ External: fixed dimensions`;
 
     // Use mergeExternalEdit
     baseCheckpoint.sha256 = ""; // not used by merge
-    const result = mergeExternalEdit(
+    mergeExternalEdit(
       baseDocClone.doc,
       baseCheckpoint,
       externalMd,
@@ -225,12 +224,12 @@ describe("P0.5: concurrent same-name file creation", () => {
     const branch1 = tree.fork();
     const branch2 = tree.fork();
 
-    const node1Id = branch1.addMarkdownDocument(
+    branch1.addMarkdownDocument(
       parent,
       "Report.md",
       "55555555-5555-5555-5555-555555555555",
     );
-    const node2Id = branch2.addMarkdownDocument(
+    branch2.addMarkdownDocument(
       parent,
       "Report.md",
       "66666666-6666-6666-6666-666666666666",
@@ -396,7 +395,7 @@ describe("P0.10: reconnect after compaction", () => {
 describe("Architectural invariants", () => {
   it("A: deleting cache loses no user data", () => {
     // Cache is derived — search index, backlinks, etc.
-    // Deleting .adhd/cache/ just means rebuild from Markdown
+    // Deleting .methyl/cache/ just means rebuild from Markdown
     const doc = Document.fromMarkdown(
       "aaaa-aaaa-aaaa-aaaa-aaaa-aaaa",
       "## Note\nContent",
@@ -582,5 +581,31 @@ describe("Vault tree (§6)", () => {
     // Delete
     tree.delete(doc2);
     expect(tree.children(notes).length).toBe(1);
+  });
+});
+// ── Soft check: file size (spec item 14) ─────────────────────────────
+
+describe("source files stay reviewable", () => {
+  it("lists files over ~600 lines (a warning, not a failure)", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("fs");
+    const { join } = await import("path");
+    const LIMIT = 600;
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) {
+          if (name !== "__tests__") walk(path);
+        } else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) {
+          const lines = readFileSync(path, "utf8").split("\n").length;
+          if (lines > LIMIT) offenders.push(`${path} (${lines})`);
+        }
+      }
+    };
+    walk("src");
+    if (offenders.length > 0) {
+      console.warn(`Files over ${LIMIT} lines — split when next touched:\n  ${offenders.join("\n  ")}`);
+    }
+    expect(Array.isArray(offenders)).toBe(true);
   });
 });

@@ -4,16 +4,16 @@ import { isIgnoredExternalPath, type VaultEngine } from "@/lib/vault/engine";
 
 /**
  * Watches a Node filesystem vault for external Markdown and ordinary-file changes (edits made
- * outside ADHD — another editor, `git checkout`, a sync client writing
+ * outside Methyl — another editor, `git checkout`, a sync client writing
  * directly to disk, etc.) and feeds them through
  * `VaultEngine.ingestExternalChanges()` (SPEC §5, §25, §26).
  *
- * - Ignores `.adhd/**`, tool metadata directories (`.git`, `.obsidian`,
+ * - Ignores `.methyl/**`, tool metadata directories (`.git`, `.obsidian`,
  *   `.trash`, `node_modules`), and `*.tmp` (the atomic-write staging file
  *   every materialize goes through) so bookkeeping never enters the vault.
  * - Ignores the app's *own* `.md` writes too, but via a different
  *   mechanism: every `materializeDocument`/`materializeToTreePath`/
- *   `repairDocument` call updates the sidecar index (`.adhd/index.json`)
+ *   `repairDocument` call updates the sidecar index (`.methyl/index.json`)
  *   with the hash of what it just wrote (see VaultEngine.touchIndexEntry),
  *   so by the time this watcher's debounced ingest runs,
  *   `ingestExternalChanges()` sees the disk content already matches the
@@ -40,22 +40,25 @@ export interface VaultWatcherOptions {
   onIngested?: (report: Awaited<ReturnType<VaultEngine["ingestExternalChanges"]>>) => void;
 }
 
+export type VaultWatcher = FSWatcher & {
+  /**
+   * Ingest external changes now instead of after the debounce, resolving
+   * once a pass that started after this call has finished. Callers about
+   * to overwrite a file on disk use this so an external edit that is still
+   * inside the watcher's stability/debounce window is merged, not lost.
+   */
+  ingestNow(): Promise<void>;
+};
+
 export function watchVaultForExternalChanges(
   options: VaultWatcherOptions,
-): FSWatcher {
+): VaultWatcher {
   const { vaultPath, engine, debounceMs = 300, onRoomUpdate, onAssetUpdate, onError, onIngested } =
     options;
 
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let running = false;
-  let pendingWhileRunning = false;
 
-  const runIngest = async () => {
-    if (running) {
-      pendingWhileRunning = true;
-      return;
-    }
-      running = true;
+  const ingestOnce = async () => {
     try {
       const folders = await engine.ingestExternalFolders();
       const report = await engine.ingestExternalChanges();
@@ -99,18 +102,31 @@ export function watchVaultForExternalChanges(
       }
     } catch (err) {
       onError?.(err);
-    } finally {
-      running = false;
-      if (pendingWhileRunning) {
-        pendingWhileRunning = false;
-        void runIngest();
-      }
     }
+  };
+
+  // Passes never overlap. A request that arrives while one is running
+  // queues exactly one follow-up pass, shared by every request made before
+  // it starts — so a change is always seen by a pass that began after it.
+  let chain: Promise<void> = Promise.resolve();
+  let queued: Promise<void> | null = null;
+  const runIngest = (): Promise<void> => {
+    if (queued) return queued;
+    const next = chain.then(async () => {
+      queued = null;
+      await ingestOnce();
+    });
+    queued = next;
+    chain = next;
+    return next;
   };
 
   const schedule = () => {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void runIngest(), debounceMs);
+    timer = setTimeout(() => {
+      timer = null;
+      void runIngest();
+    }, debounceMs);
   };
 
   const watcher = chokidar.watch(vaultPath, {
@@ -126,5 +142,13 @@ export function watchVaultForExternalChanges(
     .on("addDir", schedule)
     .on("unlinkDir", schedule);
 
-  return watcher;
+  return Object.assign(watcher, {
+    ingestNow: () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      return runIngest();
+    },
+  });
 }

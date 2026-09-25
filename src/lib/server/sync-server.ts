@@ -1,4 +1,7 @@
-import { SimpleServer, type SimpleServerConfig } from "loro-websocket/server";
+import { migrateLegacyMetaDirOnDisk } from "@/lib/server/meta-migration";
+import { META_DIR } from "@/lib/core/paths";
+import { RoomServer, type RoomClientInfo } from "@/lib/server/room-server";
+import { TREE_VAULT_ID } from "@/lib/sync/rooms";
 import { CrdtType } from "loro-protocol";
 import { LoroDoc, type TreeID } from "loro-crdt";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
@@ -6,14 +9,19 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync,
 import { promises as fsPromises } from "fs";
 import { join } from "path";
 import { createHash, randomUUID } from "crypto";
-import type { FSWatcher } from "chokidar";
 import { ServerStore } from "@/lib/server/store";
 import { NodeFSStore, NodeVaultTreeStore } from "@/lib/server/fs-store";
 import { VaultEngine, buildPathFromNode } from "@/lib/vault/engine";
-import { watchVaultForExternalChanges } from "@/lib/server/vault-watcher";
+import { watchVaultForExternalChanges, type VaultWatcher } from "@/lib/server/vault-watcher";
+import { AuthLimiter, bearerMatches, clientAddress, isValidObjectId, parseSeq, safeEqual } from "@/lib/server/auth";
 
 export interface SyncServerOptions {
-  port: number;
+  /**
+   * Listen for sync WebSockets on this port (tests; 0 = any free port).
+   * Leave unset when the caller routes upgrades itself — src/server/main.ts
+   * hands its own server's upgrades to `rooms.handleUpgrade`.
+   */
+  port?: number;
   httpPort?: number;
   host?: string;
   vaultPath: string;
@@ -26,6 +34,17 @@ export interface SyncServerOptions {
    */
   watch?: boolean;
   vaultId?: string;
+  /** Failed-auth limiter shared with the HTTP API (spec item 4). */
+  limiter?: AuthLimiter;
+  /** Key the limiter on X-Forwarded-For (METHYL_TRUST_PROXY). */
+  trustProxy?: boolean;
+  /**
+   * Decide a room join's auth payload (VaultHost: admin token or a ticket
+   * for this vault; it may set `client.principal`). Default: the admin token.
+   */
+  authorizeJoin?: (token: string, client: RoomClientInfo) => boolean;
+  /** A sync connection closed. */
+  onClientClosed?: (client: RoomClientInfo) => void;
 }
 
 /**
@@ -48,6 +67,28 @@ export interface HttpApiOptions {
   authToken: string;
   assetDir: string;
   onAssetPut?: (assetId: string, digest: string) => void | Promise<void>;
+  /** Failed-auth limiter; share one across every authenticated entry point. */
+  limiter?: AuthLimiter;
+  /** Honour X-Forwarded-For when keying the limiter (METHYL_TRUST_PROXY). */
+  trustProxy?: boolean;
+  /** Largest accepted asset upload, in bytes. */
+  maxAssetBytes?: number;
+  /**
+   * Authenticate a request, answering it (401/403/429) when refused.
+   * Default: the admin bearer token, through the limiter.
+   */
+  authorize?: (req: IncomingMessage, res: ServerResponse) => boolean;
+}
+
+/** Decode one URL path segment, or null when it is malformed or not a valid ID. */
+function decodeObjectId(segment: string): string | null {
+  let id: string;
+  try {
+    id = decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+  return isValidObjectId(id) ? id : null;
 }
 
 async function streamUpload(
@@ -112,25 +153,71 @@ async function streamUpload(
  * - GET  /api/rooms                    → room + durable summaries
  */
 export function createHttpApi(options: HttpApiOptions) {
-  const { store, authToken, assetDir, onAssetPut } = options;
+  const { store, authToken, assetDir, onAssetPut, maxAssetBytes } = options;
+  const limiter = options.limiter ?? new AuthLimiter();
+  const trustProxy = options.trustProxy ?? false;
+
+  const authorize = options.authorize ?? ((req: IncomingMessage, res: ServerResponse): boolean => {
+    const client = clientAddress(req, trustProxy);
+    const retryAfter = limiter.retryAfterMs(client);
+    if (retryAfter > 0) {
+      res.setHeader("retry-after", String(Math.ceil(retryAfter / 1000)));
+      sendJson(res, 429, { error: "too many failed attempts" });
+      return false;
+    }
+    if (!bearerMatches(req.headers["authorization"], authToken)) {
+      limiter.recordFailure(client);
+      sendJson(res, 401, { error: "unauthorized" });
+      return false;
+    }
+    limiter.recordSuccess(client);
+    return true;
+  });
 
   return (req: IncomingMessage, res: ServerResponse): void => {
-    if (req.headers["authorization"] !== `Bearer ${authToken}`) {
-      sendJson(res, 401, { error: "unauthorized" });
+    if (!authorize(req, res)) return;
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    // Served at /api/<route> or, per vault, /api/v/<vaultId>/<route>
+    // (VaultHost picks the vault; the routes are the same).
+    const pathname = url.pathname.replace(/^\/api\/v\/[^/]+(?=\/)/, "/api");
+
+    if (req.method === "GET" && pathname === "/api/events") {
+      // Server-Sent Events: one `data: {"seq":N}` per recorded change, so
+      // clients sync at once instead of waiting for their next poll.
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+        // Tell nginx-style proxies not to buffer the stream.
+        "x-accel-buffering": "no",
+      });
+      res.write(": connected\n\n");
+      const off = store.onChange((seq) => res.write(`data: {"seq":${seq}}\n\n`));
+      const keepalive = setInterval(() => res.write(": keepalive\n\n"), 25_000);
+      req.on("close", () => {
+        off();
+        clearInterval(keepalive);
+      });
       return;
     }
 
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const { pathname } = url;
-
     if (req.method === "GET" && pathname === "/api/changes") {
-      const after = Number(url.searchParams.get("after") ?? "0");
-      sendJson(res, 200, store.getChangesAfter(Number.isNaN(after) ? 0 : after));
+      const after = parseSeq(url.searchParams.get("after"));
+      if (after === null) {
+        sendJson(res, 400, { error: "invalid after" });
+        return;
+      }
+      sendJson(res, 200, store.getChangesAfter(after));
       return;
     }
 
     if (req.method === "GET" && pathname.startsWith("/api/durable/")) {
-      const roomId = decodeURIComponent(pathname.slice("/api/durable/".length));
+      const roomId = decodeObjectId(pathname.slice("/api/durable/".length));
+      if (roomId === null) {
+        sendJson(res, 400, { error: "invalid room id" });
+        return;
+      }
       const vv = store.getDurableVersion(roomId);
       if (!vv) {
         sendJson(res, 404, { error: "room unknown" });
@@ -141,8 +228,12 @@ export function createHttpApi(options: HttpApiOptions) {
     }
 
     if (req.method === "PUT" && pathname.startsWith("/api/assets/")) {
-      const id = decodeURIComponent(pathname.slice("/api/assets/".length));
-      void streamUpload(req, assetDir)
+      const id = decodeObjectId(pathname.slice("/api/assets/".length));
+      if (id === null) {
+        sendJson(res, 400, { error: "invalid asset id" });
+        return;
+      }
+      void streamUpload(req, assetDir, maxAssetBytes)
         .then(({ digest, size }) => {
           const current = store.getAssetMeta(id);
           if (current?.sha256 === digest && current.size === size) {
@@ -173,7 +264,11 @@ export function createHttpApi(options: HttpApiOptions) {
     }
 
     if ((req.method === "GET" || req.method === "HEAD") && pathname.startsWith("/api/assets/")) {
-      const id = decodeURIComponent(pathname.slice("/api/assets/".length));
+      const id = decodeObjectId(pathname.slice("/api/assets/".length));
+      if (id === null) {
+        sendJson(res, 400, { error: "invalid asset id" });
+        return;
+      }
       const meta = store.getAssetMeta(id);
       if (!meta) {
         sendJson(res, 404, { error: "asset unknown" });
@@ -213,78 +308,30 @@ export function createHttpApi(options: HttpApiOptions) {
 }
 
 /**
- * loro-websocket's SimpleServer caches a room's decoded document forever
- * once first loaded: `getOrCreateRoomDocument`
- * (node_modules/loro-websocket/dist/server/index.js:587-608) returns the
- * cached `this.rooms.get(roomKey)` entry immediately if present, and
- * nothing ever deletes from `this.rooms` — not `handleLeave` (:576-580,
- * only clears the per-*client* `rooms`/`permissions` sets) nor
- * `handleDisconnect` (:581-586, same). `onLoadDocument` therefore only
- * ever runs the *first* time any client joins a room for this server's
- * process lifetime.
+ * Feed `data` (a full room snapshot, as the room server's save hands us)
+ * into the durable-version/discovery bookkeeping ServerStore maintains —
+ * shared by the client-save path and the watcher's ingest-derived changes,
+ * so a discovering/reconnecting client sees either kind the same way.
  *
- * That's the gap behind "external disk edit doesn't reach a client that
- * re-syncs": the vault watcher's ingest writes the merged bytes into
- * ServerStore/SQLite (via this function) but a client's subsequent
- * join/rejoin calls `getOrCreateRoomDocument`, which — once the room has
- * been touched by any client at all — hits the cache and never calls
- * `onLoadDocument` again, so it keeps serving the pre-edit snapshot no
- * matter how many discovery-poll rounds run.
- *
- * There's no public API to push an update into an already-cached room
- * (the class comment on `createSyncServer` below already noted this for
- * *live* push to already-open rooms), but `SimpleServer.rooms` is a plain,
- * unencapsulated `Map` field — reaching in and overwriting the cached
- * entry's `data` in place is the only way to make a rejoin see it. This is
- * safe: `data` is always a full LoroDoc snapshot (the same shape
- * `onSaveDocument`/`onLoadDocument` already exchange, and what
- * `durableVersionOf` already treats as the comparison unit for §20), and
- * every snapshot passed here is produced by importing into the *same*
- * engine Document/tree that both directions (client save, disk ingest)
- * share — so it's always a merge-superset of whatever was cached, never a
- * regression.
- */
-function patchCachedRoomIfLoaded(
-  server: SimpleServer,
-  roomId: string,
-  data: Uint8Array,
-): void {
-  const rooms = (server as unknown as { rooms: Map<string, { data: Uint8Array }> }).rooms;
-  const roomKey = `${roomId}:${CrdtType.Loro}`;
-  const cached = rooms.get(roomKey);
-  if (cached) cached.data = data;
-}
-
-/**
- * Feed `data` (a full room snapshot, as SimpleServer's onSaveDocument
- * hands us) into the durable-version/discovery bookkeeping ServerStore
- * already maintains for the WS relay — shared by both the normal
- * client-save path and the watcher's ingest-derived changes, so a
- * discovering/reconnecting client sees either kind of change the same way.
- *
- * `liveServer`, when given, also patches SimpleServer's in-memory room
- * cache (see patchCachedRoomIfLoaded) so a client that already joined this
- * room once — and so would otherwise never trigger a fresh
- * `onLoadDocument` — sees this update on its next join/rejoin instead of a
- * stale cached snapshot.
+ * `rooms`, when given, also pushes the update into the live room, which
+ * merges it and sends it to every client in the room right away (a change
+ * made on the server, e.g. an ingested disk edit).
  */
 function recordRoomSave(
   store: ServerStore,
   roomId: string,
   data: Uint8Array,
   type: "doc" | "tree",
-  liveServer?: SimpleServer,
+  rooms?: RoomServer,
 ): void {
   const seq = store.getNextSeq();
   const room = store.getRoom(roomId);
   const newServerSeq = (room?.serverSeq ?? 0) + 1;
   const vvBytes = durableVersionOf(data);
-  // loro-websocket's parseRoomKey produces NaN for string crdt types
-  // ("%LOR"), and this doesn't otherwise need it: this server persists
-  // Loro rooms only, so bind the CrdtType.Loro literal directly.
+  // This server persists Loro rooms only.
   store.upsertRoom(roomId, CrdtType.Loro, Buffer.from(data), Buffer.from(vvBytes), newServerSeq);
-  if (liveServer) patchCachedRoomIfLoaded(liveServer, roomId, data);
-  // Publish discovery only after the live cache is current. Otherwise a
+  rooms?.push(roomId, data);
+  // Publish discovery only after the live room is current. Otherwise a
   // reconnecting client can observe the change row, rejoin the room, and
   // still receive the pre-ingest snapshot.
   store.recordChange(seq, roomId, type === "tree" ? "tree" : "doc");
@@ -306,19 +353,20 @@ function recordAssetSave(
 }
 
 export function createSyncServer(options: SyncServerOptions) {
-  const store = new ServerStore(`${options.vaultPath}/.adhd/server/sync.sqlite`);
-  const assetDir = `${options.vaultPath}/.adhd/server/assets`;
-  const vaultId = options.vaultId ?? "local";
+  migrateLegacyMetaDirOnDisk(options.vaultPath);
+  const store = new ServerStore(`${options.vaultPath}/${META_DIR}/server/sync.sqlite`);
+  const assetDir = `${options.vaultPath}/${META_DIR}/server/assets`;
+  const vaultId = options.vaultId ?? TREE_VAULT_ID;
   const treeRoomId = `vault:${vaultId}`;
 
   /**
    * Node-side vault mirror (SPEC §5, §10, §11, §25/§26): a VaultEngine
-   * over `.adhd/crdt/**` at `options.vaultPath`, kept as a *derived mirror*
+   * over `.methyl/crdt/**` at `options.vaultPath`, kept as a *derived mirror*
    * of the relay state ServerStore/SQLite already holds — SQLite
-   * (`.adhd/server/sync.sqlite`) stays the sync protocol's source of truth
+   * (`.methyl/server/sync.sqlite`) stays the sync protocol's source of truth
    * (durable versions, discovery, `/api/changes`), unchanged from before
    * this integration, so the tested client-sync path has zero regression
-   * risk. The engine's fs-store is the ONLY writer to `.adhd/crdt/**` —
+   * risk. The engine's fs-store is the ONLY writer to `.methyl/crdt/**` —
    * nothing else in this server touches that directory, so there is no
    * two-writer conflict.
    *
@@ -332,20 +380,15 @@ export function createSyncServer(options: SyncServerOptions) {
    *   2. disk -> server: watchVaultForExternalChanges ingests an
    *      externally-edited/moved/new/deleted .md (safety rails from
    *      VaultEngine.ingestExternalChanges apply — never touches
-   *      .adhd/crdt, never mass-deletes) and the resulting CRDT bytes are
+   *      .methyl/crdt, never mass-deletes) and the resulting CRDT bytes are
    *      fed back into ServerStore via recordRoomSave, i.e. exactly the
    *      same durable-version/discovery bookkeeping a client's own save
-   *      would produce. `SimpleServer` (loro-websocket) exposes no public
-   *      API to push a live update into an already-open room — its
-   *      broadcast is internal to its own client-update handling — so an
-   *      externally-made change reaches already-connected clients the same
-   *      way a second vault already picks up a first vault's notes in this
-   *      codebase's tests: via discovery polling
-   *      (GET /api/changes?after=...), not an instant push. A live push
-   *      would need a change inside loro-websocket itself.
+   *      would produce. recordRoomSave also pushes it into the live room
+   *      (RoomServer.push), and the change stream (/api/events) tells idle
+   *      clients to sync, so the edit reaches them at once.
    */
   let engine: VaultEngine | null = null;
-  let watcher: FSWatcher | null = null;
+  let watcher: VaultWatcher | null = null;
   let bootReconciling = false;
   let mirrorWriteChain: Promise<void> = Promise.resolve();
 
@@ -360,7 +403,7 @@ export function createSyncServer(options: SyncServerOptions) {
    * later save in the same round (see the doc branch of onSaveDocument).
    * The tree branch drains this once it has imported the node, so a stale
    * doc never blocks the save pipeline (that used to deadlock the whole
-   * relay: SimpleServer pipelines saves through the same handler).
+   * relay, whose saves ran through the same handler one after another).
    */
   const pendingDocMirrors = new Set<string>();
 
@@ -397,32 +440,30 @@ export function createSyncServer(options: SyncServerOptions) {
     await eng.writeAttachment(node.treeId, bytes);
   }
 
-  const config: SimpleServerConfig = {
-    port: options.port,
-    host: options.host ?? "0.0.0.0",
-    saveInterval: options.saveIntervalMs ?? 500,
+  const limiter = options.limiter ?? new AuthLimiter();
+  const rooms = new RoomServer({
+    saveIntervalMs: options.saveIntervalMs ?? 500,
+    clientAddress: (req) => clientAddress(req, options.trustProxy ?? false),
+    onClientClosed: options.onClientClosed,
 
-    authenticate: async (
-      _roomId: string,
-      _crdtType: CrdtType,
-      auth: Uint8Array,
-    ) => {
+    authenticate: async (roomId, auth, client) => {
+      if (!isValidObjectId(roomId)) return null;
+      if (limiter.retryAfterMs(client.address) > 0) return null;
       const token = new TextDecoder().decode(auth);
-      if (token !== options.authToken) return null;
+      const allowed = options.authorizeJoin
+        ? options.authorizeJoin(token, client)
+        : safeEqual(token, options.authToken);
+      if (!allowed) {
+        limiter.recordFailure(client.address);
+        return null;
+      }
+      limiter.recordSuccess(client.address);
       return "write";
     },
 
-    onLoadDocument: async (roomId: string, _crdtType: CrdtType) => {
-      const room = store.getRoom(roomId);
-      if (room && room.snapshot) return room.snapshot;
-      return null;
-    },
+    load: (roomId) => store.getRoom(roomId)?.snapshot ?? null,
 
-    onSaveDocument: async (
-      roomId: string,
-      _crdtType: CrdtType,
-      data: Uint8Array,
-    ) => {
+    save: (roomId, data) => {
       const isTree = roomId === treeRoomId || roomId.startsWith("vault:");
       recordRoomSave(store, roomId, data, isTree ? "tree" : "doc");
 
@@ -431,10 +472,13 @@ export function createSyncServer(options: SyncServerOptions) {
       // reconcile — that pass is establishing the mirror's starting state,
       // not reacting to a save.
       if (bootReconciling) return;
-      // SimpleServer can save the tree and a document concurrently. Keep
-      // the derived filesystem mirror single-writer so its fixed atomic
+      // The tree and a document can be saved back to back. Keep the
+      // derived filesystem mirror single-writer so its fixed atomic
       // temp paths and sidecar index cannot race each other.
-      return enqueueMirrorWrite(async () => {
+      //
+      // Not awaited: the durable record above is what clients wait on (§20);
+      // the disk mirror follows in its own queue.
+      void enqueueMirrorWrite(async () => {
         const eng = await ensureEngine();
         if (isTree) {
           eng.tree.doc.import(data);
@@ -447,6 +491,9 @@ export function createSyncServer(options: SyncServerOptions) {
           // owns.
           const renamed = await eng.resolveTreeNameCollisions();
           await eng.persistTreeIncremental();
+          // Deleted, renamed and moved notes: the vault folder follows now,
+          // not at the next restart.
+          await eng.applyTreeToDisk();
           for (const node of eng.tree.allNodes()) {
             if (node.kind !== "binary") continue;
             const meta = store.getAssetMeta(String(node.treeId));
@@ -463,13 +510,21 @@ export function createSyncServer(options: SyncServerOptions) {
             // reaches every client (including this one) via the normal
             // discovery-poll + rejoin path.
             eng.tree.doc.commit();
-            recordRoomSave(store, roomId, eng.tree.doc.export({ mode: "snapshot" }), "tree", server);
+            recordRoomSave(store, roomId, eng.tree.doc.export({ mode: "snapshot" }), "tree", rooms);
           }
           return;
         }
         if (roomId.startsWith("doc:")) {
           const docId = roomId.slice(4);
           await eng.importDocumentUpdate(docId, data);
+          // Persisting below rewrites this note's file. If the file was
+          // edited on disk and the watcher hasn't ingested it yet (it waits
+          // for writes to settle, then debounces), ingest it now: the edit
+          // is three-way merged into the CRDT, which already holds the
+          // client's bytes, and published — instead of being overwritten.
+          if (watcher && (await eng.hasPendingExternalEdit(docId))) {
+            await watcher.ingestNow();
+          }
           await eng.persistDocumentIncremental(docId);
           // Materialize the .md. The mirror tree can lag here: the client's
           // tree room is saved in the SAME round, but its onSaveDocument
@@ -484,11 +539,11 @@ export function createSyncServer(options: SyncServerOptions) {
             pendingDocMirrors.add(docId);
           }
         }
-      });
+      }).catch((error) => console.error("[sync-server] vault mirror write failed:", error));
     },
-  };
-
-  const server = new SimpleServer(config);
+  });
+  // Standalone sync WebSocket listener, when a port was given (tests).
+  let wsHttp: Server | null = null;
   // The in-process host (src/server/main.ts) routes /api/* itself, so its
   // own HTTP API server must NOT be created here. Tests that want the API
   // on a known port pass `httpPort` explicitly.
@@ -496,10 +551,25 @@ export function createSyncServer(options: SyncServerOptions) {
   let http: Server | null = null;
 
   return {
-    server,
+    /** The sync room server; route WebSocket upgrades to `rooms.handleUpgrade`. */
+    rooms,
     store,
+    /** Mirror an uploaded asset into the vault folder (the HTTP API's onAssetPut). */
+    materializeAsset: materializeServerAsset,
     /** The Node-side VaultEngine mirror, once start() has created it. */
     getEngine: () => engine,
+    /**
+     * Ports actually bound after start() — pass 0 for `port`/`httpPort` to
+     * let the OS pick free ones (tests do, so parallel runs never collide).
+     */
+    ports: (): { ws: number; http: number | undefined } => {
+      const wsAddress = wsHttp?.address();
+      const httpAddress = http?.address();
+      return {
+        ws: typeof wsAddress === "object" && wsAddress ? wsAddress.port : (options.port ?? 0),
+        http: typeof httpAddress === "object" && httpAddress ? httpAddress.port : httpPort,
+      };
+    },
     start: async () => {
       const eng = await ensureEngine();
 
@@ -536,7 +606,7 @@ export function createSyncServer(options: SyncServerOptions) {
       ]);
       for (const docId of bootDocIds) {
         const doc = eng.getDocument(docId);
-        if (doc) recordRoomSave(store, `doc:${docId}`, doc.snapshot(), "doc", server);
+        if (doc) recordRoomSave(store, `doc:${docId}`, doc.snapshot(), "doc", rooms);
       }
       const bootTreeChanged =
         bootIngest.moved.length > 0 ||
@@ -546,7 +616,7 @@ export function createSyncServer(options: SyncServerOptions) {
         (bootIngest.foldersCreated?.length ?? 0) > 0 ||
         bootAssetIds.size > 0;
       if (bootTreeChanged) {
-        recordRoomSave(store, treeRoomId, eng.tree.snapshot(), "tree", server);
+        recordRoomSave(store, treeRoomId, eng.tree.snapshot(), "tree", rooms);
       }
       // A previous process may have received the asset bytes before the
       // ordinary Attachments/ file was materialised, or the file may have
@@ -581,13 +651,9 @@ export function createSyncServer(options: SyncServerOptions) {
             }
           },
           onRoomUpdate: (roomId, update) => {
-            // "Broadcast" here means: make it visible to discovery/reconnect
-            // (see the class doc above) — there is no live-push API. Pass
-            // `server` so an already-cached room (see recordRoomSave /
-            // patchCachedRoomIfLoaded) also gets patched in place — without
-            // this, a client that already joined the room once would never
-            // see this external edit, no matter how many times it re-syncs.
-            recordRoomSave(store, roomId, update, roomId.startsWith("vault:") ? "tree" : "doc", server);
+            // Record it for discovery and push it into the live room, so
+            // clients in the room get it now and later joins see it too.
+            recordRoomSave(store, roomId, update, roomId.startsWith("vault:") ? "tree" : "doc", rooms);
           },
           onAssetUpdate: (assetId, bytes) => {
             recordAssetSave(store, assetDir, assetId, bytes);
@@ -602,7 +668,12 @@ export function createSyncServer(options: SyncServerOptions) {
         await new Promise<void>((resolve) => watcher!.once("ready", resolve));
       }
 
-      await server.start();
+      rooms.start();
+      if (options.port !== undefined) {
+        wsHttp = createServer();
+        rooms.attach(wsHttp);
+        await new Promise<void>((resolve) => wsHttp!.listen(options.port, options.host ?? "0.0.0.0", resolve));
+      }
       if (httpPort !== undefined) {
         http = createServer(
           createHttpApi({
@@ -621,7 +692,17 @@ export function createSyncServer(options: SyncServerOptions) {
         await watcher.close();
         watcher = null;
       }
-      await server.stop();
+      // The room server's final save queues disk-mirror writes; let them
+      // and the engine's debounced cache write finish, so nothing writes
+      // into the vault after stop() resolves (process exit, or a caller
+      // removing the folder).
+      await rooms.stop();
+      await mirrorWriteChain;
+      await engine?.flushIndexes();
+      if (wsHttp) {
+        await new Promise<void>((resolve) => wsHttp!.close(() => resolve()));
+        wsHttp = null;
+      }
       if (http) {
         await new Promise<void>((resolve, reject) => {
           http!.close((err) => (err ? reject(err) : resolve()));

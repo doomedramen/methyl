@@ -1,6 +1,6 @@
 import { LoroDoc, LoroTree, LoroMap, type OpId, type TreeID } from "loro-crdt";
-import type { NodeKind, TreeNodeMeta } from "@/lib/core/types";
-import { sanitizeName, normalizeName, uniqueName } from "@/lib/core/paths";
+import type { NodeKind } from "@/lib/core/types";
+import { sanitizeName, uniqueName } from "@/lib/core/paths";
 
 export const TREE_KEY = "vault-tree";
 
