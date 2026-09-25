@@ -95,6 +95,10 @@ certificate (Caddy, Traefik, nginx) or expose it through Tailscale.
 docker compose pull && docker compose up -d
 ```
 
+`latest` is the newest release (see [CHANGELOG.md](CHANGELOG.md)); pin a version such as
+`0.1` to stay on a release line, or use `edge` for the current `main`. The running version is
+shown at the bottom of the status popover and in `/healthz`.
+
 **Backup:** the server can back itself up while it runs. The backup is a folder holding the
 whole vault — notes, attachments and the `.methyl/` metadata that lets devices resume sync
 without a full resend — with the sync database copied through SQLite's online backup, so

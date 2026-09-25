@@ -248,6 +248,8 @@ OPFS root
 
 **Acceptance.** An image built from a tag reports that tag in the UI and `/healthz`.
 
+**As built.** `scripts/app-version.mjs` is the one source: `NEXT_PUBLIC_APP_VERSION` if set, else the `v*` tag on HEAD, else `0.0.0-<short sha>`. `next.config.ts` inlines it into the app, and `scripts/build-server.mjs` (which replaces the inline esbuild command) into the server. The workflow computes it and passes it as the `APP_VERSION` build arg; `latest` is only set for `v*` tags without a pre-release suffix. The version shows under *Copy diagnostics* in the status popover (with the server's when it differs), in the diagnostics summary, in `/healthz` and in the startup log. `src/lib/core/version.ts` warns in the Sync row when two releases differ in major.minor (untagged `0.0.0-*` builds never warn). `CHANGELOG.md` has the 0.1.0 entry. **Not done here: the `v0.1.0` tag itself.** It belongs on `main` after this branch is merged, and pushing it publishes a release image, so it's left to the maintainer.
+
 ### 5.4 Finish the rename from "adhd" (item 13)
 
 **Problem.** The old name remains in `package.json` (`"name": "adhd"`), the `.adhd/` metadata directory (reserved in `src/lib/core/paths.ts:38` and referenced in about 20 modules), the `adhd-vault` OPFS root, the `adhd-name`, `adhd-sync-config` and `adhd.sidebar.collapsedFolders` storage keys, the `cm-adhd-*` CSS classes, `adhdEditorExtensions`, and the SPEC.md title and environment variable names.

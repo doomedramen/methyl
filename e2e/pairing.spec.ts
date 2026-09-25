@@ -40,11 +40,23 @@ async function storedAnywhere(page: Page, secret: string): Promise<string[]> {
       }
       db.close();
     }
+    // The app keeps writing while this walks (atomic writes rename temp
+    // files away), so an entry can vanish between listing and reading.
     const walk = async (dir: FileSystemDirectoryHandle, path: string) => {
-      for await (const [name, handle] of (dir as unknown as AsyncIterable<[string, FileSystemHandle]>)) {
+      const entries: [string, FileSystemHandle][] = [];
+      try {
+        for await (const entry of (dir as unknown as AsyncIterable<[string, FileSystemHandle]>)) entries.push(entry);
+      } catch {
+        return;
+      }
+      for (const [name, handle] of entries) {
         const child = `${path}/${name}`;
-        if (handle.kind === "directory") await walk(handle as FileSystemDirectoryHandle, child);
-        else if ((await (await (handle as FileSystemFileHandle).getFile()).text()).includes(secret)) found.push(`opfs:${child}`);
+        try {
+          if (handle.kind === "directory") await walk(handle as FileSystemDirectoryHandle, child);
+          else if ((await (await (handle as FileSystemFileHandle).getFile()).text()).includes(secret)) found.push(`opfs:${child}`);
+        } catch {
+          // gone since it was listed
+        }
       }
     };
     await walk(await navigator.storage.getDirectory(), "");

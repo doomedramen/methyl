@@ -29,6 +29,7 @@ import { TREE_VAULT_ID } from "@/lib/sync/rooms";
 import {
   clearSyncConfig,
   deriveSyncUrls,
+  fetchServerVersion,
   fetchSyncTicket,
   loadSyncConfig,
   pairDevice,
@@ -48,6 +49,8 @@ export interface SyncContextValue {
   save: (config: SyncConfig) => void;
   disconnect: () => void;
   testConnection: (config: SyncConfig) => ReturnType<typeof testSyncConnection>;
+  /** The sync server's version, once known. */
+  serverVersion: string | null;
 }
 
 const SyncContext = createContext<SyncContextValue | null>(null);
@@ -71,6 +74,7 @@ export function SyncProvider({
   const [config, setConfig] = useState<SyncConfig | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ kind: "idle" });
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
   const hostRef = useRef<SyncHostType | null>(null);
   const onRemoteChangeRef = useRef(onRemoteChange);
   useEffect(() => {
@@ -188,6 +192,25 @@ export function SyncProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canSync, engine, config?.serverUrl, config?.remoteVaultId, config?.authToken]);
 
+  // The server's version, to show it and warn when it and the app differ.
+  // Re-read after each successful round: the server may have been updated.
+  const synced = status.kind === "synced";
+  useEffect(() => {
+    let cancelled = false;
+    const url = config?.serverUrl;
+    if (!url) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setServerVersion(null);
+      return;
+    }
+    void fetchServerVersion(url).then((version) => {
+      if (!cancelled) setServerVersion(version);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [config?.serverUrl, synced]);
+
   // Reconnect promptly on network/visibility signals rather than waiting for
   // the next backoff-scheduled attempt.
   useEffect(() => {
@@ -229,8 +252,9 @@ export function SyncProvider({
       save,
       disconnect,
       testConnection: testSyncConnection,
+      serverVersion,
     }),
-    [config, status, canSync, dialogOpen, save, disconnect],
+    [config, status, canSync, dialogOpen, save, disconnect, serverVersion],
   );
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;

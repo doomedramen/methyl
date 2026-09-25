@@ -41,9 +41,9 @@ described in README.md and SPEC.md §33.
 - [x] **Sync token is stored in `localStorage`.** Done: browsers pair once with
       the admin token (SPEC §31) and are then signed in by an HttpOnly cookie;
       sync sockets join with 60-second tickets. Stored tokens are migrated.
-- [ ] **No release tag**, so no version is shown anywhere and the diagnostics
-      summary reports `NEXT_PUBLIC_APP_VERSION` only if it's set at build time.
-      `latest` currently tracks `main`.
+- [ ] **No release tag yet.** Versioning is in place (the app, diagnostics and
+      `/healthz` report the tag or `0.0.0-<sha>`; `latest` follows releases; see
+      CHANGELOG.md). What's left: tag `v0.1.0` on `main` once this work is merged.
 - [ ] **Upstream bug not reported:** `loro-codemirror`'s `LoroSyncPluginValue`
       swallows the first view update when the initial content already matches
       (worked around in `NoteEditor.tsx`). Repro: `loro-codemirror-swallow.test.ts`.

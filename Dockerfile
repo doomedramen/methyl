@@ -16,11 +16,17 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci
 
 FROM deps AS build
 WORKDIR /app
+# The version the app and server report: the release tag, or 0.0.0-<sha>
+# (the workflow passes it; .git isn't in the build context).
+ARG APP_VERSION=""
+ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
 COPY . .
 RUN npm run build && npm run build:server
 
 FROM node:24-bookworm-slim AS runtime
+ARG APP_VERSION=""
 LABEL org.opencontainers.image.title="Methyl" \
+      org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.description="Self-hostable, offline-first Markdown vault" \
       org.opencontainers.image.source="https://github.com/doomedramen/methyl" \
       org.opencontainers.image.licenses="MIT"

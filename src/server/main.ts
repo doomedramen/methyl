@@ -5,6 +5,7 @@ import next from "next";
 import { VaultHost } from "@/lib/server/vault-host";
 import { AuthLimiter, clientAddress } from "@/lib/server/auth";
 import { runBackupCommand } from "./backup";
+import { APP_VERSION } from "@/lib/core/version";
 
 const PORT = Number(process.env.METHYL_PORT ?? 8080);
 const HOST = process.env.METHYL_HOST ?? "0.0.0.0";
@@ -100,7 +101,9 @@ async function main() {
     }
 
     if (url.pathname === "/healthz") {
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, methyl: true }));
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ ok: true, methyl: true, version: APP_VERSION }));
       return;
     }
 
@@ -125,7 +128,7 @@ async function main() {
 
   await new Promise<void>((resolve) => server.listen(PORT, HOST, resolve));
   console.log(
-    `[methyl] listening on http://${HOST}:${PORT} ` +
+    `[methyl] ${APP_VERSION} listening on http://${HOST}:${PORT} ` +
       (VAULTS_PATH ? `(vaults: ${VAULTS_PATH})` : `(vault: ${VAULT_PATH})`),
   );
 

@@ -134,6 +134,21 @@ export async function listServerVaults(
 
 export interface MethylHealth {
   ok: boolean;
+  /** The server's version (spec item 12); absent on servers before it. */
+  version?: string;
+}
+
+/** The server's version from /healthz, or null if unreachable or not reported. */
+export async function fetchServerVersion(serverUrl: string): Promise<string | null> {
+  try {
+    const { httpUrl } = deriveSyncUrls(serverUrl);
+    const res = await fetch(`${httpUrl}/healthz`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as MethylHealth;
+    return typeof body.version === "string" ? body.version : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Test the connection: /healthz, an authenticated call to the vault's API, and the sync socket. */

@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { formatBytes, isStandalone, usePwa, type PwaState } from "@/lib/browser/pwa";
 import { useSync } from "@/lib/browser/sync-context";
+import { APP_VERSION } from "@/lib/core/version";
 import { SyncStatusRow, syncTriggerLabel } from "@/components/sync/SyncStatusRow";
 import { SyncSettingsDialog } from "@/components/sync/SyncSettingsDialog";
 import { Button } from "@/components/ui/button";
@@ -100,7 +101,8 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
       const mdCount = engine ? (await engine.docStore.listMaterializedPaths()).length : 0;
       const summary = {
         vaultId: engine?.vaultId ?? null,
-        appVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? null,
+        appVersion: APP_VERSION,
+        serverVersion: sync.serverVersion,
         docCount: engine?.tree.documentIds().length ?? null,
         materializedMarkdownCount: mdCount,
         storageQuota: pwa.quota,
@@ -118,7 +120,7 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
       console.warn("[PwaStatus] failed to copy diagnostics", err);
       toast.error("Couldn't copy diagnostics. Try again.");
     }
-  }, [engine, pwa.quota, sync.config, sync.status]);
+  }, [engine, pwa.quota, sync.config, sync.status, sync.serverVersion]);
 
   const used = pwa.quota?.usage;
   const total = pwa.quota?.quota;
@@ -213,6 +215,10 @@ export function PwaStatus({ engine }: { engine: VaultEngine | null }) {
             <ClipboardCopy data-icon="inline-start" />
             Copy diagnostics
           </Button>
+          <p className="px-1 pt-1 text-xs text-muted-foreground tabular-nums">
+            Methyl {APP_VERSION}
+            {sync.serverVersion && sync.serverVersion !== APP_VERSION && ` · server ${sync.serverVersion}`}
+          </p>
 
           {pwa.updateReady && (
             <>
