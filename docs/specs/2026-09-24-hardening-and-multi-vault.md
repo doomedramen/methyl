@@ -309,6 +309,8 @@ Every test passed unchanged except one path in `legacy-name.test.ts`'s allow-lis
 
 **Required change.** Add `docs/qa/device-checklist.md` covering: install as PWA; offline read/write after the server is stopped; the iOS storage eviction and background limits from SPEC §15 and §41; keyboard overlap with the editor; safe-area insets; press-and-hold drag in the sidebar; the edge-swipe gesture; sync resume after the app was backgrounded. Run it on a current iPhone (Safari and installed PWA) and a current Android phone (Chrome), and record the results with the version and device in the same file. File each failure as its own `TODO.md` entry. Repeat the checklist before each minor release.
 
+**As built.** `docs/qa/device-checklist.md` has the checklist (install and start, offline, iOS storage and background limits, editing with the software keyboard, safe areas and gestures, sync and vaults, VoiceOver and TalkBack) and a results table that also takes the real-iPhone startup figure item 20 asks for. **The device runs themselves need real hardware and are left to the maintainer.**
+
 ### 7.2 Accessibility pass (item 17)
 
 **Required change.**
