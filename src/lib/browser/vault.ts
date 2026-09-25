@@ -10,6 +10,7 @@ import {
   LEGACY_WRITER_LOCK_NAME,
   acquireVaultWriterLock,
   onVaultWriterStolen,
+  requestBackgroundSyncYield,
   waitForVaultWriterPromotion,
   type VaultLock,
 } from "@/lib/vault/web-locks";
@@ -156,6 +157,7 @@ export async function getVault(): Promise<VaultEngine> {
 
     const lock = await acquireVaultWriterLock(vaultId);
     fs.setWritable(lock.active);
+    if (!lock.active) requestBackgroundSyncYield(vaultId);
     markBoot("lock-acquired");
     // `.adhd/` → `.methyl/`: before anything reads the stores. Only the
     // writer tab may write, so only it migrates.

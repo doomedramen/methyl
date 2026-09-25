@@ -46,6 +46,8 @@ export async function renameVaultTo(id: string, name: string): Promise<void> {
  */
 export async function removeVault(id: string): Promise<void> {
   if (getCurrentVault()?.id === id) throw new Error("Switch to another vault before deleting this one");
+  const { stopBackgroundSyncForVault } = await import("@/lib/browser/sync-fleet");
+  await stopBackgroundSyncForVault(id);
   const lock = await acquireVaultWriterLock(id);
   if (!lock.active) throw new Error("That vault is open in another tab; close it there first");
   try {

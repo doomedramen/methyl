@@ -13,6 +13,8 @@ export interface VaultInfo {
   id: string;
   name: string;
   createdAt: number;
+  /** Stable server folder for this vault. Added as vaults join shared sync. */
+  syncId?: string;
 }
 
 /** The vault that existed before multi-vault keeps its id, so its sync room and note URLs stay the same. */
@@ -22,6 +24,7 @@ const LEGACY_ROOT = "adhd-vault";
 const LEGACY_ROOT_MARKER = "methyl/migrated-from-adhd-vault";
 const LAST_VAULT_KEY = "methyl.last-vault";
 const VAULT_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const SERVER_VAULT_ID_RE = VAULT_ID_RE;
 
 export function vaultDir(id: string): string {
   return `methyl/vaults/${id}`;
@@ -40,7 +43,10 @@ export async function loadRegistry(fs: VaultFileSystem): Promise<VaultInfo[]> {
     return parsed.filter(
       (v): v is VaultInfo =>
         typeof v?.id === "string" && isValidVaultId(v.id) && typeof v.name === "string" && typeof v.createdAt === "number",
-    );
+    ).map((v) => ({
+      ...v,
+      ...(typeof v.syncId === "string" && SERVER_VAULT_ID_RE.test(v.syncId) ? { syncId: v.syncId } : {}),
+    }));
   } catch {
     return [];
   }
@@ -136,10 +142,69 @@ function newVaultId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function slugForVault(name: string): string {
+  const normalized = name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const slug = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63).replace(/-+$/g, "");
+  return SERVER_VAULT_ID_RE.test(slug) ? slug : "vault";
+}
+
+function uniqueSyncId(base: string, used: Set<string>): string {
+  let candidate = base;
+  let suffix = 2;
+  while (used.has(candidate)) {
+    const tail = `-${suffix++}`;
+    candidate = `${base.slice(0, 63 - tail.length).replace(/-+$/g, "")}${tail}`;
+  }
+  return candidate;
+}
+
+/** Assign stable server folder IDs to old browser vaults once. */
+export async function ensureVaultSyncIds(
+  fs: VaultFileSystem,
+  legacyIds: Record<string, string> = {},
+): Promise<VaultInfo[]> {
+  return update(fs, (vaults) => {
+    const used = new Set<string>();
+    return vaults.map((vault) => {
+      const existing = vault.syncId && SERVER_VAULT_ID_RE.test(vault.syncId) ? vault.syncId : undefined;
+      const legacy = legacyIds[vault.id] && SERVER_VAULT_ID_RE.test(legacyIds[vault.id]!) ? legacyIds[vault.id] : undefined;
+      const preferred = existing ?? legacy ?? (vault.id === DEFAULT_VAULT_ID ? "default" : slugForVault(vault.name));
+      const syncId = uniqueSyncId(preferred, used);
+      used.add(syncId);
+      return vault.syncId === syncId ? vault : { ...vault, syncId };
+    });
+  });
+}
+
+/** Register a vault discovered on the paired sync server without copying data yet. */
+export async function registerRemoteVault(
+  fs: VaultFileSystem,
+  syncId: string,
+): Promise<VaultInfo> {
+  if (!SERVER_VAULT_ID_RE.test(syncId)) throw new Error("Invalid server vault ID");
+  return withRegistryLock(async () => {
+    const vaults = await loadRegistry(fs);
+    const existing = vaults.find((vault) => vault.syncId === syncId);
+    if (existing) return existing;
+    const name = syncId === "default"
+      ? "My vault"
+      : syncId.split("-").map((part) => part ? part[0]!.toUpperCase() + part.slice(1) : "").join(" ");
+    const vault: VaultInfo = { id: newVaultId(), name, createdAt: Date.now(), syncId };
+    await saveRegistry(fs, [...vaults, vault]);
+    return vault;
+  });
+}
+
 export async function createVault(fs: VaultFileSystem, name: string): Promise<VaultInfo> {
-  const vault: VaultInfo = { id: newVaultId(), name: name.trim() || "Untitled vault", createdAt: Date.now() };
-  await update(fs, (vaults) => [...vaults, vault]);
-  return vault;
+  const trimmed = name.trim() || "Untitled vault";
+  const id = newVaultId();
+  let created!: VaultInfo;
+  await update(fs, (vaults) => {
+    const used = new Set(vaults.map((vault) => vault.syncId).filter((syncId): syncId is string => !!syncId));
+    created = { id, name: trimmed, createdAt: Date.now(), syncId: uniqueSyncId(slugForVault(trimmed), used) };
+    return [...vaults, created];
+  });
+  return created;
 }
 
 export async function renameVault(fs: VaultFileSystem, id: string, name: string): Promise<void> {

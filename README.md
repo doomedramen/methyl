@@ -79,11 +79,12 @@ services:
 docker compose up -d
 ```
 
-Open <http://localhost:8080>. The server starts with no server vault folders. Create one from **Sync**
-settings; its notes live in `./vaults/<id>` as plain Markdown files, readable and editable
-with any normal tool. Each vault's `.methyl/` folder holds sync metadata (CRDT history,
-discovery index), not required to read your notes. The root `./vaults` folder also holds
-server-level pairing data in `.methyl-server/`.
+Open <http://localhost:8080>. The server starts with no server vault folders. Pair a browser
+in **Sync** settings; Methyl creates one server folder for each local vault as it starts sync.
+Notes live in `./vaults/<id>` as plain Markdown files, readable and editable with any normal
+tool. Each vault's `.methyl/` folder holds sync metadata (CRDT history, discovery index), not
+required to read your notes. The root `./vaults` folder also holds server-level pairing data
+in `.methyl-server/`.
 
 **Serve it over https.** Browsers only give a page persistent storage (OPFS, where
 Methyl keeps your vault) in a secure context: `https://`, or `http://localhost` on the
@@ -142,17 +143,16 @@ Once a server is running (above), point each browser at it:
    OPFS/service-worker storage is scoped per origin, so a vault opened from a different
    origin is a different, unsynced vault.
 2. Open **Sync settings** — from the status popover in the sidebar footer, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> → "Sync settings".
-3. Check the server URL (it starts as the current origin), paste the `METHYL_AUTH_TOKEN`
-   you set above as the **Admin token**, and enter a **Server vault** ID. Choose **Create
-   vault** if it does not exist yet. Repeat for every browser vault, using a different ID
-   for each one.
-4. **Pair and save.** The token is used once, to pair this browser, and isn't kept. The
-   server signs the browser in with an HttpOnly cookie, and each sync connection uses a
-   ticket that's valid for a minute. Only the tab holding the vault's writer lock (SPEC §12)
-   opens a sync connection; other tabs stay read-only and don't duplicate it.
+3. Check the server URL (it starts as the current origin) and paste the `METHYL_AUTH_TOKEN`
+   you set above as the **Admin token**.
+4. **Pair and save.** The token is used once to grant this browser access to every vault,
+   then forgotten. Methyl creates a matching server folder for each local vault and syncs
+   every vault in the background. Server vaults not on this browser are added automatically.
+   The server signs the browser in with an HttpOnly cookie, and each sync connection uses a
+   ticket that's valid for a minute. Only one tab holds a writer lock for each vault.
 
-On another device, open each browser vault and pair it with the same server vault ID.
-Methyl keeps each server vault in its own `/vaults/<id>` folder.
+Pair another device with the same server. It discovers every server vault and syncs them
+in the background. Methyl keeps each server vault in its own `/vaults/<id>` folder.
 
 The browser vault and the server's mounted folder are separate local copies.
 After connecting Sync, copying a `.md` file or creating a folder in the mounted
@@ -189,25 +189,21 @@ address out (HTTP `429`); each further lockout doubles, up to 15 minutes.
 
 ## Vaults
 
-The browser can hold several vaults — separate sets of notes, each with its own sync
-settings. The vault name at the top of the sidebar switches between them; **Manage vaults…**
-(also in the command menu) creates, renames and deletes vaults, and imports a full backup
+The browser can hold several vaults — separate sets of notes, all covered by one sync
+connection. Every local vault syncs in the background, and server vaults appear on every
+paired browser automatically. The vault name at the top of the sidebar switches between them;
+**Manage vaults…** (also in the command menu) creates, renames and deletes vaults, and imports a full backup
 (**Export full backup**) as a new vault. A vault's notes live at `/<vault id>/<note path>`
 in the app's URLs.
 
-The server starts with no vault folders. Each browser vault has independent sync
-settings. In **Sync** settings, enter a server vault ID using lower-case letters, digits and
-hyphens (e.g. `personal`, `work`), then choose **Create vault**. Methyl creates
-`/vaults/<id>` and starts serving it. Pair and save to sync that browser vault into this
-server vault. New folders added on disk are also picked up within a second or so. Each
+The server starts with no vault folders. Pair a browser once in **Sync** settings. Methyl
+creates a server folder for each local vault and discovers existing server folders on every
+paired browser. New folders added on disk are also picked up within a second or so. Each
 server vault has its own sync database, change feed and watcher.
-
-Repeat with another ID for each browser vault. On each device, pair the corresponding
-browser vault with the same server ID so its notes sync to that vault.
 
 To use an existing server folder, stop the server and place that folder under the vaults
 root (for example `/vaults/personal`), then start the server. The server never moves your
-folders itself. Set each browser vault's **Server vault** setting to the matching folder name.
+folders itself. Pair a browser with the server; existing folders appear as local vaults.
 
 Server API, per vault: `/api/v/<vault>/…` and the sync socket at `/sync/<vault>`;
 `GET /api/vaults` lists them. The old unprefixed `/api/…` routes still reach the

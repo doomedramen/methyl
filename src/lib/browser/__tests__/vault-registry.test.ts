@@ -5,6 +5,7 @@ import {
   DEFAULT_VAULT_ID,
   createVault,
   deleteVault,
+  ensureVaultSyncIds,
   importVaultFiles,
   loadRegistry,
   migrateLegacyVaultRoot,
@@ -79,6 +80,7 @@ describe("vault registry", () => {
     await resolveVault(fs, "/");
     const work = await createVault(fs, "  Work  ");
     expect(work.name).toBe("Work");
+    expect(work.syncId).toBe("work");
     await fs.writeFile(`${vaultDir(work.id)}/note.md`, text("x"));
     await renameVault(fs, work.id, "Job");
     expect((await loadRegistry(fs)).find((v) => v.id === work.id)?.name).toBe("Job");
@@ -88,6 +90,18 @@ describe("vault registry", () => {
     expect((await loadRegistry(fs)).map((v) => v.id)).toEqual([DEFAULT_VAULT_ID]);
     expect(await fs.exists(`${vaultDir(work.id)}/note.md`)).toBe(false);
     await expect(deleteVault(fs, DEFAULT_VAULT_ID)).rejects.toThrow(/last vault/);
+  });
+
+  it("assigns stable server IDs to older local vaults", async () => {
+    const fs = new MemoryVaultFS();
+    await resolveVault(fs, "/");
+    const oldVault = await createVault(fs, "Personal Notes");
+    const unboundRegistry = await loadRegistry(fs);
+    await fs.writeTextAtomic("methyl/vaults.json", JSON.stringify(unboundRegistry.map(({ syncId: _syncId, ...vault }) => vault)));
+
+    const assigned = await ensureVaultSyncIds(fs, { [DEFAULT_VAULT_ID]: "legacy-default", [oldVault.id]: "personal" });
+    expect(assigned.find((vault) => vault.id === DEFAULT_VAULT_ID)?.syncId).toBe("legacy-default");
+    expect(assigned.find((vault) => vault.id === oldVault.id)?.syncId).toBe("personal");
   });
 
   it("imports a backup's files into a new vault, ignoring unsafe paths", async () => {

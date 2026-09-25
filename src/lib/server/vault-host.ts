@@ -17,7 +17,7 @@ import { DeviceStore, grantAllows } from "@/lib/server/devices";
  * another. Routes:
  *
  *   GET  /api/vaults                → { vaults: [{ id, ready }] } the caller may use
- *   POST /api/vaults                → create an empty vault folder (admin token only)
+ *   POST /api/vaults                → create an empty vault folder (admin or granted device)
  *   *    /api/v/<vaultId>/<route>   → that vault's HTTP API
  *   WS   /sync/<vaultId>            → that vault's sync rooms
  *   *    /api/auth/*                → device pairing (see device-auth.ts)
@@ -351,14 +351,10 @@ export class VaultHost {
     vault.api(req, res);
   }
 
-  /** Create a server vault folder. Only an admin token may create one. */
+  /** Create a server folder for the admin or a device granted access to it. */
   private async createVault(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const principal = this.auth.authenticate(req, res);
     if (!principal) return;
-    if (principal.kind !== "admin") {
-      sendJson(res, 403, { error: "only the admin token can create server vaults" });
-      return;
-    }
     if (!this.opts.vaultsPath) {
       sendJson(res, 409, { error: "server vault creation requires METHYL_VAULTS_PATH" });
       return;
@@ -375,6 +371,14 @@ export class VaultHost {
     const id = body.id;
     if (typeof id !== "string" || !isServerVaultId(id)) {
       sendJson(res, 400, { error: "id must use lower-case letters, digits and hyphens (up to 63 characters)" });
+      return;
+    }
+    if (
+      principal.kind === "device" &&
+      principal.device.vaults !== "*" &&
+      !principal.device.vaults.includes(id)
+    ) {
+      sendJson(res, 403, { error: "this device is not paired for that vault" });
       return;
     }
 

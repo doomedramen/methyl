@@ -164,7 +164,7 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 
 **Data model.**
 
-- A **vault** has `id` (random, stable, never shown), `name` (user-editable) and an optional server binding `{serverOrigin, remoteVaultId}`.
+- A **vault** has `id` (random, stable, never shown), `name` (user-editable) and a stable `syncId` used as its server folder name.
 - Server vault IDs are the folder names under the vaults directory, restricted to `[a-z0-9][a-z0-9-]{0,62}`.
 
 **Browser layout.**
@@ -172,7 +172,7 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 ```text
 OPFS root
 └── methyl/
-    ├── vaults.json            registry: [{id, name, server?, createdAt}]
+    ├── vaults.json            registry: [{id, name, syncId?, createdAt}]
     └── vaults/
         └── <vaultId>/         what "adhd-vault/" holds today
             ├── <notes and folders>
@@ -217,11 +217,12 @@ OPFS root
 **As built (server half).** `src/lib/server/vault-host.ts` (`VaultHost`) serves every valid sub-folder of `METHYL_VAULTS_PATH` through its own `createSyncServer` (store, change log, room server, watcher, mirror) and rescans the folder on change, opening and closing vaults. Routes: `GET /api/vaults`, `/api/v/<id>/…`, WebSocket `/sync/<id>`; the unprefixed routes and any other socket path alias `default` with a one-time deprecation log. A single `METHYL_VAULT_PATH` is served as `default`. Choices made:
 
 - The tree room is `vault:local` in every server vault (`src/lib/sync/rooms.ts`). Each server vault is its own room namespace, so the tree room needs no vault id, and `vault:local` is what every existing server database already holds. Browser vaults join it whatever their local id.
-- A browser vault's sync config gains `remoteVaultId` (default `default`), chosen in *Sync settings* with the server's vault list as suggestions. The client's API base (`apiUrl`) and socket URL carry it. The sync journal records which API its `lastServerSeq` belongs to and starts again from 0 when the binding changes.
+- A browser origin has one shared server URL and device pairing. Pairing grants access to every server vault. Each browser tab starts a sync host for every registered local vault it can hold a writer lock for; another tab handles vaults already open elsewhere. Remote server folders are registered locally, while local vaults create matching folders automatically. Existing per-vault `remoteVaultId` values migrate into stable registry `syncId` values; the old default vault maps to `default`.
+- New local vaults use a normalized name as their initial `syncId`. Renaming a vault keeps its `syncId`, so the server folder remains stable. Remote-only folders appear as local vaults on every paired browser.
 - `backup`/`restore` take `--vault <id>` in multi-vault mode.
 - Per-vault device authorisation and `.methyl-server/server.db` came with item 5.
 
-**Acceptance.** Unit tests for the registry, per-vault key namespacing and the migration (including a crash between copy and delete, then rerun). Server e2e test with two vaults: edits in one never show up in the other's changes feed, and a device paired for one gets 403 on the other. Playwright: create a second vault, switch, both vaults keep their notes across reloads, and two tabs hold writer locks on different vaults at once. Add a multi-vault section to SPEC.md and fix the `TODO.md` reference.
+**Acceptance.** Unit tests for registry IDs, per-vault key namespacing, wildcard pairing and migration (including a crash between copy and delete, then rerun). Server test with two vaults: edits in one never show up in the other's changes feed; limited device grants still receive 403 outside their grant. Browser tests cover a second local vault, server discovery and background sync, persistence after reload, and writer locks across tabs. Add a multi-vault section to SPEC.md and fix the `TODO.md` reference.
 
 ---
 

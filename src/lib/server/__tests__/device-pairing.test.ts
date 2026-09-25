@@ -120,12 +120,29 @@ describe("device pairing", () => {
     expect(await fetch(`${base}/api/vaults`, { headers: { cookie } }).then((r) => r.json())).toEqual({
       vaults: [{ id: "personal", ready: true }],
     });
+    expect((await fetch(`${base}/api/vaults`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ id: "new-vault" }),
+    })).status).toBe(403);
     expect((await ticketFor(base, cookie, "work")).status).toBe(403);
     // Pairing again from the same browser adds a vault to the same device.
     const again = await pair(base, ["work"], { ...admin, cookie });
     expect(again.status).toBe(200);
     expect((await fetch(`${base}/api/v/work/changes?after=0`, { headers: { cookie } })).status).toBe(200);
     expect(host!.devices.list()).toHaveLength(1);
+  });
+
+  it("a wildcard-paired browser can create server vaults for automatic sync", async () => {
+    const { base } = await serve();
+    const cookie = cookieFrom(await pair(base, "*"));
+    const created = await fetch(`${base}/api/vaults`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ id: "new-vault" }),
+    });
+    expect(created.status).toBe(201);
+    expect(await fetch(`${base}/api/v/new-vault/changes?after=0`, { headers: { cookie } }).then((r) => r.status)).toBe(200);
   });
 
   it("sync joins take a ticket, which one connection redeems", async () => {

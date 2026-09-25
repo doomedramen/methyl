@@ -7,6 +7,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // "storage unavailable" fallback path.
 class MemoryLocalStorage {
   private store = new Map<string, string>();
+  get length(): number {
+    return this.store.size;
+  }
+  key(index: number): string | null {
+    return [...this.store.keys()][index] ?? null;
+  }
   getItem(key: string): string | null {
     return this.store.has(key) ? this.store.get(key)! : null;
   }
@@ -28,6 +34,7 @@ import {
   clearSyncConfig,
   deriveSyncUrls,
   describeThisDevice,
+  loadLegacyVaultSyncIds,
   testSyncConnection,
 } from "@/lib/browser/sync-config";
 import { shouldSeedWelcomeNote } from "@/lib/browser/vault";
@@ -95,6 +102,19 @@ describe("sync config store", () => {
     expect(loadSyncConfig()).toEqual({ serverUrl: "https://x.example.com", authToken: "old" });
   });
 
+  it("shares server config across vaults and strips old per-vault admin tokens", () => {
+    localStorage.setItem("methyl.sync-config:local", JSON.stringify({
+      serverUrl: "https://old.example.com",
+      authToken: "old-token",
+      remoteVaultId: "legacy-default",
+    }));
+    saveSyncConfig({ serverUrl: "https://new.example.com" });
+
+    expect(loadSyncConfig("another-vault")).toEqual({ serverUrl: "https://new.example.com" });
+    expect(loadLegacyVaultSyncIds()).toEqual({ local: "legacy-default" });
+    expect(localStorage.getItem("methyl.sync-config:local")).not.toContain("old-token");
+  });
+
   it("names this device from the user agent", () => {
     const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
     expect(describeThisDevice(iphone)).toBe("Safari on iPhone");
@@ -118,24 +138,25 @@ describe("sync config store", () => {
     });
   });
 
-  it("checks the WebSocket transport, not only the HTTP API", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200 })));
+  it("checks WebSocket forwarding when at least one server vault exists", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => ({
+      ok: true,
+      status: 200,
+      json: async () => String(input).endsWith("/api/vaults") ? { vaults: [{ id: "personal" }] } : { ok: true },
+    })));
     TestWebSocket.outcome = "error";
     vi.stubGlobal("WebSocket", TestWebSocket);
 
-    const result = await testSyncConnection({
-      serverUrl: "https://adhd.example.com",
-      authToken: "secret-token",
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result).toMatchObject({
-      error: expect.stringContaining("WebSocket could not connect"),
-    });
+    const result = await testSyncConnection({ serverUrl: "https://adhd.example.com", authToken: "secret-token" });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("WebSocket could not connect") });
   });
 
-  it("accepts a server when both HTTP and WebSocket transports work", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200 })));
+  it("accepts an authenticated server before it has any vault folders", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => ({
+      ok: true,
+      status: 200,
+      json: async () => String(input).endsWith("/api/vaults") ? { vaults: [] } : { ok: true },
+    })));
     vi.stubGlobal("WebSocket", TestWebSocket);
 
     await expect(

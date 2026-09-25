@@ -2,8 +2,8 @@ import { readRenamedKey } from "@/lib/browser/storage-keys";
 import { testWebSocketConnection } from "@/lib/sync/websocket";
 
 /**
- * The browser's sync connection settings (server URL + which server vault),
- * and the device-pairing calls (spec item 5, SPEC §31). Kept DOM-free (only
+ * The browser's shared sync connection settings and device-pairing calls.
+ * Kept DOM-free (only
  * touches `localStorage` behind a try/catch, never throws) so it's
  * unit-testable and safe during SSR.
  *
@@ -13,14 +13,14 @@ import { testWebSocketConnection } from "@/lib/sync/websocket";
  * admin token (`authToken`); sync-context pairs with it once and drops it.
  */
 
-/** One sync configuration per vault (spec item 9). */
+/** Pre shared-sync, each vault kept its own server URL and remote ID. */
 const storageKey = (vaultId: string) => `methyl.sync-config:${vaultId}`;
-/** Before multi-vault: one global configuration, which the default vault inherits. */
+/** One server connection now covers every vault on this browser origin. */
 const GLOBAL_STORAGE_KEY = "methyl.sync-config";
 const LEGACY_STORAGE_KEY = "adhd-sync-config";
 const DEFAULT_VAULT_ID = "local";
 
-/** The server vault a browser vault syncs with when none was chosen (spec item 9). */
+/** Compatibility ID used by older clients and default-vault migration. */
 export const DEFAULT_REMOTE_VAULT = "default";
 
 export interface SyncConfig {
@@ -28,7 +28,7 @@ export interface SyncConfig {
   serverUrl: string;
   /** Only in configs from before device pairing: the admin token, migrated away on load. */
   authToken?: string;
-  /** Which of the server's vaults (a folder under METHYL_VAULTS_PATH) this vault syncs with. */
+  /** Read only for migration from the old per-vault setup. */
   remoteVaultId?: string;
 }
 
@@ -40,52 +40,107 @@ function hasLocalStorage(): boolean {
   }
 }
 
-function readConfig(vaultId: string): string | null {
-  const key = storageKey(vaultId);
-  if (vaultId !== DEFAULT_VAULT_ID) return localStorage.getItem(key);
-  const current = localStorage.getItem(key);
-  if (current !== null) return current;
-  const inherited = readRenamedKey(GLOBAL_STORAGE_KEY, LEGACY_STORAGE_KEY);
-  if (inherited === null) return null;
-  localStorage.setItem(key, inherited);
-  localStorage.removeItem(GLOBAL_STORAGE_KEY);
-  return inherited;
+function storageKeys(): string[] {
+  const keys: string[] = [];
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (key !== null) keys.push(key);
+  }
+  return keys;
 }
 
-export function loadSyncConfig(vaultId = DEFAULT_VAULT_ID): SyncConfig | null {
-  if (!hasLocalStorage()) return null;
+function parseConfig(raw: string | null): SyncConfig | null {
+  if (!raw) return null;
   try {
-    const raw = readConfig(vaultId);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SyncConfig>;
     if (typeof parsed.serverUrl !== "string" || !parsed.serverUrl) return null;
     const config: SyncConfig = { serverUrl: parsed.serverUrl };
     if (typeof parsed.authToken === "string" && parsed.authToken) config.authToken = parsed.authToken;
-    if (typeof parsed.remoteVaultId === "string" && parsed.remoteVaultId) {
-      config.remoteVaultId = parsed.remoteVaultId;
-    }
+    if (typeof parsed.remoteVaultId === "string" && parsed.remoteVaultId) config.remoteVaultId = parsed.remoteVaultId;
     return config;
   } catch {
     return null;
   }
 }
 
-export function saveSyncConfig(config: SyncConfig, vaultId = DEFAULT_VAULT_ID): void {
+export function loadSyncConfig(vaultId = DEFAULT_VAULT_ID): SyncConfig | null {
+  if (!hasLocalStorage()) return null;
+  try {
+    const shared = parseConfig(readRenamedKey(GLOBAL_STORAGE_KEY, LEGACY_STORAGE_KEY));
+    if (shared) return shared;
+    const local = parseConfig(localStorage.getItem(storageKey(vaultId)));
+    if (local) return local;
+    // Existing installations may have configured only a non-default vault.
+    for (const key of storageKeys()) {
+      if (!key.startsWith("methyl.sync-config:") || key === storageKey(vaultId)) continue;
+      const found = parseConfig(localStorage.getItem(key));
+      if (found) return found;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Old server-folder choices become stable IDs on their matching local vaults. */
+export function loadLegacyVaultSyncIds(): Record<string, string> {
+  if (!hasLocalStorage()) return {};
+  const result: Record<string, string> = {};
+  try {
+    const oldGlobal = parseConfig(readRenamedKey(GLOBAL_STORAGE_KEY, LEGACY_STORAGE_KEY));
+    if (oldGlobal?.remoteVaultId) result[DEFAULT_VAULT_ID] = oldGlobal.remoteVaultId;
+    for (const key of storageKeys()) {
+      if (!key.startsWith("methyl.sync-config:")) continue;
+      const localVaultId = key.slice("methyl.sync-config:".length);
+      const config = parseConfig(localStorage.getItem(key));
+      if (localVaultId && config?.remoteVaultId) result[localVaultId] = config.remoteVaultId;
+    }
+  } catch {
+    // Private browsing may deny storage access.
+  }
+  return result;
+}
+
+export function saveSyncConfig(config: SyncConfig, _vaultId = DEFAULT_VAULT_ID): void {
   if (!hasLocalStorage()) return;
   try {
-    localStorage.setItem(storageKey(vaultId), JSON.stringify(config));
+    const { serverUrl, authToken } = config;
+    const oldGlobal = parseConfig(readRenamedKey(GLOBAL_STORAGE_KEY, LEGACY_STORAGE_KEY));
+    if (oldGlobal?.remoteVaultId) {
+      const localKey = storageKey(DEFAULT_VAULT_ID);
+      const oldLocal = parseConfig(localStorage.getItem(localKey));
+      if (!oldLocal?.remoteVaultId) {
+        localStorage.setItem(localKey, JSON.stringify({
+          serverUrl: oldLocal?.serverUrl ?? oldGlobal.serverUrl,
+          remoteVaultId: oldGlobal.remoteVaultId,
+        }));
+      }
+    }
+    localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify({ serverUrl, ...(authToken ? { authToken } : {}) }));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    // Remove old per-vault admin tokens while retaining their server IDs
+    // until the registry migration has copied those IDs into vaults.json.
+    for (const key of storageKeys()) {
+      if (!key.startsWith("methyl.sync-config:")) continue;
+      const legacy = parseConfig(localStorage.getItem(key));
+      if (!legacy?.authToken) continue;
+      localStorage.setItem(key, JSON.stringify({
+        serverUrl: legacy.serverUrl,
+        ...(legacy.remoteVaultId ? { remoteVaultId: legacy.remoteVaultId } : {}),
+      }));
+    }
   } catch {
     // ignore (private browsing / quota / disabled storage)
   }
 }
 
-export function clearSyncConfig(vaultId = DEFAULT_VAULT_ID): void {
+export function clearSyncConfig(_vaultId = DEFAULT_VAULT_ID): void {
   if (!hasLocalStorage()) return;
   try {
-    localStorage.removeItem(storageKey(vaultId));
-    if (vaultId === DEFAULT_VAULT_ID) {
-      localStorage.removeItem(GLOBAL_STORAGE_KEY);
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    localStorage.removeItem(GLOBAL_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    for (const key of storageKeys()) {
+      if (key.startsWith("methyl.sync-config:")) localStorage.removeItem(key);
     }
   } catch {
     // ignore
@@ -121,7 +176,7 @@ export async function listServerVaults(
 ): Promise<{ ok: true; vaults: string[] } | { ok: false; error: string }> {
   try {
     const { httpUrl } = deriveSyncUrls(config.serverUrl);
-    const res = await fetch(`${httpUrl}/api/vaults`, { headers: bearer(config.authToken) });
+    const res = await fetch(`${httpUrl}/api/vaults`, { headers: bearer(config.authToken), credentials: "same-origin" });
     if (res.status === 401) return { ok: false, error: "Not paired with this server" };
     if (!res.ok) return { ok: false, error: `Server responded ${res.status} at /api/vaults` };
     const body = (await res.json()) as { vaults?: { id?: unknown }[] };
@@ -151,36 +206,28 @@ export async function fetchServerVersion(serverUrl: string): Promise<string | nu
   }
 }
 
-/** Test the connection: /healthz, an authenticated call to the vault's API, and the sync socket. */
+/** Test health and pairing; test WebSocket forwarding when server has a vault. */
 export async function testSyncConnection(
   config: SyncConfig,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { wsUrl, httpUrl, apiUrl } = deriveSyncUrls(config.serverUrl, config.remoteVaultId);
+  const { httpUrl } = deriveSyncUrls(config.serverUrl);
   try {
     const health = await fetch(`${httpUrl}/healthz`);
     if (!health.ok) return { ok: false, error: `Server responded ${health.status} at /healthz` };
-    const auth = await fetch(`${apiUrl}/rooms`, { headers: bearer(config.authToken) });
-    if (auth.status === 401) {
-      return { ok: false, error: config.authToken ? "The admin token was rejected" : "This browser isn't paired with the server" };
-    }
-    if (auth.status === 403) {
-      return { ok: false, error: `This browser isn't paired for the vault "${config.remoteVaultId ?? DEFAULT_REMOTE_VAULT}"` };
-    }
-    if (auth.status === 404) {
-      return { ok: false, error: `The server has no vault named "${config.remoteVaultId ?? DEFAULT_REMOTE_VAULT}"` };
-    }
-    if (!auth.ok) return { ok: false, error: `Server responded ${auth.status} at ${new URL(apiUrl).pathname}/rooms` };
-    try {
-      await testWebSocketConnection(wsUrl);
-    } catch (err) {
-      const detail = err instanceof Error && err.message ? ` (${err.message})` : "";
-      return {
-        ok: false,
-        error:
-          "The HTTP API is reachable, but the sync WebSocket could not connect. " +
-          "Enable WebSocket upgrade forwarding in the reverse proxy." +
-          detail,
-      };
+    const listed = await listServerVaults(config);
+    if (!listed.ok) return listed;
+    const firstVault = listed.vaults[0];
+    if (firstVault) {
+      const { wsUrl } = deriveSyncUrls(config.serverUrl, firstVault);
+      try {
+        await testWebSocketConnection(wsUrl);
+      } catch (err) {
+        const detail = err instanceof Error && err.message ? ` (${err.message})` : "";
+        return {
+          ok: false,
+          error: "The HTTP API is reachable, but the sync WebSocket could not connect. Enable WebSocket upgrade forwarding in the reverse proxy." + detail,
+        };
+      }
     }
     return { ok: true };
   } catch (err) {
@@ -211,21 +258,22 @@ async function errorOf(res: Response): Promise<string> {
   return `Server responded ${res.status}`;
 }
 
-/** Create an empty server-side vault folder using the admin token. */
-export async function createServerVault(options: {
-  serverUrl: string;
-  adminToken: string;
-  id: string;
-}): Promise<Result<{ id: string }>> {
+/** Create one server folder through a wildcard-paired browser cookie. */
+export async function ensureServerVault(options: { serverUrl: string; id: string }): Promise<Result<{ id: string }>> {
   try {
     const { httpUrl } = deriveSyncUrls(options.serverUrl);
     const res = await fetch(`${httpUrl}/api/vaults`, {
       method: "POST",
-      headers: { ...bearer(options.adminToken), "content-type": "application/json" },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: options.id }),
+      credentials: "same-origin",
     });
-    if (!res.ok) return { ok: false, error: await errorOf(res) };
-    return { ok: true, id: options.id };
+    if (res.ok) return { ok: true, id: options.id };
+    if (res.status === 409) {
+      const listed = await listServerVaults({ serverUrl: options.serverUrl });
+      if (listed.ok && listed.vaults.includes(options.id)) return { ok: true, id: options.id };
+    }
+    return { ok: false, error: await errorOf(res) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -257,7 +305,6 @@ export function describeThisDevice(userAgent = typeof navigator === "undefined" 
 export async function pairDevice(options: {
   serverUrl: string;
   adminToken: string;
-  remoteVaultId?: string;
   deviceName?: string;
 }): Promise<Result<{ device: PairedDevice }>> {
   try {
@@ -267,7 +314,7 @@ export async function pairDevice(options: {
       headers: { ...bearer(options.adminToken), "content-type": "application/json" },
       body: JSON.stringify({
         deviceName: options.deviceName ?? describeThisDevice(),
-        vaults: [options.remoteVaultId ?? DEFAULT_REMOTE_VAULT],
+        vaults: "*",
       }),
     });
     if (res.status === 401) return { ok: false, error: "The admin token was rejected" };

@@ -76,6 +76,27 @@ export function onVaultWriterStolen(vaultId: string, listener: () => void): () =
   return () => ch.close();
 }
 
+const BACKGROUND_SYNC_YIELD_CHANNEL = "methyl:background-sync-yield";
+
+/** Ask a background sync host in another tab to release this vault's writer lock. */
+export function requestBackgroundSyncYield(vaultId: string): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  const channel = new BroadcastChannel(BACKGROUND_SYNC_YIELD_CHANNEL);
+  channel.postMessage({ type: "foreground-open", vaultId });
+  channel.close();
+}
+
+/** Listen for a foreground tab that needs a background sync lock released. */
+export function onBackgroundSyncYieldRequest(listener: (vaultId: string) => void): () => void {
+  if (typeof BroadcastChannel === "undefined") return () => {};
+  const channel = new BroadcastChannel(BACKGROUND_SYNC_YIELD_CHANNEL);
+  channel.onmessage = (event: MessageEvent<unknown>) => {
+    const message = event.data as { type?: unknown; vaultId?: unknown } | null;
+    if (message?.type === "foreground-open" && typeof message.vaultId === "string") listener(message.vaultId);
+  };
+  return () => channel.close();
+}
+
 /**
  * Acquire the long-lived, exclusive per-vault "writer" lock. Held until
  * `.release()` is called (e.g. on tab close via `pagehide`, or on
