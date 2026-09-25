@@ -176,7 +176,7 @@ function ManageVaultsDialog({
                 </form>
               ) : (
                 <>
-                  <span className="flex-1 truncate">
+                  <span className="min-w-0 flex-1 truncate">
                     {vault.name}
                     {vault.id === current?.id && <span className="text-muted-foreground"> (open)</span>}
                   </span>
