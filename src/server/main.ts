@@ -1,3 +1,5 @@
+// Must run before Next loads: see the file.
+import "./standalone-config";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "http";
 import type { Socket } from "net";
 import { join } from "path";

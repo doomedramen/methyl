@@ -89,6 +89,12 @@ machine itself. Reached over plain http from a LAN address (`http://192.168.1.10
 the app can't store anything and says so on launch. Put it behind a reverse proxy with a
 certificate (Caddy, Traefik, nginx) or expose it through Tailscale.
 
+The image is distroless: Node and the app, no shell or package manager (about 60 MB to
+download). Node lives at `/nodejs/bin/node`, as in the commands below. The server runs as
+uid 1001, the same user as earlier images, so an existing vault stays writable; if the
+vault folder belongs to someone else, give it to that user once:
+`sudo chown -R 1001:1001 ./vault`.
+
 **Updating:**
 
 ```bash
@@ -105,7 +111,7 @@ without a full resend — with the sync database copied through SQLite's online 
 it's consistent mid-write:
 
 ```bash
-docker compose exec methyl node dist/server.cjs backup /vault-backups/$(date +%F)
+docker compose exec methyl /nodejs/bin/node dist/server.cjs backup /vault-backups/$(date +%F)
 ```
 
 (mount a `/vault-backups` volume for that, or back up to any path in the container and copy
@@ -115,7 +121,7 @@ it out). A nightly cron entry running the same command is enough for most setups
 now-empty folder and start the server again:
 
 ```bash
-docker compose run --rm methyl node dist/server.cjs restore /vault-backups/2026-09-24
+docker compose run --rm methyl dist/server.cjs restore /vault-backups/2026-09-24
 docker compose up -d
 ```
 

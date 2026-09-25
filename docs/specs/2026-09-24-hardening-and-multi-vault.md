@@ -353,6 +353,16 @@ Build these in this order; each is its own PR with unit tests for the CodeMirror
 
 **Acceptance.** Image under 250 MB; the Docker build check (`npm run check:docker`) passes; a container started from the new image serves the app and `/healthz` answers from the new image; the vault volume is still writable as the non-root user (document the `chown` step for existing installs).
 
+**As built.** Runtime `gcr.io/distroless/nodejs24-debian12`, running as uid 1001 (the previous image's user, so existing volumes stay writable). Next now builds with `output: "standalone"`, which traces only the node_modules files the server uses (26 MB, with sharp excluded since images aren't optimised). `scripts/copy-server-externals.mjs` adds the packages the server bundle keeps external (`server-externals.mjs`), trimmed to Linux: better-sqlite3's own prebuilt binaries, not its sources, and loro-crdt's Node build. The server passes Next the build-time config (`src/server/standalone-config.ts`), because the image has no `next.config.ts` and no compiler to load one. The build stage runs `npm ci --ignore-scripts`, so it needs neither apt nor a compiler.
+
+Sizes: the image's filesystem is **179 MB** (61 MB compressed); the app is 44 MB of that and Node 117 MB. `docker images` shows 260 MB here, because the containerd image store's SIZE column counts more than the unpacked files; the old base image alone was 221 MB of files. Alpine was checked and isn't smaller (`node:24-alpine` is larger than distroless). Checked here:
+- the full e2e suite (75 tests) against the standalone layout;
+- the built container serves the app, `/healthz` and the API, and reports healthy;
+- the container writes a new volume and an existing folder owned by 1001;
+- `backup` runs as `/nodejs/bin/node dist/server.cjs backup …` (the README says so; there's no `node` on the PATH).
+
+`npm run check:docker` can't run here (this environment's proxy needs its own CA and proxy settings inside the build); a copy of the Dockerfile with only those added built and ran as above. CI's docker job is the real check.
+
 ---
 
 ## 7.5 PWA startup time (item 20)

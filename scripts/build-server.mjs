@@ -5,6 +5,7 @@
  */
 import { build } from "esbuild";
 import { appVersion } from "./app-version.mjs";
+import { SERVER_EXTERNALS } from "./server-externals.mjs";
 
 const version = appVersion();
 await build({
@@ -14,7 +15,7 @@ await build({
   target: "node24",
   format: "cjs",
   outfile: "dist/server.cjs",
-  external: ["better-sqlite3", "loro-crdt", "loro-websocket", "loro-protocol", "chokidar", "next"],
+  external: SERVER_EXTERNALS,
   alias: { "@": "./src" },
   define: { "process.env.NEXT_PUBLIC_APP_VERSION": JSON.stringify(version) },
   logLevel: "info",
