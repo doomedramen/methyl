@@ -1455,7 +1455,18 @@ using the HttpOnly cookie.
 
 Server returns a short-lived, one-use or short-expiry sync ticket.
 
-The client passes that temporary ticket using Loro's documented room auth payload mechanism. Loro's official SimpleServer provides an authentication hook for room joins.
+The client passes that temporary ticket using Loro's documented room auth payload mechanism; Methyl's room server checks it on every join.
+
+As built (`src/lib/server/devices.ts`, `device-auth.ts`):
+
+- Devices live in `server.db` (`<vaults dir>/.methyl-server/`, or `.methyl/server/` of a single vault): id, name, SHA-256 of the secret, the vaults the device may use (`"*"` or a list), created/last-seen/revoked times.
+- The cookie is `methyl_device=<id>.<secret>`, `HttpOnly; SameSite=Strict; Path=/`, and `Secure` except on a loopback host (local development over plain HTTP).
+- A ticket is valid for 60 s, scoped to one vault, and redeemed by one socket: the first join binds it, later joins on the same socket (one round joins many rooms) reuse it, and no other socket can.
+- Every `/api/*` route takes the device cookie or the admin bearer token (scripts). A device gets `403` on a vault it wasn't paired for.
+- `GET /api/auth/me`, `GET /api/auth/devices`, `DELETE /api/auth/devices/<id>` (admin, or the device itself). Revoking drops the device's sockets and change streams at once.
+- Pairing again from a paired browser adds vaults to the same device.
+- A browser config from before pairing that still holds the token is paired with it once, and the token is deleted either way.
+- The cookie is `SameSite=Strict`, so browser sync needs the app and the server on the same site; `METHYL_ALLOWED_ORIGINS` is for `/healthz` and admin-token scripts only.
 
 Thus:
 

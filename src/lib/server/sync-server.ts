@@ -1,6 +1,6 @@
 import { migrateLegacyMetaDirOnDisk } from "@/lib/server/meta-migration";
 import { META_DIR } from "@/lib/core/paths";
-import { RoomServer } from "@/lib/server/room-server";
+import { RoomServer, type RoomClientInfo } from "@/lib/server/room-server";
 import { TREE_VAULT_ID } from "@/lib/sync/rooms";
 import { CrdtType } from "loro-protocol";
 import { LoroDoc, type TreeID } from "loro-crdt";
@@ -38,6 +38,13 @@ export interface SyncServerOptions {
   limiter?: AuthLimiter;
   /** Key the limiter on X-Forwarded-For (METHYL_TRUST_PROXY). */
   trustProxy?: boolean;
+  /**
+   * Decide a room join's auth payload (VaultHost: admin token or a ticket
+   * for this vault; it may set `client.principal`). Default: the admin token.
+   */
+  authorizeJoin?: (token: string, client: RoomClientInfo) => boolean;
+  /** A sync connection closed. */
+  onClientClosed?: (client: RoomClientInfo) => void;
 }
 
 /**
@@ -66,6 +73,11 @@ export interface HttpApiOptions {
   trustProxy?: boolean;
   /** Largest accepted asset upload, in bytes. */
   maxAssetBytes?: number;
+  /**
+   * Authenticate a request, answering it (401/403/429) when refused.
+   * Default: the admin bearer token, through the limiter.
+   */
+  authorize?: (req: IncomingMessage, res: ServerResponse) => boolean;
 }
 
 /** Decode one URL path segment, or null when it is malformed or not a valid ID. */
@@ -145,20 +157,25 @@ export function createHttpApi(options: HttpApiOptions) {
   const limiter = options.limiter ?? new AuthLimiter();
   const trustProxy = options.trustProxy ?? false;
 
-  return (req: IncomingMessage, res: ServerResponse): void => {
+  const authorize = options.authorize ?? ((req: IncomingMessage, res: ServerResponse): boolean => {
     const client = clientAddress(req, trustProxy);
     const retryAfter = limiter.retryAfterMs(client);
     if (retryAfter > 0) {
       res.setHeader("retry-after", String(Math.ceil(retryAfter / 1000)));
       sendJson(res, 429, { error: "too many failed attempts" });
-      return;
+      return false;
     }
     if (!bearerMatches(req.headers["authorization"], authToken)) {
       limiter.recordFailure(client);
       sendJson(res, 401, { error: "unauthorized" });
-      return;
+      return false;
     }
     limiter.recordSuccess(client);
+    return true;
+  });
+
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    if (!authorize(req, res)) return;
 
     const url = new URL(req.url ?? "/", "http://localhost");
     // Served at /api/<route> or, per vault, /api/v/<vaultId>/<route>
@@ -427,12 +444,16 @@ export function createSyncServer(options: SyncServerOptions) {
   const rooms = new RoomServer({
     saveIntervalMs: options.saveIntervalMs ?? 500,
     clientAddress: (req) => clientAddress(req, options.trustProxy ?? false),
+    onClientClosed: options.onClientClosed,
 
     authenticate: async (roomId, auth, client) => {
       if (!isValidObjectId(roomId)) return null;
       if (limiter.retryAfterMs(client.address) > 0) return null;
       const token = new TextDecoder().decode(auth);
-      if (!safeEqual(token, options.authToken)) {
+      const allowed = options.authorizeJoin
+        ? options.authorizeJoin(token, client)
+        : safeEqual(token, options.authToken);
+      if (!allowed) {
         limiter.recordFailure(client.address);
         return null;
       }

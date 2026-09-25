@@ -42,6 +42,10 @@ import { LoroDoc, VersionVector } from "loro-crdt";
 export interface RoomClientInfo {
   /** Remote address, for rate limiting failed authentication. */
   address: string;
+  /** Unique per connection (tickets are bound to one). */
+  connectionId: string;
+  /** Who authenticated on this connection; `authenticate` sets it (e.g. `device:<id>`). */
+  principal?: string;
 }
 
 export interface RoomServerOptions {
@@ -57,6 +61,8 @@ export interface RoomServerOptions {
   heartbeatMs?: number;
   /** Address of an upgrade request (e.g. honouring a trusted proxy). */
   clientAddress?(req: IncomingMessage): string;
+  /** A connection closed. */
+  onClientClosed?(client: RoomClientInfo): void;
 }
 
 interface Room {
@@ -171,7 +177,10 @@ export class RoomServer {
   private onConnection(ws: WebSocket, req: IncomingMessage): void {
     const client: Client = {
       ws,
-      info: { address: this.options.clientAddress?.(req) ?? req.socket.remoteAddress ?? "unknown" },
+      info: {
+        address: this.options.clientAddress?.(req) ?? req.socket.remoteAddress ?? "unknown",
+        connectionId: randomBytes(12).toString("hex"),
+      },
       rooms: new Map(),
       fragments: new Map(),
       alive: true,
@@ -197,8 +206,23 @@ export class RoomServer {
     ws.on("error", () => ws.terminate());
   }
 
+  /** Drop every connection whose info matches (e.g. a revoked device's). Returns how many. */
+  disconnectWhere(match: (client: RoomClientInfo) => boolean): number {
+    let count = 0;
+    for (const client of this.clients) {
+      if (!match(client.info)) continue;
+      count++;
+      client.ws.close(4001, "Access revoked");
+      // Don't wait for the close handshake: stop serving it now.
+      this.onClose(client);
+      client.ws.terminate();
+    }
+    return count;
+  }
+
   private onClose(client: Client): void {
-    this.clients.delete(client);
+    if (!this.clients.delete(client)) return;
+    this.options.onClientClosed?.(client.info);
     for (const batch of client.fragments.values()) clearTimeout(batch.timer);
     for (const roomId of client.rooms.keys()) this.leaveRoom(client, roomId);
   }

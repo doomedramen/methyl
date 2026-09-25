@@ -2,17 +2,15 @@ import { readRenamedKey } from "@/lib/browser/storage-keys";
 import { testWebSocketConnection } from "@/lib/sync/websocket";
 
 /**
- * Local persistence for the browser's sync connection settings (server URL +
- * access token). Kept DOM-free (only touches `localStorage` behind a
- * try/catch, never throws) so it's unit-testable and safe during SSR.
+ * The browser's sync connection settings (server URL + which server vault),
+ * and the device-pairing calls (spec item 5, SPEC §31). Kept DOM-free (only
+ * touches `localStorage` behind a try/catch, never throws) so it's
+ * unit-testable and safe during SSR.
  *
- * NOTE: the access token is stored in plain `localStorage`, readable by any
- * script running on this origin (SPEC §31 describes a cookie-based pairing
- * flow instead — not what this server implements today; see
- * src/server/main.ts / sync-server.ts, which authenticate with a single
- * static bearer token).
- * This matches the server's actual (simpler, self-hosted, LAN-only) auth
- * model, but is a real tradeoff worth knowing about.
+ * No secret is stored here. The admin token is used once, to pair; the
+ * server then keeps this browser signed in with an HttpOnly cookie that
+ * scripts can't read. Configs saved before pairing existed still hold the
+ * admin token (`authToken`); sync-context pairs with it once and drops it.
  */
 
 /** One sync configuration per vault (spec item 9). */
@@ -28,7 +26,8 @@ export const DEFAULT_REMOTE_VAULT = "default";
 export interface SyncConfig {
   /** Origin the sync server is reachable at, e.g. "https://methyl.example.com". */
   serverUrl: string;
-  authToken: string;
+  /** Only in configs from before device pairing: the admin token, migrated away on load. */
+  authToken?: string;
   /** Which of the server's vaults (a folder under METHYL_VAULTS_PATH) this vault syncs with. */
   remoteVaultId?: string;
 }
@@ -60,8 +59,8 @@ export function loadSyncConfig(vaultId = DEFAULT_VAULT_ID): SyncConfig | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SyncConfig>;
     if (typeof parsed.serverUrl !== "string" || !parsed.serverUrl) return null;
-    if (typeof parsed.authToken !== "string" || !parsed.authToken) return null;
-    const config: SyncConfig = { serverUrl: parsed.serverUrl, authToken: parsed.authToken };
+    const config: SyncConfig = { serverUrl: parsed.serverUrl };
+    if (typeof parsed.authToken === "string" && parsed.authToken) config.authToken = parsed.authToken;
     if (typeof parsed.remoteVaultId === "string" && parsed.remoteVaultId) {
       config.remoteVaultId = parsed.remoteVaultId;
     }
@@ -112,16 +111,18 @@ export function deriveSyncUrls(
   };
 }
 
-/** The vaults a server offers, or an error message. */
+function bearer(token: string | undefined): Record<string, string> {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+/** The vaults a server offers this browser, or an error message. */
 export async function listServerVaults(
   config: Pick<SyncConfig, "serverUrl" | "authToken">,
 ): Promise<{ ok: true; vaults: string[] } | { ok: false; error: string }> {
   try {
     const { httpUrl } = deriveSyncUrls(config.serverUrl);
-    const res = await fetch(`${httpUrl}/api/vaults`, {
-      headers: { authorization: `Bearer ${config.authToken}` },
-    });
-    if (res.status === 401) return { ok: false, error: "Access token was rejected" };
+    const res = await fetch(`${httpUrl}/api/vaults`, { headers: bearer(config.authToken) });
+    if (res.status === 401) return { ok: false, error: "Not paired with this server" };
     if (!res.ok) return { ok: false, error: `Server responded ${res.status} at /api/vaults` };
     const body = (await res.json()) as { vaults?: { id?: unknown }[] };
     const vaults = (body.vaults ?? []).map((v) => v.id).filter((id): id is string => typeof id === "string");
@@ -143,10 +144,13 @@ export async function testSyncConnection(
   try {
     const health = await fetch(`${httpUrl}/healthz`);
     if (!health.ok) return { ok: false, error: `Server responded ${health.status} at /healthz` };
-    const auth = await fetch(`${apiUrl}/rooms`, {
-      headers: { authorization: `Bearer ${config.authToken}` },
-    });
-    if (auth.status === 401) return { ok: false, error: "Access token was rejected" };
+    const auth = await fetch(`${apiUrl}/rooms`, { headers: bearer(config.authToken) });
+    if (auth.status === 401) {
+      return { ok: false, error: config.authToken ? "The admin token was rejected" : "This browser isn't paired with the server" };
+    }
+    if (auth.status === 403) {
+      return { ok: false, error: `This browser isn't paired for the vault "${config.remoteVaultId ?? DEFAULT_REMOTE_VAULT}"` };
+    }
     if (auth.status === 404) {
       return { ok: false, error: `The server has no vault named "${config.remoteVaultId ?? DEFAULT_REMOTE_VAULT}"` };
     }
@@ -163,6 +167,139 @@ export async function testSyncConnection(
           detail,
       };
     }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/* ── device pairing (spec item 5) ─────────────────────────────────── */
+
+type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+
+export interface PairedDevice {
+  id: string;
+  name: string;
+  vaults: "*" | string[];
+  createdAt: number;
+  lastSeenAt: number | null;
+  current?: boolean;
+}
+
+async function errorOf(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === "string") return body.error;
+  } catch {
+    // not JSON
+  }
+  return `Server responded ${res.status}`;
+}
+
+/** A readable name for this browser, e.g. "Safari on iPhone". */
+export function describeThisDevice(userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent): string {
+  const ua = userAgent;
+  const browser = /Edg\//.test(ua) ? "Edge"
+    : /Firefox\//.test(ua) ? "Firefox"
+    : /Chrome\//.test(ua) ? "Chrome"
+    : /Safari\//.test(ua) ? "Safari"
+    : "Browser";
+  const platform = /iPhone/.test(ua) ? "iPhone"
+    : /iPad/.test(ua) ? "iPad"
+    : /Android/.test(ua) ? "Android"
+    : /Mac OS X|Macintosh/.test(ua) ? "Mac"
+    : /Windows/.test(ua) ? "Windows"
+    : /Linux/.test(ua) ? "Linux"
+    : "";
+  return platform ? `${browser} on ${platform}` : browser;
+}
+
+/**
+ * Pair this browser with the server using its admin token. The server sets
+ * the device cookie; the token itself is not kept. Pairing again from a
+ * paired browser adds the vault to the same device.
+ */
+export async function pairDevice(options: {
+  serverUrl: string;
+  adminToken: string;
+  remoteVaultId?: string;
+  deviceName?: string;
+}): Promise<Result<{ device: PairedDevice }>> {
+  try {
+    const { httpUrl } = deriveSyncUrls(options.serverUrl);
+    const res = await fetch(`${httpUrl}/api/auth/pair`, {
+      method: "POST",
+      headers: { ...bearer(options.adminToken), "content-type": "application/json" },
+      body: JSON.stringify({
+        deviceName: options.deviceName ?? describeThisDevice(),
+        vaults: [options.remoteVaultId ?? DEFAULT_REMOTE_VAULT],
+      }),
+    });
+    if (res.status === 401) return { ok: false, error: "The admin token was rejected" };
+    if (!res.ok) return { ok: false, error: await errorOf(res) };
+    const body = (await res.json()) as { device: PairedDevice };
+    return { ok: true, device: body.device };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Is this browser paired, and for which of the server's vaults? */
+export async function getPairing(serverUrl: string): Promise<
+  { paired: true; device: PairedDevice; vaults: string[] } | { paired: false; error?: string }
+> {
+  try {
+    const { httpUrl } = deriveSyncUrls(serverUrl);
+    const res = await fetch(`${httpUrl}/api/auth/me`);
+    if (res.status === 401) return { paired: false };
+    if (!res.ok) return { paired: false, error: await errorOf(res) };
+    const body = (await res.json()) as { kind: string; device?: PairedDevice; vaults?: string[] };
+    if (body.kind !== "device" || !body.device) return { paired: false };
+    return { paired: true, device: body.device, vaults: body.vaults ?? [] };
+  } catch (err) {
+    return { paired: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** A single-use sync ticket for one round's socket. Throws when refused. */
+export async function fetchSyncTicket(serverUrl: string, remoteVaultId = DEFAULT_REMOTE_VAULT): Promise<string> {
+  const { httpUrl } = deriveSyncUrls(serverUrl);
+  const res = await fetch(`${httpUrl}/api/auth/ws-ticket`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ vault: remoteVaultId }),
+  });
+  if (!res.ok) {
+    throw new Error(
+      res.status === 401 ? "This browser isn't paired with the server any more; pair it again in Sync settings."
+        : res.status === 403 ? `This browser isn't paired for the server vault "${remoteVaultId}".`
+        : await errorOf(res),
+    );
+  }
+  return ((await res.json()) as { ticket: string }).ticket;
+}
+
+/** Paired devices; with the admin token, any of them can be removed. */
+export async function listDevices(serverUrl: string, adminToken?: string): Promise<Result<{ devices: PairedDevice[] }>> {
+  try {
+    const { httpUrl } = deriveSyncUrls(serverUrl);
+    const res = await fetch(`${httpUrl}/api/auth/devices`, { headers: bearer(adminToken) });
+    if (!res.ok) return { ok: false, error: await errorOf(res) };
+    return { ok: true, devices: ((await res.json()) as { devices: PairedDevice[] }).devices };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Remove a device: this browser itself, or (with the admin token) any other. */
+export async function removeDevice(serverUrl: string, id: string, adminToken?: string): Promise<Result> {
+  try {
+    const { httpUrl } = deriveSyncUrls(serverUrl);
+    const res = await fetch(`${httpUrl}/api/auth/devices/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: bearer(adminToken),
+    });
+    if (!res.ok) return { ok: false, error: await errorOf(res) };
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

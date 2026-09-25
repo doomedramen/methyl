@@ -3,8 +3,10 @@ import type { IncomingMessage, ServerResponse } from "http";
 import type { Duplex } from "stream";
 import { join } from "path";
 import { META_DIR } from "@/lib/core/paths";
-import { AuthLimiter, bearerMatches, clientAddress, isServerVaultId } from "@/lib/server/auth";
+import { AuthLimiter, isServerVaultId } from "@/lib/server/auth";
 import { createHttpApi, createSyncServer } from "@/lib/server/sync-server";
+import { DeviceAuth } from "@/lib/server/device-auth";
+import { DeviceStore, grantAllows } from "@/lib/server/devices";
 
 /**
  * Several vaults in one server process (spec item 9, server half).
@@ -14,9 +16,14 @@ import { createHttpApi, createSyncServer } from "@/lib/server/sync-server";
  * watcher and Node-side mirror — so nothing one vault does is visible in
  * another. Routes:
  *
- *   GET  /api/vaults                → { vaults: [{ id, ready }] }
+ *   GET  /api/vaults                → { vaults: [{ id, ready }] } the caller may use
  *   *    /api/v/<vaultId>/<route>   → that vault's HTTP API
  *   WS   /sync/<vaultId>            → that vault's sync rooms
+ *   *    /api/auth/*                → device pairing (see device-auth.ts)
+ *
+ * Requests authenticate with the admin token or a paired device's cookie;
+ * a device may use only the vaults it was paired for. Sync joins carry a
+ * short-lived ticket from /api/auth/ws-ticket (or the admin token).
  *
  * The unprefixed `/api/<route>` and any other WebSocket path are aliases for
  * the vault `default`, for clients from before multi-vault (deprecated).
@@ -72,6 +79,9 @@ export class VaultHost {
   private readonly skippedNames = new Set<string>();
   private warnedLegacyRoutes = false;
   private stopped = false;
+  private auth!: DeviceAuth;
+  /** Open change streams per device, closed when it is revoked. */
+  private readonly deviceStreams = new Map<string, Set<ServerResponse>>();
 
   constructor(options: VaultHostOptions) {
     if (!options.vaultsPath && !options.vaultPath) {
@@ -90,8 +100,28 @@ export class VaultHost {
     return this.opts.vaultsPath ? join(this.opts.vaultsPath, SERVER_STATE_DIR) : null;
   }
 
+  /** Where paired devices are stored. */
+  get devicesDbPath(): string {
+    return this.opts.vaultsPath
+      ? join(this.opts.vaultsPath, SERVER_STATE_DIR, "server.db")
+      : join(this.opts.vaultPath!, META_DIR, "server", "server.db");
+  }
+
+  /** Paired devices (tests, CLI). */
+  get devices(): DeviceStore {
+    return this.auth.devices;
+  }
+
   /** Open every vault, then (multi-vault mode) watch for vaults added or removed. */
   async start(): Promise<void> {
+    this.auth = new DeviceAuth({
+      devices: new DeviceStore(this.devicesDbPath),
+      authToken: this.opts.authToken,
+      limiter: this.limiter,
+      trustProxy: this.opts.trustProxy,
+      vaultIds: () => [...this.vaults.keys()].sort(),
+      onRevoked: (deviceId) => this.dropDevice(deviceId),
+    });
     if (this.opts.vaultsPath) {
       mkdirSync(this.opts.vaultsPath, { recursive: true });
       await this.rescan();
@@ -114,6 +144,33 @@ export class VaultHost {
     if (this.rescanTimer) clearTimeout(this.rescanTimer);
     await this.rescanning;
     await Promise.all([...this.vaults.keys()].map((id) => this.close(id)));
+    for (const streams of this.deviceStreams.values()) for (const res of streams) res.end();
+    this.deviceStreams.clear();
+    this.auth?.devices.close();
+  }
+
+  /** A revoked device's sockets and change streams stop now. */
+  private dropDevice(deviceId: string): void {
+    const tag = `device:${deviceId}`;
+    for (const vault of this.vaults.values()) {
+      vault.sync.rooms.disconnectWhere((client) => client.principal === tag);
+    }
+    for (const res of this.deviceStreams.get(deviceId) ?? []) res.end();
+    this.deviceStreams.delete(deviceId);
+  }
+
+  /** Authenticate a request to one vault's API; answers it when refused. */
+  private authorizeVault(req: IncomingMessage, res: ServerResponse, vaultId: string): boolean {
+    const principal = this.auth.authenticate(req, res, vaultId);
+    if (!principal) return false;
+    if (principal.kind === "device" && /\/events$/.test(new URL(req.url ?? "/", "http://x").pathname)) {
+      const id = principal.device.id;
+      const streams = this.deviceStreams.get(id) ?? new Set<ServerResponse>();
+      this.deviceStreams.set(id, streams);
+      streams.add(res);
+      res.on("close", () => streams.delete(res));
+    }
+    return true;
   }
 
   /** Ids of the vaults being served, in name order. */
@@ -188,6 +245,8 @@ export class VaultHost {
       watch: this.opts.watch,
       limiter: this.limiter,
       trustProxy: this.opts.trustProxy,
+      authorizeJoin: (token, client) => this.auth.authorizeJoin(id, token, client),
+      onClientClosed: (client) => this.auth.devices.releaseConnection(client.connectionId),
     });
     const api = createHttpApi({
       store: sync.store,
@@ -196,6 +255,7 @@ export class VaultHost {
       limiter: this.limiter,
       trustProxy: this.opts.trustProxy,
       maxAssetBytes: this.opts.maxAssetBytes,
+      authorize: (req, res) => this.authorizeVault(req, res, id),
       onAssetPut: (assetId, digest) => sync.materializeAsset(assetId, digest),
     });
     const vault: HostedVault = { id, path, sync, api, ready: Promise.resolve(), isReady: false };
@@ -241,9 +301,14 @@ export class VaultHost {
   /** Handle any `/api/*` request. */
   handleApi(req: IncomingMessage, res: ServerResponse): void {
     const url = new URL(req.url ?? "/", "http://localhost");
+    if (this.auth.handle(req, res, url.pathname)) return;
     if (req.method === "GET" && url.pathname === "/api/vaults") {
-      if (!this.authorize(req, res)) return;
-      sendJson(res, 200, { vaults: this.list() });
+      const principal = this.auth.authenticate(req, res);
+      if (!principal) return;
+      const vaults = this.list().filter(
+        (vault) => principal.kind === "admin" || grantAllows(principal.device.vaults, vault.id),
+      );
+      sendJson(res, 200, { vaults });
       return;
     }
     const target = this.route(url.pathname);
@@ -251,7 +316,7 @@ export class VaultHost {
     const vault = target.id === null ? undefined : this.vaults.get(target.id);
     if (!vault) {
       // Don't reveal which vaults exist to an unauthenticated caller.
-      if (!this.authorize(req, res)) return;
+      if (!this.auth.authenticate(req, res)) return;
       sendJson(res, 404, { error: "unknown vault" });
       return;
     }
@@ -279,23 +344,6 @@ export class VaultHost {
       return;
     }
     vault.sync.rooms.handleUpgrade(req, socket, head);
-  }
-
-  private authorize(req: IncomingMessage, res: ServerResponse): boolean {
-    const client = clientAddress(req, this.opts.trustProxy ?? false);
-    const retryAfter = this.limiter.retryAfterMs(client);
-    if (retryAfter > 0) {
-      res.setHeader("retry-after", String(Math.ceil(retryAfter / 1000)));
-      sendJson(res, 429, { error: "too many failed attempts" });
-      return false;
-    }
-    if (!bearerMatches(req.headers["authorization"], this.opts.authToken)) {
-      this.limiter.recordFailure(client);
-      sendJson(res, 401, { error: "unauthorized" });
-      return false;
-    }
-    this.limiter.recordSuccess(client);
-    return true;
   }
 }
 

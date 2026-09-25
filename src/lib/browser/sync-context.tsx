@@ -29,7 +29,9 @@ import { TREE_VAULT_ID } from "@/lib/sync/rooms";
 import {
   clearSyncConfig,
   deriveSyncUrls,
+  fetchSyncTicket,
   loadSyncConfig,
+  pairDevice,
   saveSyncConfig,
   testSyncConnection,
   type SyncConfig,
@@ -104,10 +106,33 @@ export function SyncProvider({
 
   const canSync = !!engine && !!engine.releaseWriterLock;
 
+  // A config saved before device pairing holds the admin token. Pair this
+  // browser with it once, then drop it from localStorage either way (spec
+  // item 5); if pairing fails, ask for the token again in Sync settings.
+  useEffect(() => {
+    if (!engine || !config?.authToken) return;
+    let cancelled = false;
+    const { authToken, ...rest } = config;
+    void pairDevice({ serverUrl: config.serverUrl, adminToken: authToken, remoteVaultId: config.remoteVaultId })
+      .then((result) => {
+        saveSyncConfig(rest, engine.vaultId);
+        if (cancelled) return;
+        setConfig(rest);
+        if (!result.ok) {
+          setStatus({ kind: "error", message: `Pair this browser again: ${result.error}` });
+          setDialogOpen(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, config]);
+
   // Start/stop the host whenever the engine becomes syncable or config changes.
   useEffect(() => {
     let cancelled = false;
-    if (!canSync || !engine || !config) return;
+    // A stored token is migrated to pairing first (above).
+    if (!canSync || !engine || !config || config.authToken) return;
 
     // Reset before the async start below; the host reports its own status
     // from then on.
@@ -125,7 +150,9 @@ export function SyncProvider({
           engine,
           wsUrl,
           apiUrl,
-          authToken: config.authToken,
+          // HTTP calls carry the device cookie; each round's socket joins
+          // with a fresh ticket.
+          getJoinAuth: () => fetchSyncTicket(config.serverUrl, config.remoteVaultId),
           // The server vault's tree room, whatever this vault's local id.
           vaultId: TREE_VAULT_ID,
         });
@@ -150,7 +177,7 @@ export function SyncProvider({
       setStatus({ kind: "idle" });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSync, engine, config?.serverUrl, config?.authToken]);
+  }, [canSync, engine, config?.serverUrl, config?.remoteVaultId, config?.authToken]);
 
   // Reconnect promptly on network/visibility signals rather than waiting for
   // the next backoff-scheduled attempt.

@@ -13,7 +13,14 @@ export interface SyncCoordinatorOptions {
   wsUrl: string;
   /** HTTP API base: `<origin>/api/v/<vaultId>` (or `<origin>/api` for the legacy default vault). */
   apiUrl: string;
-  authToken: string;
+  /**
+   * The server's admin token (scripts, tests, clients paired before device
+   * pairing). A paired browser leaves it unset: its HTTP calls carry the
+   * device cookie, and room joins use a ticket from `getJoinAuth`.
+   */
+  authToken?: string;
+  /** A fresh sync ticket for this round's socket (POST /api/auth/ws-ticket). */
+  getJoinAuth?: () => Promise<string>;
   vaultId: string;
   maxConcurrentDocs?: number;   // §34: 8 on mobile
   maxConcurrentBinaries?: number; // §34: 2 on mobile
@@ -146,12 +153,15 @@ export class SyncCoordinator {
 
   private async loop(): Promise<SyncReport> {
     const { wsUrl, apiUrl, authToken, vaultId } = this.opts;
-    const hdr = { authorization: `Bearer ${authToken}` };
+    const hdr: Record<string, string> = authToken ? { authorization: `Bearer ${authToken}` } : {};
 
     // 2-4: connect WS
     console.log("coord: connecting");
     await testWebSocketConnection(wsUrl, this.opts.connectionTimeoutMs);
     await this.opts.beforeConnect?.();
+    // Tickets last 60 s until redeemed, so fetch one per round, just before use.
+    const joinAuth = authToken ?? (await this.opts.getJoinAuth?.());
+    if (!joinAuth) throw new Error("Sync has no credentials: pair this device in Sync settings.");
     const client = new SyncClient({ url: wsUrl, disablePing: true } as LoroWebsocketClientOptions);
     this.client = client;
     let treeRoom: { waitForReachingServerVersion(): Promise<void>; leave(): void } | null = null;
@@ -167,7 +177,7 @@ export class SyncCoordinator {
         client.join({
           roomId: `vault:${vaultId}`,
           crdtAdaptor: treeAdaptor,
-          auth: new TextEncoder().encode(authToken),
+          auth: new TextEncoder().encode(joinAuth),
         }),
         "Vault room join",
         this.opts.connectionTimeoutMs,
@@ -214,7 +224,7 @@ export class SyncCoordinator {
 
       // 9: sync doc rooms
       const touchedRoomIds: string[] = [];
-      const docsSynced = await this.syncDocs(documents, client, authToken, touchedRoomIds, apiUrl, hdr);
+      const docsSynced = await this.syncDocs(documents, client, joinAuth, touchedRoomIds, apiUrl, hdr);
 
       // 10: sync binaries
       const binariesSynced = await this.syncBinaries(binaries, apiUrl, hdr);
@@ -256,7 +266,7 @@ export class SyncCoordinator {
   private async syncDocs(
     roomIds: string[],
     client: LoroWebsocketClient,
-    authToken: string,
+    joinAuth: string,
     touched: string[],
     apiUrl: string,
     hdr: Record<string, string>,
@@ -278,7 +288,7 @@ export class SyncCoordinator {
           client.join({
             roomId: id,
             crdtAdaptor: adaptor,
-            auth: new TextEncoder().encode(authToken),
+            auth: new TextEncoder().encode(joinAuth),
           }),
           `Document room join (${id})`,
           this.opts.connectionTimeoutMs,

@@ -27,7 +27,9 @@ export interface SyncHostOptions {
   engine: VaultEngine;
   wsUrl: string;
   apiUrl: string;
-  authToken: string;
+  /** Admin token (tests, scripts); a paired browser uses its cookie and `getJoinAuth`. */
+  authToken?: string;
+  getJoinAuth?: () => Promise<string>;
   vaultId: string;
   maxConcurrentDocs?: number;
   maxConcurrentBinaries?: number;
@@ -53,19 +55,20 @@ export class SyncHost {
   private eventsConnected = false;
 
   private readonly apiUrl: string;
-  private readonly authToken: string;
+  private readonly authHeaders: Record<string, string>;
 
   private constructor(options: SyncHostOptions, journal: DirtyJournal) {
     this.fs = options.fs;
     this.engine = options.engine;
     this.journal = journal;
     this.apiUrl = options.apiUrl;
-    this.authToken = options.authToken;
+    this.authHeaders = options.authToken ? { authorization: `Bearer ${options.authToken}` } : {};
     this.coordinator = new SyncCoordinator(
       {
         wsUrl: options.wsUrl,
         apiUrl: options.apiUrl,
         authToken: options.authToken,
+        getJoinAuth: options.getJoinAuth,
         vaultId: options.vaultId,
         maxConcurrentDocs: options.maxConcurrentDocs,
         maxConcurrentBinaries: options.maxConcurrentBinaries,
@@ -137,7 +140,7 @@ export class SyncHost {
     this.events = events;
     void subscribeToChanges({
       url: `${this.apiUrl}/events`,
-      headers: { authorization: `Bearer ${this.authToken}` },
+      headers: this.authHeaders,
       signal: events.signal,
       onConnect: () => {
         this.eventsConnected = true;
@@ -224,7 +227,7 @@ export class SyncHost {
     try {
       const response = await fetch(
         `${this.apiUrl}/changes?after=${this.journal.getLastServerSeq()}`,
-        { headers: { authorization: `Bearer ${this.authToken}` } },
+        { headers: this.authHeaders },
       );
       if (response.ok) {
         const body = await response.json() as { changes?: unknown[] };
@@ -254,7 +257,7 @@ export class SyncHost {
   private async serverHasContent(): Promise<boolean> {
     try {
       const res = await fetch(`${this.apiUrl}/changes?after=0`, {
-        headers: { authorization: `Bearer ${this.authToken}` },
+        headers: this.authHeaders,
       });
       if (!res.ok) return false; // can't tell — safest to assume empty and keep the seed
       const body = (await res.json()) as { changes: unknown[] };

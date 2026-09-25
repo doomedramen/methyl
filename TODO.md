@@ -38,9 +38,9 @@ described in README.md and SPEC.md §33.
       SimpleServer) pushes server-side changes into open rooms, and `/api/events`
       tells running clients to sync the moment anything changes; polling is a
       30-second fallback.
-- [ ] **Sync token is stored in `localStorage`.** Fine for a LAN deployment,
-      readable by anything with access to the browser profile. SPEC §31 describes
-      a pairing flow that isn't implemented.
+- [x] **Sync token is stored in `localStorage`.** Done: browsers pair once with
+      the admin token (SPEC §31) and are then signed in by an HttpOnly cookie;
+      sync sockets join with 60-second tickets. Stored tokens are migrated.
 - [ ] **No release tag**, so no version is shown anywhere and the diagnostics
       summary reports `NEXT_PUBLIC_APP_VERSION` only if it's set at build time.
       `latest` currently tracks `main`.

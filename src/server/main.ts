@@ -25,10 +25,9 @@ const MAX_ASSET_BYTES = process.env.METHYL_MAX_ASSET_BYTES
 // against a differently-located checkout (e.g. a container that mounts the
 // build elsewhere).
 const APP_DIR = process.env.METHYL_APP_DIR ?? join(__dirname, "..");
-// CORS for /api + /healthz: only needed when the browser app is served from
-// a different origin than this server (e.g. a separate frontend host).
-// Same-origin requests need no CORS headers at all, so the default is to
-// send none. Set a comma-separated allow-list to opt in.
+// CORS for /api + /healthz, for admin-token scripts on another origin. The
+// browser app itself must be same-site (its device cookie is SameSite=Strict),
+// and same-origin requests need no CORS headers, so the default is none.
 const ALLOWED_ORIGINS = (process.env.METHYL_ALLOWED_ORIGINS ?? "")
   .split(",")
   .map((o) => o.trim())
@@ -40,14 +39,14 @@ function applyCors(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
-  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
 }
 
 function requireAuthToken(): void {
   if (AUTH_TOKEN) return;
   console.error(
     "[methyl] METHYL_AUTH_TOKEN is required. Set it to a long random secret " +
-      "(e.g. `openssl rand -hex 32`) — clients and this server must agree on it.",
+      "(e.g. `openssl rand -hex 32`); it pairs browsers and authenticates scripts.",
   );
   process.exit(1);
 }

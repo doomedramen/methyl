@@ -103,6 +103,14 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 
 **Acceptance.** No token is present in `localStorage`, IndexedDB or OPFS after pairing (e2e assertion). Tickets expire and are single-use. Revoking a device drops its open sockets within one heartbeat. The old-token migration is tested.
 
+**As built.** `src/lib/server/devices.ts` (device store, tickets) and `src/lib/server/device-auth.ts` (routes, principals), wired into `VaultHost`; the browser side is in `sync-config.ts`, `sync-context.tsx` and `SyncSettingsDialog.tsx`. Details are in SPEC §31. Choices made:
+
+- "Single-use" tickets are redeemed by one *socket*: a sync round joins the tree room and every document room on one socket, so later joins on that socket reuse the ticket; no other socket can. The browser fetches a ticket per round.
+- A revoked device's sockets and change streams are dropped at once, not at the next heartbeat.
+- A device can list devices and remove itself; removing another needs the admin token.
+- Pairing from an already-paired browser adds the vault to the same device.
+- Tests: `devices.test.ts` (store, tickets with a fake clock), `device-pairing.test.ts` (cookie flags, per-vault 403, tickets, revocation), `e2e/pairing.spec.ts` (nothing in `localStorage`, IndexedDB or OPFS; HttpOnly cookie; migration of an old stored token).
+
 ### 3.4 Input validation for IDs (item 6)
 
 **Problem.** Asset and room IDs go from `decodeURIComponent` straight into SQLite keys and conflict IDs (`${id}~${digest}`). Disk paths use the sha256, so there is no traversal, but there are no length or character limits.
@@ -202,7 +210,7 @@ OPFS root
 - The tree room is `vault:local` in every server vault (`src/lib/sync/rooms.ts`). Each server vault is its own room namespace, so the tree room needs no vault id, and `vault:local` is what every existing server database already holds. Browser vaults join it whatever their local id.
 - A browser vault's sync config gains `remoteVaultId` (default `default`), chosen in *Sync settings* with the server's vault list as suggestions. The client's API base (`apiUrl`) and socket URL carry it. The sync journal records which API its `lastServerSeq` belongs to and starts again from 0 when the binding changes.
 - `backup`/`restore` take `--vault <id>` in multi-vault mode.
-- Per-vault device authorisation and `.methyl-server/server.db` come with item 5.
+- Per-vault device authorisation and `.methyl-server/server.db` came with item 5.
 
 **Acceptance.** Unit tests for the registry, per-vault key namespacing and the migration (including a crash between copy and delete, then rerun). Server e2e test with two vaults: edits in one never show up in the other's changes feed, and a device paired for one gets 403 on the other. Playwright: create a second vault, switch, both vaults keep their notes across reloads, and two tabs hold writer locks on different vaults at once. Add a multi-vault section to SPEC.md and fix the `TODO.md` reference.
 

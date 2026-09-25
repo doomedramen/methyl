@@ -27,6 +27,7 @@ import {
   saveSyncConfig,
   clearSyncConfig,
   deriveSyncUrls,
+  describeThisDevice,
   testSyncConnection,
 } from "@/lib/browser/sync-config";
 import { shouldSeedWelcomeNote } from "@/lib/browser/vault";
@@ -82,9 +83,23 @@ describe("sync config store", () => {
     expect(loadSyncConfig()).toBeNull();
   });
 
-  it("rejects a config missing fields", () => {
-    localStorage.setItem("adhd-sync-config", JSON.stringify({ serverUrl: "https://x.example.com" }));
+  it("rejects a config without a server URL", () => {
+    localStorage.setItem("adhd-sync-config", JSON.stringify({ authToken: "t" }));
     expect(loadSyncConfig()).toBeNull();
+  });
+
+  it("a paired config holds no token; an old one still yields its token for migration", () => {
+    localStorage.setItem("methyl.sync-config:local", JSON.stringify({ serverUrl: "https://x.example.com", remoteVaultId: "work" }));
+    expect(loadSyncConfig()).toEqual({ serverUrl: "https://x.example.com", remoteVaultId: "work" });
+    localStorage.setItem("methyl.sync-config:local", JSON.stringify({ serverUrl: "https://x.example.com", authToken: "old" }));
+    expect(loadSyncConfig()).toEqual({ serverUrl: "https://x.example.com", authToken: "old" });
+  });
+
+  it("names this device from the user agent", () => {
+    const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+    expect(describeThisDevice(iphone)).toBe("Safari on iPhone");
+    const chromeWin = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
+    expect(describeThisDevice(chromeWin)).toBe("Chrome on Windows");
   });
 
   it("derives ws/http urls from an https origin", () => {

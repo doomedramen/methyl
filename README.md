@@ -130,12 +130,13 @@ Once a server is running (above), point each browser at it:
    OPFS/service-worker storage is scoped per origin, so a vault opened from a different
    origin is a different, unsynced vault.
 2. Open **Sync settings** — from the status popover in the sidebar footer, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> → "Sync settings".
-3. Paste the server URL (auto-filled with the current origin when it's detected as a
-   Methyl server) and the `METHYL_AUTH_TOKEN` you set above. "Test connection" checks
-   both before you save. **Server vault** picks which of the server's vaults this
-   browser vault syncs with; a server with one vault calls it `default`.
-4. Save. Only the tab holding the vault's writer lock (SPEC §12) opens a sync
-   connection; other tabs stay read-only and don't duplicate it.
+3. Check the server URL (it starts as the current origin), paste the `METHYL_AUTH_TOKEN`
+   you set above as the **Admin token**, and pick the **Server vault** this browser
+   vault syncs with (a server with one vault calls it `default`).
+4. **Pair and save.** The token is used once, to pair this browser, and isn't kept. The
+   server signs the browser in with an HttpOnly cookie, and each sync connection uses a
+   ticket that's valid for a minute. Only the tab holding the vault's writer lock (SPEC §12)
+   opens a sync connection; other tabs stay read-only and don't duplicate it.
 
 The browser vault and the server's mounted folder are separate local copies.
 After connecting Sync, copying a `.md` file or creating a folder in the mounted
@@ -144,22 +145,21 @@ empty folders are supported too. Without Sync configured, use **Import Obsidian
 vault** in the app instead — changing the server's folder cannot change an
 offline browser vault.
 
-The server URL and access token are saved in this browser's `localStorage` — not a
-cookie — so treat them like any other locally-stored secret: anyone with access to this
-browser profile/device can read the token. This is fine for the intended deployment (a
-LAN-only server, see [Network/security model](SPEC.md) in SPEC.md §32) but is a real
-tradeoff versus a proper pairing flow.
+**Paired devices** are listed in Sync settings. **Unpair** signs this browser out; with the
+admin token entered, **Remove** signs out any other device at once, including its open
+sync connections. A browser that saved the token with an older version pairs with it on
+first start and deletes it.
 
-If the app and the sync server are served from **different origins** (not the default
-above), set `METHYL_ALLOWED_ORIGINS` on the server to a comma-separated list of allowed
-app origins so its `/api/*` and `/healthz` responses carry the right CORS headers — by
-default, cross-origin requests are rejected by the browser.
+Browser sync needs the app and the server on the **same site** (the pairing cookie is
+`SameSite=Strict`), which the default above already is. `METHYL_ALLOWED_ORIGINS` (a
+comma-separated list of origins) adds CORS headers to `/api/*` and `/healthz`, for scripts
+on another origin that use the admin token.
 
 ### Server settings
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `METHYL_AUTH_TOKEN` | *(required)* | Shared secret clients use to authenticate. |
+| `METHYL_AUTH_TOKEN` | *(required)* | The admin token: pairs browsers, and authenticates scripts (`Authorization: Bearer …`). |
 | `METHYL_PORT` / `METHYL_HOST` | `8080` / `0.0.0.0` | Where the server listens. |
 | `METHYL_VAULT_PATH` | `/vault` | The mounted vault folder, served as the vault `default`. Ignored when `METHYL_VAULTS_PATH` is set. |
 | `METHYL_VAULTS_PATH` | *(unset)* | A folder of vaults: each sub-folder is served as its own vault. See [Vaults](#vaults). |
