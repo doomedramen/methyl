@@ -692,7 +692,13 @@ export function createSyncServer(options: SyncServerOptions) {
         await watcher.close();
         watcher = null;
       }
+      // The room server's final save queues disk-mirror writes; let them
+      // and the engine's debounced cache write finish, so nothing writes
+      // into the vault after stop() resolves (process exit, or a caller
+      // removing the folder).
       await rooms.stop();
+      await mirrorWriteChain;
+      await engine?.flushIndexes();
       if (wsHttp) {
         await new Promise<void>((resolve) => wsHttp!.close(() => resolve()));
         wsHttp = null;
