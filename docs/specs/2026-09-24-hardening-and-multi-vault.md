@@ -281,6 +281,14 @@ OPFS root
 
 No file over ~600 lines afterwards. Add that as a soft check in `architecture.test.ts` (warn, list offenders).
 
+**As built.** Three commits, each a move with behaviour unchanged:
+
+- `engine.ts` 1,919 → 590 lines, a facade over `engine/` (`indexes`, `attachments`, `materialize`, `doc-index`, `ingest`, `persist`, `tree-ops`, plus `helpers` and `types`). Method bodies moved as they were, `this` becoming `engine`. The members those modules share can't stay `private` (TypeScript has no module-private members) and are marked `@internal`. "Index repair" had no separate code to move: the reseed-from-tree rail lives in `doc-index.ts`.
+- `AppSidebar.tsx` 1,515 → 467: `sidebar-rows.ts` (row types, flattening, collapsed folders), `use-sidebar-dnd.ts` (drag-and-drop state and handlers, keyboard moves), `SidebarRow.tsx` (rows, drop lines, drag preview). The vault switcher was already its own file.
+- `VaultApp.tsx` 1,641 → 593: `VaultPluginBridge.tsx`, `VaultHeader.tsx`, `VaultSurfaces.tsx`, `vault-rows.ts`, and hooks `use-save-feedback`, `use-create-actions`, `use-tree-actions`, `use-os-entry-points`.
+
+Every test passed unchanged except one path in `legacy-name.test.ts`'s allow-list (the file holding the old collapsed-folders key moved). The largest files left are `use-sidebar-dnd.ts` and `SidebarRow.tsx` (about 500 lines each); the soft check lists anything over 600.
+
 ### 6.2 Remove unused UI components (item 15)
 
 **Problem.** `src/components/ui/` has 62 shadcn components; about 25 are imported outside that folder.
