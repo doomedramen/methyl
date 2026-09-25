@@ -1,6 +1,13 @@
 # Methyl hardening, sync and multi-vault: implementation specification
 
-Status: ready for implementation. This document is a specification, not a claim that the work is implemented.
+Status: implemented on branch `claude/charming-hopper-xjdlte`, apart from the steps below that need the maintainer. Each item's **As built** note records what was done and where it differs from the text.
+
+Left for the maintainer:
+
+- **Item 8:** file the drafted `loro-codemirror` issue (`docs/upstream/loro-codemirror-first-edit.md`), then put its link in `NoteEditor.tsx` and `TODO.md`.
+- **Item 12:** tag `v0.1.0` on `main` once this branch is merged. The tag publishes the release image.
+- **Items 16, 17.5 and 20:** run `docs/qa/device-checklist.md` on a real iPhone and Android phone, including VoiceOver and TalkBack, and record the real-device startup time.
+- **Item 19:** confirm CI's docker job builds the new image. This environment's proxy blocks the committed Dockerfile here; the same Dockerfile, with only the proxy settings added, built and ran.
 
 Baseline inspected: `ae75f3d` (`test(a11y): select templates as buttons`). Read the current files before editing; other work may have landed since this inspection.
 
