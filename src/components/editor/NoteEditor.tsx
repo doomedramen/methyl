@@ -182,6 +182,10 @@ export function NoteEditor({
           state: EditorState.create({
             doc: getContentTextFromDoc(session.doc).toString(),
             extensions: [
+              // CodeMirror's content is a role="textbox"; give it a name, and
+              // an explicit tabindex so its scroller counts as keyboard
+              // reachable (a bare contenteditable doesn't, to some checkers).
+              EditorView.contentAttributes.of({ "aria-label": "Note text", tabindex: "0" }),
               methylEditorExtensions({
                 doc: session.doc,
                 ephemeral,
@@ -371,6 +375,9 @@ export function NoteEditor({
             type="file"
             multiple
             className="sr-only"
+            // Opened only by the "Attach file" button above.
+            tabIndex={-1}
+            aria-hidden="true"
             onChange={(event) => {
               const files = Array.from(event.target.files ?? []);
               event.target.value = "";

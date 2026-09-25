@@ -11,7 +11,6 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-  CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
 import { useApp, useCommands } from "@/lib/plugins/react";
@@ -107,9 +106,10 @@ export function CommandMenu({
               ))}
             </CommandGroup>
           )}
-          {visibleNotes.length > 0 && visibleCommands.length > 0 && <CommandSeparator />}
           {visibleCommands.length > 0 && (
-            <CommandGroup heading="Actions">
+            // A border, not a separator: a listbox may only contain options
+            // and groups.
+            <CommandGroup heading="Actions" className={visibleNotes.length > 0 ? "border-t" : undefined}>
               {visibleCommands.map((cmd) => (
                 <CommandItem
                   key={cmd.fullId}

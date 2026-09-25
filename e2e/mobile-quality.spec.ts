@@ -116,7 +116,7 @@ test.describe("mobile quality", () => {
 
     const newTab = page.getByRole("button", { name: "New tab" });
     await expect(newTab).toBeDisabled();
-    await expect(page.getByRole("button", { name: /^Close / })).toHaveCount(2);
+    await expect(page.locator('[data-tab-close="true"]')).toHaveCount(2);
 
     await page.setViewportSize({ width: 844, height: 390 });
     await expect(newTab).toBeEnabled();

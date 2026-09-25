@@ -1,9 +1,11 @@
 "use client";
 
-import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useDraggable, useDroppable, type DraggableAttributes } from "@dnd-kit/core";
+import type { KeyboardEventHandler, Ref } from "react";
 import type { TreeID } from "loro-crdt";
 import {
   ChevronRight,
+  GripVertical,
   Folder,
   FolderOpen,
   FileText,
@@ -131,9 +133,25 @@ export function Row({
   onDeleteAssetRequest,
 }: RowProps) {
   const { row, depth } = flat;
-  const { attributes, listeners, setNodeRef: setDragRef } = useDraggable({
+  const { attributes, listeners, setNodeRef: setDragRef, setActivatorNodeRef } = useDraggable({
     id: row.treeId,
   });
+  // Pointer and touch drags start anywhere on the row; the keyboard drag
+  // starts from its own handle, so the row isn't an interactive element
+  // wrapping other buttons.
+  const { onKeyDown: onDragKeyDown, ...pointerListeners } = (listeners ?? {}) as Record<
+    string,
+    (event: unknown) => void
+  >;
+  const rowName = row.kind === "directory" ? row.name : row.title;
+  const dragHandle = (
+    <DragHandle
+      ref={setActivatorNodeRef}
+      attributes={attributes}
+      onKeyDown={onDragKeyDown as KeyboardEventHandler | undefined}
+      name={rowName}
+    />
+  );
   const { setNodeRef: setDropRef } = useDroppable({ id: row.treeId });
 
   const isTarget = placement?.targetTreeId === row.treeId;
@@ -158,9 +176,8 @@ export function Row({
             render={
               <div
                 ref={setRefs}
-                {...attributes}
-                {...listeners}
-                data-sidebar-drag-row="true"
+                {...pointerListeners}
+                data-sidebar-row="true"
                 data-sidebar-drop-parent={isDestinationParent ? "true" : undefined}
                 style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
                 className={cn(
@@ -170,6 +187,7 @@ export function Row({
                   isDestinationParent && "bg-sidebar-accent/70 ring-1 ring-sidebar-ring/70",
                 )}
               >
+                {dragHandle}
                 {depth > 0 && <IndentGuide depth={depth} />}
                 {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
                 <SidebarMenuButton
@@ -267,12 +285,12 @@ export function Row({
             render={
               <div
                 ref={setRefs}
-                {...attributes}
-                {...listeners}
-                data-sidebar-drag-row="true"
+                {...pointerListeners}
+                data-sidebar-row="true"
                 style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
                 className={cn("relative rounded-md", (isDragging || isDimmed) && "opacity-35")}
               >
+                {dragHandle}
                 {depth > 0 && <IndentGuide depth={depth} />}
                 {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
                 <SidebarMenuButton
@@ -338,13 +356,13 @@ export function Row({
           render={
             <div
               ref={setRefs}
-              {...attributes}
-              {...listeners}
-              data-sidebar-drag-row="true"
+              {...pointerListeners}
+              data-sidebar-row="true"
               data-sidebar-drop-parent={isDestinationParent ? "true" : undefined}
               style={{ ...indent, touchAction: isDragging ? "none" : "pan-y" }}
               className={cn("relative rounded-md", (isDragging || isDimmed) && "opacity-35")}
             >
+              {dragHandle}
               {depth > 0 && <IndentGuide depth={depth} />}
               {isDestinationParent && placement && <IndentGuide depth={placement.depth} />}
               <SidebarMenuButton
@@ -495,5 +513,35 @@ export function EmptyFolderRow({ depth }: { depth: number }) {
         </div>
       </div>
     </SidebarMenuItem>
+  );
+}
+
+/**
+ * Keyboard drag handle for a row: Space or Enter picks the row up, arrow keys
+ * move it, Space drops it. Hidden until focused.
+ */
+function DragHandle({
+  ref,
+  attributes,
+  onKeyDown,
+  name,
+}: {
+  ref: Ref<HTMLButtonElement>;
+  attributes: DraggableAttributes;
+  onKeyDown: KeyboardEventHandler | undefined;
+  name: string;
+}) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      {...attributes}
+      onKeyDown={onKeyDown}
+      aria-label={`Move ${name}`}
+      data-sidebar-drag-row="true"
+      className="absolute top-1/2 left-0 z-10 grid size-6 -translate-y-1/2 place-items-center rounded-sm bg-sidebar opacity-0 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+    >
+      <GripVertical className="size-3.5 text-muted-foreground" aria-hidden="true" />
+    </button>
   );
 }
