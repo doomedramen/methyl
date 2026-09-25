@@ -583,3 +583,29 @@ describe("Vault tree (§6)", () => {
     expect(tree.children(notes).length).toBe(1);
   });
 });
+// ── Soft check: file size (spec item 14) ─────────────────────────────
+
+describe("source files stay reviewable", () => {
+  it("lists files over ~600 lines (a warning, not a failure)", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("fs");
+    const { join } = await import("path");
+    const LIMIT = 600;
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) {
+          if (name !== "__tests__") walk(path);
+        } else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) {
+          const lines = readFileSync(path, "utf8").split("\n").length;
+          if (lines > LIMIT) offenders.push(`${path} (${lines})`);
+        }
+      }
+    };
+    walk("src");
+    if (offenders.length > 0) {
+      console.warn(`Files over ${LIMIT} lines — split when next touched:\n  ${offenders.join("\n  ")}`);
+    }
+    expect(Array.isArray(offenders)).toBe(true);
+  });
+});
