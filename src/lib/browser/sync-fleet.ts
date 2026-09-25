@@ -13,6 +13,8 @@ import {
 import { originFileSystem, getVaultFileSystem } from "@/lib/browser/vault";
 import {
   ensureVaultSyncIds,
+  markVaultArchived,
+  markVaultRestored,
   registerRemoteVault,
   type VaultInfo,
 } from "@/lib/browser/vault-registry";
@@ -98,6 +100,11 @@ export class VaultSyncFleet {
     this.entries.delete(vaultId);
   }
 
+  resumeVaultAfterFailedArchive(vaultId: string): void {
+    this.blockedVaultIds.delete(vaultId);
+    void this.reconcile();
+  }
+
   private yieldVaultForForeground(vaultId: string): void {
     this.yieldRequests.add(vaultId);
     const entry = this.entries.get(vaultId);
@@ -143,6 +150,26 @@ export class VaultSyncFleet {
         return;
       }
 
+      const archivedSyncIds = new Set(listed.archivedVaults);
+      const activeSyncIds = new Set(listed.vaults);
+      for (const vault of vaults) {
+        if (!vault.syncId) continue;
+        if (archivedSyncIds.has(vault.syncId) && !vault.archivedAt) {
+          await markVaultArchived(origin, vault.id);
+          const entry = this.entries.get(vault.id);
+          if (entry) {
+            this.disposeEntry(entry);
+            this.entries.delete(vault.id);
+          }
+          if (vault.id === this.options.activeVaultId) {
+            this.options.onActiveStatus({ kind: "error", message: "This vault was archived on the sync server." });
+          }
+        } else if (vault.archivedAt && activeSyncIds.has(vault.syncId)) {
+          await markVaultRestored(origin, vault.id);
+        }
+      }
+      vaults = await ensureVaultSyncIds(origin, loadLegacyVaultSyncIds());
+
       const knownSyncIds = new Set(vaults.map((vault) => vault.syncId));
       for (const remoteId of listed.vaults) {
         if (!knownSyncIds.has(remoteId)) await registerRemoteVault(origin, remoteId);
@@ -151,6 +178,7 @@ export class VaultSyncFleet {
 
       const remoteIds = new Set(listed.vaults);
       for (const vault of vaults) {
+        if (vault.archivedAt) continue;
         if (!vault.syncId || remoteIds.has(vault.syncId)) continue;
         const result = await ensureServerVault({ serverUrl: this.options.config.serverUrl, id: vault.syncId });
         if (result.ok) remoteIds.add(vault.syncId);
@@ -159,7 +187,7 @@ export class VaultSyncFleet {
 
       const localIds = new Set(vaults.map((vault) => vault.id));
       for (const [vaultId, entry] of this.entries) {
-        if (!localIds.has(vaultId) || this.blockedVaultIds.has(vaultId)) {
+        if (!localIds.has(vaultId) || entry.vault.archivedAt || this.blockedVaultIds.has(vaultId)) {
           this.disposeEntry(entry);
           this.entries.delete(vaultId);
         }
@@ -168,6 +196,7 @@ export class VaultSyncFleet {
       for (const vault of vaults) {
         if (
           this.stopped ||
+          vault.archivedAt ||
           this.entries.has(vault.id) ||
           this.blockedVaultIds.has(vault.id) ||
           this.yieldRequests.has(vault.id)
@@ -280,4 +309,9 @@ export class VaultSyncFleet {
 /** A vault can be deleted only after any same-tab background host releases its writer lock. */
 export async function stopBackgroundSyncForVault(vaultId: string): Promise<void> {
   for (const fleet of fleets) fleet.stopVaultForDelete(vaultId);
+}
+
+/** Resume a vault when its archive request fails before it is hidden locally. */
+export function resumeBackgroundSyncForVault(vaultId: string): void {
+  for (const fleet of fleets) fleet.resumeVaultAfterFailedArchive(vaultId);
 }

@@ -47,7 +47,7 @@ function useVaults(ready: boolean) {
 
 /**
  * The vault name at the top of the sidebar: a menu to open another vault,
- * and "Manage vaults…" for creating, renaming, deleting and importing them.
+ * and "Manage vaults…" for creating, renaming, archiving and importing them.
  */
 /** Window event the "Manage vaults" command sends to open the dialog. */
 export const OPEN_VAULTS_EVENT = "methyl:open-vaults";
@@ -124,7 +124,7 @@ function ManageVaultsDialog({
 }) {
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
-  const [deleting, setDeleting] = useState<VaultInfo | null>(null);
+  const [archiving, setArchiving] = useState<VaultInfo | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -146,8 +146,8 @@ function ManageVaultsDialog({
         <DialogHeader>
           <DialogTitle>Vaults</DialogTitle>
           <DialogDescription>
-            Each browser vault is separate and has its own sync settings. Create or select its
-            server folder in Sync settings. Opening another vault reloads the app.
+            Vaults sync in the background. Archiving removes a vault from active lists while keeping its files.
+            Opening another vault reloads the app.
           </DialogDescription>
         </DialogHeader>
 
@@ -194,11 +194,11 @@ function ManageVaultsDialog({
                       variant="ghost"
                       className="text-destructive"
                       onClick={() => {
-                        setDeleting(vault);
+                        setArchiving(vault);
                         setConfirmText("");
                       }}
                     >
-                      Delete
+                      Archive
                     </Button>
                   )}
                 </>
@@ -207,35 +207,35 @@ function ManageVaultsDialog({
           ))}
         </ul>
 
-        {deleting && (
+        {archiving && (
           <form
             className="flex flex-col gap-2 rounded-md border border-destructive/40 p-3"
             onSubmit={(e) => {
               e.preventDefault();
-              void run("Delete failed", (a) => a.removeVault(deleting.id)).then(() => setDeleting(null));
+              void run("Archive failed", (a) => a.archiveVault(archiving.id)).then(() => setArchiving(null));
             }}
           >
             <Field>
-              <FieldLabel htmlFor="delete-vault-confirm">
-                Delete “{deleting.name}” and every note in it from this browser?
+              <FieldLabel htmlFor="archive-vault-confirm">
+                Archive “{archiving.name}” and hide it from active vault lists?
               </FieldLabel>
               <FieldDescription>
-                This can&apos;t be undone. To keep a copy, open it first and use “Export full backup”.
+                Local files stay on this browser; if synced, server files are preserved in the server archive.
                 Type the vault&apos;s name to confirm.
               </FieldDescription>
               <Input
-                id="delete-vault-confirm"
+                id="archive-vault-confirm"
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
                 autoComplete="off"
               />
             </Field>
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setDeleting(null)}>
+              <Button type="button" variant="outline" size="sm" onClick={() => setArchiving(null)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="destructive" size="sm" disabled={busy || confirmText !== deleting.name}>
-                Delete vault
+              <Button type="submit" variant="destructive" size="sm" disabled={busy || confirmText !== archiving.name}>
+                Archive vault
               </Button>
             </div>
           </form>

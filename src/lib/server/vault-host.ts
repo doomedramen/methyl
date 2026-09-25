@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, statSync, watch, type FSWatcher } from "fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, watch, type FSWatcher } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Duplex } from "stream";
 import { join } from "path";
@@ -16,8 +16,9 @@ import { DeviceStore, grantAllows } from "@/lib/server/devices";
  * watcher and Node-side mirror — so nothing one vault does is visible in
  * another. Routes:
  *
- *   GET  /api/vaults                → { vaults: [{ id, ready }] } the caller may use
+ *   GET  /api/vaults                → active vaults plus archived IDs the caller may use
  *   POST /api/vaults                → create an empty vault folder (admin or granted device)
+ *   DELETE /api/vaults/<id>         → archive a vault (admin or wildcard-paired device)
  *   *    /api/v/<vaultId>/<route>   → that vault's HTTP API
  *   WS   /sync/<vaultId>            → that vault's sync rooms
  *   *    /api/auth/*                → device pairing (see device-auth.ts)
@@ -96,6 +97,7 @@ export class VaultHost {
   private rescanTimer: ReturnType<typeof setTimeout> | null = null;
   private rescanning: Promise<void> = Promise.resolve();
   private readonly skippedNames = new Set<string>();
+  private readonly archivingIds = new Set<string>();
   private warnedLegacyRoutes = false;
   private stopped = false;
   private auth!: DeviceAuth;
@@ -199,6 +201,30 @@ export class VaultHost {
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  /** Archived vault IDs are persisted as folders outside the discoverable root. */
+  listArchived(): string[] {
+    const archiveRoot = this.archiveRoot();
+    const archived = new Set(this.archivingIds);
+    if (archiveRoot) {
+      try {
+        for (const id of readdirSync(archiveRoot)) {
+          try {
+            if (isServerVaultId(id) && statSync(join(archiveRoot, id)).isDirectory()) archived.add(id);
+          } catch {
+            // A concurrent archive or filesystem change can remove an entry during listing.
+          }
+        }
+      } catch {
+        // The archive directory does not exist until the first vault is archived.
+      }
+    }
+    return [...archived].sort((a, b) => a.localeCompare(b));
+  }
+
+  private archiveRoot(): string | null {
+    return this.opts.vaultsPath ? join(this.opts.vaultsPath, SERVER_STATE_DIR, "archived") : null;
+  }
+
   /** The sync server of a vault that is open and ready, or undefined. */
   get(id: string): SyncServer | undefined {
     const vault = this.vaults.get(id);
@@ -245,7 +271,7 @@ export class VaultHost {
           continue;
         }
         present.add(name);
-        if (!this.vaults.has(name)) this.open(name, join(root, name));
+        if (!this.vaults.has(name) && !this.archivingIds.has(name)) this.open(name, join(root, name));
       }
       for (const id of [...this.vaults.keys()]) {
         if (!present.has(id)) await this.close(id);
@@ -321,6 +347,16 @@ export class VaultHost {
   handleApi(req: IncomingMessage, res: ServerResponse): void {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (this.auth.handle(req, res, url.pathname)) return;
+    const archiveMatch = /^\/api\/vaults\/([^/]+)$/.exec(url.pathname);
+    if (req.method === "DELETE" && archiveMatch) {
+      const id = decodeURIComponentSafe(archiveMatch[1]!);
+      if (id === null) {
+        if (this.auth.authenticate(req, res)) sendJson(res, 400, { error: "invalid vault ID" });
+        return;
+      }
+      void this.archiveVault(req, res, id);
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/vaults") {
       void this.createVault(req, res);
       return;
@@ -331,7 +367,10 @@ export class VaultHost {
       const vaults = this.list().filter(
         (vault) => principal.kind === "admin" || grantAllows(principal.device.vaults, vault.id),
       );
-      sendJson(res, 200, { vaults });
+      const archivedVaults = this.listArchived().filter(
+        (id) => principal.kind === "admin" || grantAllows(principal.device.vaults, id),
+      );
+      sendJson(res, 200, { vaults, archivedVaults });
       return;
     }
     const target = this.route(url.pathname);
@@ -349,6 +388,73 @@ export class VaultHost {
       return;
     }
     vault.api(req, res);
+  }
+
+  /** Archive a server vault without deleting its files or listing it for sync. */
+  private async archiveVault(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
+    const principal = this.auth.authenticate(req, res);
+    if (!principal) return;
+    if (!isServerVaultId(id)) {
+      sendJson(res, 400, { error: "invalid vault ID" });
+      return;
+    }
+    if (!this.opts.vaultsPath) {
+      sendJson(res, 409, { error: "server vault archiving requires METHYL_VAULTS_PATH" });
+      return;
+    }
+    if (principal.kind === "device" && principal.device.vaults !== "*") {
+      sendJson(res, 403, { error: "archiving a server vault requires a browser paired for every vault" });
+      return;
+    }
+
+    const archiveRoot = this.archiveRoot()!;
+    const archivePath = join(archiveRoot, id);
+    if (this.archivingIds.has(id)) {
+      sendJson(res, 409, { error: "server vault is already being archived" });
+      return;
+    }
+    const vault = this.vaults.get(id);
+    if (!vault) {
+      if (existsSync(archivePath)) {
+        sendJson(res, 200, { id, archived: true });
+      } else {
+        sendJson(res, 404, { error: "unknown vault" });
+      }
+      return;
+    }
+    if (existsSync(archivePath)) {
+      sendJson(res, 409, { error: "server vault is already being archived" });
+      return;
+    }
+
+    this.archivingIds.add(id);
+    try {
+      // Finish any scan already in progress. Later scans see archivingIds and
+      // won't reopen the folder after close() removes it from the host map.
+      await this.rescanning;
+      const current = this.vaults.get(id);
+      if (!current) {
+        if (existsSync(archivePath)) {
+          sendJson(res, 200, { id, archived: true });
+        } else {
+          sendJson(res, 404, { error: "unknown vault" });
+        }
+        return;
+      }
+      await this.close(id);
+      mkdirSync(archiveRoot, { recursive: true });
+      renameSync(current.path, archivePath);
+      sendJson(res, 200, { id, archived: true });
+    } catch {
+      // If the move failed, resume serving the original folder.
+      if (!this.stopped && existsSync(vault.path) && !this.vaults.has(id)) {
+        this.open(id, vault.path);
+        await this.whenReady(id).catch(() => undefined);
+      }
+      sendJson(res, 500, { error: "could not archive server vault" });
+    } finally {
+      this.archivingIds.delete(id);
+    }
   }
 
   /** Create a server folder for the admin or a device granted access to it. */
@@ -379,6 +485,12 @@ export class VaultHost {
       !principal.device.vaults.includes(id)
     ) {
       sendJson(res, 403, { error: "this device is not paired for that vault" });
+      return;
+    }
+
+    const archiveRoot = this.archiveRoot();
+    if (this.archivingIds.has(id) || (archiveRoot && existsSync(join(archiveRoot, id)))) {
+      sendJson(res, 409, { error: `server vault "${id}" is archived` });
       return;
     }
 

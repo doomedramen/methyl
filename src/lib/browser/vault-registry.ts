@@ -15,6 +15,8 @@ export interface VaultInfo {
   createdAt: number;
   /** Stable server folder for this vault. Added as vaults join shared sync. */
   syncId?: string;
+  /** Hidden from active lists after it has been archived on the sync server. */
+  archivedAt?: number;
 }
 
 /** The vault that existed before multi-vault keeps its id, so its sync room and note URLs stay the same. */
@@ -43,10 +45,14 @@ export async function loadRegistry(fs: VaultFileSystem): Promise<VaultInfo[]> {
     return parsed.filter(
       (v): v is VaultInfo =>
         typeof v?.id === "string" && isValidVaultId(v.id) && typeof v.name === "string" && typeof v.createdAt === "number",
-    ).map((v) => ({
-      ...v,
-      ...(typeof v.syncId === "string" && SERVER_VAULT_ID_RE.test(v.syncId) ? { syncId: v.syncId } : {}),
-    }));
+    ).map((v) => {
+      const { syncId, archivedAt, ...vault } = v;
+      return {
+        ...vault,
+        ...(typeof syncId === "string" && SERVER_VAULT_ID_RE.test(syncId) ? { syncId } : {}),
+        ...(typeof archivedAt === "number" && Number.isFinite(archivedAt) ? { archivedAt } : {}),
+      };
+    });
   } catch {
     return [];
   }
@@ -126,14 +132,24 @@ export function rememberVault(id: string): void {
  */
 export async function resolveVault(fs: VaultFileSystem, pathname: string): Promise<VaultInfo> {
   let vaults = await loadRegistry(fs);
-  if (vaults.length === 0) {
+  if (!vaults.some((vault) => !vault.archivedAt)) {
     vaults = await update(fs, (current) =>
-      current.length > 0 ? current : [{ id: DEFAULT_VAULT_ID, name: "My vault", createdAt: Date.now() }],
+      current.some((vault) => !vault.archivedAt)
+        ? current
+        : [
+            ...current,
+            {
+              id: current.some((vault) => vault.id === DEFAULT_VAULT_ID) ? newVaultId() : DEFAULT_VAULT_ID,
+              name: "My vault",
+              createdAt: Date.now(),
+            },
+          ],
     );
   }
+  const activeVaults = vaults.filter((vault) => !vault.archivedAt);
   const fromUrl = decodeURIComponent(pathname.split("/").filter(Boolean)[0] ?? "");
-  const byId = (id: string | null) => (id ? vaults.find((v) => v.id === id) : undefined);
-  return byId(fromUrl) ?? byId(lastUsedVault()) ?? vaults[0]!;
+  const byId = (id: string | null) => (id ? activeVaults.find((v) => v.id === id) : undefined);
+  return byId(fromUrl) ?? byId(lastUsedVault()) ?? activeVaults[0]!;
 }
 
 function newVaultId(): string {
@@ -211,6 +227,23 @@ export async function renameVault(fs: VaultFileSystem, id: string, name: string)
   const trimmed = name.trim();
   if (!trimmed) throw new Error("A vault needs a name");
   await update(fs, (vaults) => vaults.map((v) => (v.id === id ? { ...v, name: trimmed } : v)));
+}
+
+/** Keep local files, but hide an archived vault from active vault lists. */
+export async function markVaultArchived(fs: VaultFileSystem, id: string, archivedAt = Date.now()): Promise<void> {
+  await update(fs, (vaults) => vaults.map((vault) =>
+    vault.id === id ? { ...vault, archivedAt: vault.archivedAt ?? archivedAt } : vault,
+  ));
+}
+
+/** Make a locally cached archive active again after the server folder is restored. */
+export async function markVaultRestored(fs: VaultFileSystem, id: string): Promise<void> {
+  await update(fs, (vaults) => vaults.map((vault) => {
+    if (vault.id !== id || vault.archivedAt === undefined) return vault;
+    const restored = { ...vault };
+    delete restored.archivedAt;
+    return restored;
+  }));
 }
 
 /**

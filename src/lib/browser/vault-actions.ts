@@ -2,13 +2,15 @@ import { unzipSync } from "fflate";
 import { getCurrentVault, originFileSystem } from "@/lib/browser/vault";
 import {
   createVault,
-  deleteVault,
+  ensureVaultSyncIds,
   importVaultFiles,
   loadRegistry,
+  markVaultArchived,
   renameVault,
   type VaultInfo,
 } from "@/lib/browser/vault-registry";
 import { acquireVaultWriterLock } from "@/lib/vault/web-locks";
+import { archiveServerVault, loadLegacyVaultSyncIds, loadSyncConfig } from "@/lib/browser/sync-config";
 
 /**
  * What the vault switcher and "Manage vaults" dialog do (spec item 9).
@@ -20,7 +22,8 @@ import { acquireVaultWriterLock } from "@/lib/vault/web-locks";
 export type { VaultInfo };
 
 export async function listVaults(): Promise<{ vaults: VaultInfo[]; current: VaultInfo | null }> {
-  return { vaults: await loadRegistry(originFileSystem()), current: getCurrentVault() };
+  const vaults = await loadRegistry(originFileSystem());
+  return { vaults: vaults.filter((vault) => !vault.archivedAt), current: getCurrentVault() };
 }
 
 export function openVault(id: string): void {
@@ -40,20 +43,40 @@ export async function renameVaultTo(id: string, name: string): Promise<void> {
 }
 
 /**
- * Delete a vault that isn't open here. Refused while any tab has it open:
- * taking its writer lock is how that's checked, and holding it through the
- * delete keeps a tab from opening it meanwhile.
+ * Archive a vault globally while retaining the server and local files.
+ * Refused while any tab has it open: taking its writer lock is how that's
+ * checked, and holding it through the archive keeps a tab from opening it.
  */
-export async function removeVault(id: string): Promise<void> {
-  if (getCurrentVault()?.id === id) throw new Error("Switch to another vault before deleting this one");
-  const { stopBackgroundSyncForVault } = await import("@/lib/browser/sync-fleet");
+export async function archiveVault(id: string): Promise<void> {
+  if (getCurrentVault()?.id === id) throw new Error("Switch to another vault before archiving this one");
+  const { stopBackgroundSyncForVault, resumeBackgroundSyncForVault } = await import("@/lib/browser/sync-fleet");
   await stopBackgroundSyncForVault(id);
   const lock = await acquireVaultWriterLock(id);
-  if (!lock.active) throw new Error("That vault is open in another tab; close it there first");
+  if (!lock.active) {
+    resumeBackgroundSyncForVault(id);
+    throw new Error("That vault is open in another tab; close it there first");
+  }
+  let archivedRemotely = false;
+  let resumeSync = false;
   try {
-    await deleteVault(originFileSystem(), id);
+    const fs = originFileSystem();
+    const vaults = await ensureVaultSyncIds(fs, loadLegacyVaultSyncIds());
+    const vault = vaults.find((item) => item.id === id);
+    if (!vault) throw new Error("That vault no longer exists");
+
+    const config = loadSyncConfig();
+    if (config && vault.syncId) {
+      const result = await archiveServerVault({ serverUrl: config.serverUrl, id: vault.syncId });
+      if (!result.ok) throw new Error(result.error);
+      archivedRemotely = true;
+    }
+    await markVaultArchived(fs, id);
+  } catch (error) {
+    resumeSync = !archivedRemotely;
+    throw error;
   } finally {
     lock.release();
+    if (resumeSync) resumeBackgroundSyncForVault(id);
   }
 }
 

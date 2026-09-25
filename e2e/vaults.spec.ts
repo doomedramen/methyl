@@ -36,6 +36,32 @@ test("a second vault keeps its own notes, and switching back finds the first vau
   await expect(page.locator(".cm-content")).toContainText("only in the first vault");
 });
 
+test("an archived vault stays out of the active list after refresh", async ({ page }) => {
+  await page.goto("/");
+  const sidebar = page.locator('[data-slot="sidebar-inner"]');
+  await sidebar.getByRole("button", { name: /Switch vault/ }).click();
+  await page.getByRole("menuitem", { name: "Manage vaults…" }).click();
+  await page.getByRole("textbox", { name: "New vault" }).fill("Archive test");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("button", { name: "Vault: Archive test. Switch vault" })).toBeVisible();
+
+  await sidebar.getByRole("button", { name: /Switch vault/ }).click();
+  await page.getByRole("menuitem", { name: "My vault" }).click();
+  await sidebar.getByRole("button", { name: /Switch vault/ }).click();
+  await page.getByRole("menuitem", { name: "Manage vaults…" }).click();
+
+  const testVault = page.getByRole("list", { name: "Vaults" }).getByRole("listitem").filter({ hasText: "Archive test" });
+  await testVault.getByRole("button", { name: "Archive" }).click();
+  await page.locator("#archive-vault-confirm").fill("Archive test");
+  await page.getByRole("button", { name: "Archive vault" }).click();
+  await expect(testVault).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await sidebar.getByRole("button", { name: /Switch vault/ }).click();
+  await expect(page.getByRole("menuitem", { name: "Archive test" })).toHaveCount(0);
+});
+
 test("a vault from before multi-vault is moved into place and opens with its notes", async ({ page }) => {
   // Same origin, before the app has run: lay out OPFS the way older builds did.
   await page.goto("/manifest.webmanifest");

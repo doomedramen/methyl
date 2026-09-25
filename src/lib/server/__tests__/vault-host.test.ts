@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "http";
 import type { AddressInfo } from "net";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { LoroDoc } from "loro-crdt";
@@ -84,7 +84,10 @@ describe("VaultHost", () => {
     const { base, ws } = await serve({ vaultsPath: root });
 
     const list = await fetch(`${base}/api/vaults`, { headers: auth }).then((r) => r.json());
-    expect(list).toEqual({ vaults: [{ id: "personal", ready: true }, { id: "work", ready: true }] });
+    expect(list).toEqual({
+      vaults: [{ id: "personal", ready: true }, { id: "work", ready: true }],
+      archivedVaults: [],
+    });
 
     await writeNote(`${ws}/sync/personal`, "doc:only-personal", "private");
     await waitFor(async () => (await changedIds(`${base}/api/v/personal/changes?after=0`)).includes("doc:only-personal"));
@@ -123,6 +126,46 @@ describe("VaultHost", () => {
     await waitFor(() => !host!.list().some((v) => v.id === "second"));
     expect((await fetch(`${base}/api/v/second/changes?after=0`, { headers: auth })).status).toBe(404);
   }, 15_000);
+
+  it("archives a server vault durably so discovery cannot list or recreate it", async () => {
+    const root = tempDir();
+    mkdirSync(join(root, "keep"));
+    mkdirSync(join(root, "retired"));
+    writeFileSync(join(root, "retired", "Note.md"), "preserve me\n");
+    const { base } = await serve({ vaultsPath: root });
+
+    const archived = await fetch(`${base}/api/vaults/retired`, { method: "DELETE", headers: auth });
+    expect(archived.status).toBe(200);
+    expect(await archived.json()).toEqual({ id: "retired", archived: true });
+
+    const listed = await fetch(`${base}/api/vaults`, { headers: auth }).then((res) => res.json()) as {
+      vaults: { id: string }[];
+      archivedVaults: string[];
+    };
+    expect(listed.vaults.map((vault) => vault.id)).toEqual(["keep"]);
+    expect(listed.archivedVaults).toContain("retired");
+    expect(readFileSync(join(root, ".methyl-server", "archived", "retired", "Note.md"), "utf8"))
+      .toBe("preserve me\n");
+
+    const recreated = await fetch(`${base}/api/vaults`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ id: "retired" }),
+    });
+    expect(recreated.status).toBe(409);
+
+    await new Promise<void>((resolve) => http!.close(() => resolve()));
+    await host!.stop();
+    http = null;
+    host = null;
+    const restarted = await serve({ vaultsPath: root });
+    const afterRestart = await fetch(`${restarted.base}/api/vaults`, { headers: auth }).then((res) => res.json()) as {
+      vaults: { id: string }[];
+      archivedVaults: string[];
+    };
+    expect(afterRestart.vaults.map((vault) => vault.id)).toEqual(["keep"]);
+    expect(afterRestart.archivedVaults).toContain("retired");
+  });
 
   it("a sync round through the per-vault URLs lands in that vault only", async () => {
     const root = tempDir();

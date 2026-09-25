@@ -192,9 +192,14 @@ address out (HTTP `429`); each further lockout doubles, up to 15 minutes.
 The browser can hold several vaults — separate sets of notes, all covered by one sync
 connection. Every local vault syncs in the background, and server vaults appear on every
 paired browser automatically. The vault name at the top of the sidebar switches between them;
-**Manage vaults…** (also in the command menu) creates, renames and deletes vaults, and imports a full backup
+**Manage vaults…** (also in the command menu) creates, renames and archives vaults, and imports a full backup
 (**Export full backup**) as a new vault. A vault's notes live at `/<vault id>/<note path>`
 in the app's URLs.
+
+Archiving hides a vault from active lists on paired browsers while preserving its files.
+The server copy is moved under `/vaults/.methyl-server/archived/<id>`; local browser copies
+are retained but hidden. To restore a server vault, stop Methyl, move its folder back to
+`/vaults/<id>`, and restart the container.
 
 The server starts with no vault folders. Pair a browser once in **Sync** settings. Methyl
 creates a server folder for each local vault and discovers existing server folders on every
@@ -202,12 +207,13 @@ paired browser. New folders added on disk are also picked up within a second or 
 server vault has its own sync database, change feed and watcher.
 
 To use an existing server folder, stop the server and place that folder under the vaults
-root (for example `/vaults/personal`), then start the server. The server never moves your
-folders itself. Pair a browser with the server; existing folders appear as local vaults.
+root (for example `/vaults/personal`), then start the server. Existing folders appear as
+local vaults after pairing. Only an explicit **Archive** action moves a folder, into the
+hidden server archive described above.
 
 Server API, per vault: `/api/v/<vault>/…` and the sync socket at `/sync/<vault>`;
-`GET /api/vaults` lists them. The old unprefixed `/api/…` routes still reach the
-`default` vault but are deprecated.
+`GET /api/vaults` lists active and archived IDs, and `DELETE /api/vaults/<id>` archives a vault.
+The old unprefixed `/api/…` routes still reach the `default` vault but are deprecated.
 
 ## Plugins
 

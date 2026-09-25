@@ -119,6 +119,7 @@ describe("device pairing", () => {
     expect((await fetch(`${base}/api/v/work/changes?after=0`, { headers: { cookie } })).status).toBe(403);
     expect(await fetch(`${base}/api/vaults`, { headers: { cookie } }).then((r) => r.json())).toEqual({
       vaults: [{ id: "personal", ready: true }],
+      archivedVaults: [],
     });
     expect((await fetch(`${base}/api/vaults`, {
       method: "POST",
@@ -131,6 +132,20 @@ describe("device pairing", () => {
     expect(again.status).toBe(200);
     expect((await fetch(`${base}/api/v/work/changes?after=0`, { headers: { cookie } })).status).toBe(200);
     expect(host!.devices.list()).toHaveLength(1);
+  });
+
+  it("only an admin or wildcard-paired browser can archive vaults", async () => {
+    const { base } = await serve();
+    const cookie = cookieFrom(await pair(base, ["personal"]));
+    expect((await fetch(`${base}/api/vaults/personal`, { method: "DELETE", headers: { cookie } })).status).toBe(403);
+
+    const wildcardCookie = cookieFrom(await pair(base, "*"));
+    const archived = await fetch(`${base}/api/vaults/personal`, { method: "DELETE", headers: { cookie: wildcardCookie } });
+    expect(archived.status).toBe(200);
+    const listing = await fetch(`${base}/api/vaults`, { headers: { cookie } }).then((res) => res.json());
+    expect(listing).toEqual({ vaults: [], archivedVaults: ["personal"] });
+
+    expect((await fetch(`${base}/api/vaults/work`, { method: "DELETE", headers: admin })).status).toBe(200);
   });
 
   it("a wildcard-paired browser can create server vaults for automatic sync", async () => {

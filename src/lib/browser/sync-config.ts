@@ -173,15 +173,16 @@ function bearer(token: string | undefined): Record<string, string> {
 /** The vaults a server offers this browser, or an error message. */
 export async function listServerVaults(
   config: Pick<SyncConfig, "serverUrl" | "authToken">,
-): Promise<{ ok: true; vaults: string[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; vaults: string[]; archivedVaults: string[] } | { ok: false; error: string }> {
   try {
     const { httpUrl } = deriveSyncUrls(config.serverUrl);
     const res = await fetch(`${httpUrl}/api/vaults`, { headers: bearer(config.authToken), credentials: "same-origin" });
     if (res.status === 401) return { ok: false, error: "Not paired with this server" };
     if (!res.ok) return { ok: false, error: `Server responded ${res.status} at /api/vaults` };
-    const body = (await res.json()) as { vaults?: { id?: unknown }[] };
+    const body = (await res.json()) as { vaults?: { id?: unknown }[]; archivedVaults?: unknown[] };
     const vaults = (body.vaults ?? []).map((v) => v.id).filter((id): id is string => typeof id === "string");
-    return { ok: true, vaults };
+    const archivedVaults = (body.archivedVaults ?? []).filter((id): id is string => typeof id === "string");
+    return { ok: true, vaults, archivedVaults };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -273,6 +274,21 @@ export async function ensureServerVault(options: { serverUrl: string; id: string
       const listed = await listServerVaults({ serverUrl: options.serverUrl });
       if (listed.ok && listed.vaults.includes(options.id)) return { ok: true, id: options.id };
     }
+    return { ok: false, error: await errorOf(res) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Archive a server folder without deleting its files. */
+export async function archiveServerVault(options: { serverUrl: string; id: string }): Promise<Result<{ id: string }>> {
+  try {
+    const { httpUrl } = deriveSyncUrls(options.serverUrl);
+    const res = await fetch(`${httpUrl}/api/vaults/${encodeURIComponent(options.id)}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    if (res.ok) return { ok: true, id: options.id };
     return { ok: false, error: await errorOf(res) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

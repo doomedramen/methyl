@@ -8,6 +8,8 @@ import {
   ensureVaultSyncIds,
   importVaultFiles,
   loadRegistry,
+  markVaultArchived,
+  markVaultRestored,
   migrateLegacyVaultRoot,
   rememberVault,
   renameVault,
@@ -102,6 +104,23 @@ describe("vault registry", () => {
     const assigned = await ensureVaultSyncIds(fs, { [DEFAULT_VAULT_ID]: "legacy-default", [oldVault.id]: "personal" });
     expect(assigned.find((vault) => vault.id === DEFAULT_VAULT_ID)?.syncId).toBe("legacy-default");
     expect(assigned.find((vault) => vault.id === oldVault.id)?.syncId).toBe("personal");
+  });
+
+  it("keeps archived vault files but does not reopen them from their old URL", async () => {
+    const fs = new MemoryVaultFS();
+    const home = await resolveVault(fs, "/");
+    const work = await createVault(fs, "Work");
+    await fs.writeFile(`${vaultDir(work.id)}/Note.md`, text("preserved"));
+
+    await markVaultArchived(fs, work.id, 1234);
+
+    expect((await loadRegistry(fs)).find((vault) => vault.id === work.id)?.archivedAt).toBe(1234);
+    expect(await fs.readTextFile(`${vaultDir(work.id)}/Note.md`)).toBe("preserved");
+    expect((await resolveVault(fs, `/${work.id}/Note.md`)).id).toBe(home.id);
+
+    await markVaultRestored(fs, work.id);
+    expect((await loadRegistry(fs)).find((vault) => vault.id === work.id)?.archivedAt).toBeUndefined();
+    expect((await resolveVault(fs, `/${work.id}/Note.md`)).id).toBe(work.id);
   });
 
   it("imports a backup's files into a new vault, ignoring unsafe paths", async () => {

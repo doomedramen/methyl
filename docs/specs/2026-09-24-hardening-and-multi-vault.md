@@ -172,7 +172,7 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 ```text
 OPFS root
 └── methyl/
-    ├── vaults.json            registry: [{id, name, syncId?, createdAt}]
+    ├── vaults.json            registry: [{id, name, syncId?, createdAt, archivedAt?}]
     └── vaults/
         └── <vaultId>/         what "adhd-vault/" holds today
             ├── <notes and folders>
@@ -183,13 +183,14 @@ OPFS root
 - One tab has one vault open. Different tabs can have different vaults open, each with its own writer lock.
 - The URL carries the vault: `/v/<vaultId>/<note path>`. `src/app/[...slug]/page.tsx` already catches all paths. Bare `/` opens the last-used vault.
 
-**Browser UI.** A vault switcher at the top of the sidebar (`AppSidebar.tsx`), and in the command menu (*Switch vault*, *New vault*, *Rename vault*, *Delete vault*). Deleting a vault requires typing its name, and offers a full-backup export (item 2) first. The Obsidian importer gains *Import into a new vault*.
+**Browser UI.** A vault switcher at the top of the sidebar (`AppSidebar.tsx`), and in the command menu (*Switch vault*, *New vault*, *Rename vault*, *Archive vault*). Archiving requires typing the vault name, hides it from active lists, and preserves its files. The Obsidian importer gains *Import into a new vault*.
 
 **Server layout.**
 
 ```text
 /vaults                     METHYL_VAULTS_PATH (new)
 ├── .methyl-server/         server-level state: server.db (devices, tickets)
+│   └── archived/<id>/      archived server vaults, hidden from discovery
 ├── personal/               a vault
 │   ├── <notes and folders>
 │   └── .methyl/server/     that vault's SQLite db and assets (was .adhd/server/)
@@ -218,11 +219,12 @@ OPFS root
 
 - The tree room is `vault:local` in every server vault (`src/lib/sync/rooms.ts`). Each server vault is its own room namespace, so the tree room needs no vault id, and `vault:local` is what every existing server database already holds. Browser vaults join it whatever their local id.
 - A browser origin has one shared server URL and device pairing. Pairing grants access to every server vault. Each browser tab starts a sync host for every registered local vault it can hold a writer lock for; another tab handles vaults already open elsewhere. Remote server folders are registered locally, while local vaults create matching folders automatically. Existing per-vault `remoteVaultId` values migrate into stable registry `syncId` values; the old default vault maps to `default`.
+- Archiving a synced vault requires a wildcard-paired browser, moves the server folder into `.methyl-server/archived/<id>`, and marks the local registry entry archived. `GET /api/vaults` reports archived IDs separately so other paired browsers hide cached copies instead of rediscovering them. Archived files are retained; moving the folder back to `/vaults/<id>` restores it.
 - New local vaults use a normalized name as their initial `syncId`. Renaming a vault keeps its `syncId`, so the server folder remains stable. Remote-only folders appear as local vaults on every paired browser.
 - `backup`/`restore` take `--vault <id>` in multi-vault mode.
 - Per-vault device authorisation and `.methyl-server/server.db` came with item 5.
 
-**Acceptance.** Unit tests for registry IDs, per-vault key namespacing, wildcard pairing and migration (including a crash between copy and delete, then rerun). Server test with two vaults: edits in one never show up in the other's changes feed; limited device grants still receive 403 outside their grant. Browser tests cover a second local vault, server discovery and background sync, persistence after reload, and writer locks across tabs. Add a multi-vault section to SPEC.md and fix the `TODO.md` reference.
+**Acceptance.** Unit tests for registry IDs, per-vault key namespacing, wildcard pairing, durable server vault archives and migration (including a crash between copy and delete, then rerun). Server test with two vaults: edits in one never show up in the other's changes feed; limited device grants still receive 403 outside their grant or archive access. Browser tests cover a second local vault, server discovery and background sync, archived vaults staying hidden after reload, persistence after reload, and writer locks across tabs. Add a multi-vault section to SPEC.md and fix the `TODO.md` reference.
 
 ---
 

@@ -32,9 +32,11 @@ import {
   loadSyncConfig,
   saveSyncConfig,
   clearSyncConfig,
+  archiveServerVault,
   deriveSyncUrls,
   describeThisDevice,
   loadLegacyVaultSyncIds,
+  listServerVaults,
   testSyncConnection,
 } from "@/lib/browser/sync-config";
 import { shouldSeedWelcomeNote } from "@/lib/browser/vault";
@@ -135,6 +137,34 @@ describe("sync config store", () => {
       httpUrl: "http://localhost:8090",
       apiUrl: "http://localhost:8090/api/v/work",
       wsUrl: "ws://localhost:8090/sync/work",
+    });
+  });
+
+  it("lists archived server vault IDs separately from active vaults", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ vaults: [{ id: "work" }], archivedVaults: ["retired"] }),
+    })));
+
+    await expect(listServerVaults({ serverUrl: "https://adhd.example.com" })).resolves.toEqual({
+      ok: true,
+      vaults: ["work"],
+      archivedVaults: ["retired"],
+    });
+  });
+
+  it("archives a server vault using the paired browser cookie", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(archiveServerVault({ serverUrl: "https://adhd.example.com", id: "work" })).resolves.toEqual({
+      ok: true,
+      id: "work",
+    });
+    expect(fetchMock).toHaveBeenCalledWith("https://adhd.example.com/api/vaults/work", {
+      method: "DELETE",
+      credentials: "same-origin",
     });
   });
 
