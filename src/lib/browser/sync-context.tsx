@@ -77,11 +77,20 @@ export function SyncProvider({
     onRemoteChangeRef.current = onRemoteChange;
   }, [onRemoteChange]);
 
+  // Settings saved before the vault finished opening: the shell (and so
+  // the Sync dialog) renders before the engine exists, and the config is
+  // stored per vault. Persist them once the vault is known instead of
+  // letting the load below replace them with "not set up".
+  const pendingSaveRef = useRef<SyncConfig | null>(null);
+
   useEffect(() => {
+    if (!engine) return;
+    const pending = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    if (pending) saveSyncConfig(pending, engine.vaultId);
     // localStorage only exists in the browser, so the saved config is read
     // after hydration rather than during the server render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setConfig(engine ? loadSyncConfig(engine.vaultId) : null);
+    setConfig(pending ?? loadSyncConfig(engine.vaultId));
   }, [engine]);
 
   // A read-only tab is promoted to writer in place (§12) — the `engine`
@@ -197,12 +206,14 @@ export function SyncProvider({
 
   const save = useCallback((next: SyncConfig) => {
     if (engine) saveSyncConfig(next, engine.vaultId);
+    else pendingSaveRef.current = next;
     setConfig(next);
   }, [engine]);
 
   const disconnect = useCallback(() => {
     hostRef.current?.stop();
     hostRef.current = null;
+    pendingSaveRef.current = null;
     if (engine) clearSyncConfig(engine.vaultId);
     setConfig(null);
     setStatus({ kind: "idle" });
