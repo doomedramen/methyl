@@ -321,6 +321,14 @@ Every test passed unchanged except one path in `legacy-name.test.ts`'s allow-lis
 4. Check focus order and focus return for every dialog and sheet. Check sidebar tree semantics (`role="tree"`, `aria-expanded`, arrow-key navigation).
 5. A manual pass with VoiceOver (macOS and iOS), recorded in the device checklist from 7.1.
 
+**As built.**
+
+1. `e2e/a11y.spec.ts` runs axe (WCAG 2.1 A/AA) on the seven screens listed; all pass with no serious or critical violations. Fixed on the way: close buttons inside the open-notes tablist (Delete now closes the focused tab, and the × is pointer-only, per the WAI-ARIA tabs pattern); sidebar rows that were a `role="button"` wrapping buttons (keyboard drags now start from a handle that shows on focus); the editor's unnamed textbox; a separator inside the command menu's listbox.
+2. `e2e/keyboard-only.spec.ts` creates a folder and a note, renames and moves the note, splits the pane and switches vaults with keys only, and checks that the command menu, a row's actions menu, the rename dialog and sync settings return focus when closed. It found one real gap: a note created from the command menu left focus on the page, not in the new note. Creating a note now focuses the editor.
+3. *Move to…* (`MoveToDialog.tsx`): in every sidebar row's actions and context menus, and as *Note: Move to…* in the command menu for the open note. It lists the vault root and every folder, leaving out the item's own subtree.
+4. Focus return is covered by the e2e above. **Sidebar tree semantics:** the sidebar stays a list of disclosure buttons (`aria-expanded` on folders) rather than `role="tree"`. A treeitem can't contain interactive children, and every row has an actions button and a drag handle. Arrow-key navigation between rows is in `TODO.md`.
+5. VoiceOver and TalkBack are steps 21–22 of `docs/qa/device-checklist.md` (real devices, maintainer).
+
 ### 7.3 Editor features (item 18)
 
 Build these in this order; each is its own PR with unit tests for the CodeMirror extension and one e2e test:

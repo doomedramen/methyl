@@ -21,7 +21,7 @@ import type { App, NoteContext, NoteCreationOptions } from "@/lib/plugins/api";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSync } from "@/lib/browser/sync-context";
 import { useTheme } from "next-themes";
-import { Archive, Download, Laptop, Library, Puzzle } from "lucide-react";
+import { Archive, Download, FolderInput, Laptop, Library, Puzzle } from "lucide-react";
 import { APP_THEMES } from "@/lib/themes";
 import { BUNDLED_PLUGINS } from "@/plugins";
 import {
@@ -47,6 +47,7 @@ export function VaultPluginBridge({
   onManagePlugins,
   onManageTemplates,
   onOpenTemplatePicker,
+  onMoveActiveNote,
   activeNote,
   focusedTabId,
   onOpenNote,
@@ -61,6 +62,8 @@ export function VaultPluginBridge({
   /** Opens `PluginsDialog` (Task 11); a no-op until that dialog exists. */
   onManagePlugins?: () => void;
   onManageTemplates?: () => void;
+  /** Open "Move to…" for the open note. */
+  onMoveActiveNote?: () => void;
   onOpenTemplatePicker?: () => void;
   /** The note in the focused workspace tab. */
   activeNote: NoteContext | null;
@@ -299,6 +302,13 @@ export function VaultPluginBridge({
         callback: () => void downloadVaultExport("full"),
       }),
       commandRegistry.add("core-commands", {
+        id: "move-note",
+        name: "Note: Move to…",
+        icon: FolderInput,
+        keywords: ["move", "folder", "file"],
+        callback: () => onMoveActiveNote?.(),
+      }),
+      commandRegistry.add("core-commands", {
         id: "manage-plugins",
         name: "Plugins: Manage",
         icon: Puzzle,
@@ -320,7 +330,7 @@ export function VaultPluginBridge({
       }),
     ];
     return () => disposers.forEach((dispose) => dispose());
-  }, [commandRegistry, onManagePlugins, setTheme]);
+  }, [commandRegistry, onManagePlugins, onMoveActiveNote, setTheme]);
 
   // Dispatch registered command hotkeys (Command.hotkeys, via
   // PluginHost.hotkeys) globally. ⌘K itself stays hard-wired inside

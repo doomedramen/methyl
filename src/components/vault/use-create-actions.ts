@@ -81,13 +81,17 @@ export function useCreateActions({
       // -> Untitled 2.md -> ...), so it's always safe to ask for the same
       // base name.
       const doc = engine.createDocument(parentTreeId, options.name ?? "Untitled.md", options.markdown ?? "");
-      openDocument(doc.id);
+      const tabId = openDocument(doc.id);
+      // Put the cursor in the new note (once any menu or dialog that asked
+      // for it has closed), so typing can start straight away — a keyboard
+      // user would otherwise have to tab back to the editor.
+      if (tabId) setEditorFocusRequest({ nonce: ++captureRequestNonce.current, tabId });
       void engine.persistTreeIncremental();
       void engine.persistDocumentIncremental(doc.id);
       refreshNotes(engine);
       return doc.id;
     },
-    [engine, openDocument, refreshNotes, requireWriter],
+    [engine, openDocument, refreshNotes, requireWriter, setEditorFocusRequest],
   );
 
   const openTemplates = useCallback((mode: TemplateDialogMode, parentTreeId?: TreeID) => {

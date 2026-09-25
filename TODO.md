@@ -51,6 +51,11 @@ described in README.md and SPEC.md §33.
       [docs/upstream/loro-codemirror-first-edit.md](docs/upstream/loro-codemirror-first-edit.md);
       it needs filing at loro-dev/loro-codemirror, and the link recorded here.
 
+- [ ] **Arrow keys in the sidebar.** Rows are reached with Tab (note, actions,
+      drag handle); Up/Down between rows would help. A true `role="tree"` would need
+      each row's actions moved into its context menu, since a treeitem can't contain
+      buttons (spec item 17).
+
 ## Editor polish
 
 - [ ] Slash (`/`) menu: headings, lists, tables, code blocks, date.

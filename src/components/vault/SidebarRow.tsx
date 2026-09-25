@@ -9,6 +9,7 @@ import {
   Folder,
   FolderOpen,
   FileText,
+  FolderInput,
   FolderPlus,
   MoreHorizontal,
   Paperclip,
@@ -33,6 +34,7 @@ import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from "@/compone
 import { cn } from "@/lib/utils";
 import type { CreateHandler } from "./create-actions";
 import { countDescendants, formatPlacementLabel, type SidebarPlacement } from "./sidebar-dnd";
+import type { MoveItem } from "./MoveToDialog";
 import { afterDropId, type BinaryRow, type FlatRow, type FolderRow, type NoteRow, type SidebarRow } from "./sidebar-rows";
 
 /** One sidebar row (note, folder or attachment), with its menus, and the drag visuals. */
@@ -110,6 +112,7 @@ interface RowProps {
   onDeleteFolderRequest: (row: FolderRow) => void;
   onRenameAssetRequest: (row: BinaryRow) => void;
   onDeleteAssetRequest: (row: BinaryRow) => void;
+  onMoveRequest: (item: MoveItem) => void;
 }
 
 export function Row({
@@ -131,6 +134,7 @@ export function Row({
   onDeleteFolderRequest,
   onRenameAssetRequest,
   onDeleteAssetRequest,
+  onMoveRequest,
 }: RowProps) {
   const { row, depth } = flat;
   const { attributes, listeners, setNodeRef: setDragRef, setActivatorNodeRef } = useDraggable({
@@ -231,6 +235,10 @@ export function Row({
                       <FolderPlus data-icon="inline-start" />
                       New folder
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onMoveRequest({ treeId: row.treeId, name: row.name })}>
+                      <FolderInput data-icon="inline-start" />
+                      Move to…
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onRenameFolderRequest(row)}>
                       <Pencil data-icon="inline-start" />
                       Rename
@@ -259,6 +267,10 @@ export function Row({
             <ContextMenuItem onClick={() => onRequestNewFolder(row.treeId)}>
               <FolderPlus data-icon="inline-start" />
               New folder
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onMoveRequest({ treeId: row.treeId, name: row.name })}>
+              <FolderInput data-icon="inline-start" />
+              Move to…
             </ContextMenuItem>
             <ContextMenuItem onClick={() => onRenameFolderRequest(row)}>
               <Pencil data-icon="inline-start" />
@@ -317,6 +329,10 @@ export function Row({
                     }
                   />
                   <DropdownMenuContent align="start" side="right">
+                    <DropdownMenuItem onClick={() => onMoveRequest({ treeId: asset.treeId, name: asset.title })}>
+                      <FolderInput data-icon="inline-start" />
+                      Move to…
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onRenameAssetRequest(asset)}>
                       <Pencil data-icon="inline-start" />
                       Rename
@@ -331,6 +347,10 @@ export function Row({
             }
           />
           <ContextMenuContent>
+            <ContextMenuItem onClick={() => onMoveRequest({ treeId: asset.treeId, name: asset.title })}>
+              <FolderInput data-icon="inline-start" />
+              Move to…
+            </ContextMenuItem>
             <ContextMenuItem onClick={() => onRenameAssetRequest(asset)}>
               <Pencil data-icon="inline-start" />
               Rename
@@ -392,6 +412,10 @@ export function Row({
                   }
                 />
                 <DropdownMenuContent align="start" side="right">
+                  <DropdownMenuItem onClick={() => onMoveRequest({ treeId: note.treeId, name: note.title })}>
+                    <FolderInput data-icon="inline-start" />
+                    Move to…
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => onRenameNoteRequest(note)}>
                     <Pencil data-icon="inline-start" />
                     Rename
@@ -409,6 +433,10 @@ export function Row({
           }
         />
         <ContextMenuContent>
+          <ContextMenuItem onClick={() => onMoveRequest({ treeId: note.treeId, name: note.title })}>
+            <FolderInput data-icon="inline-start" />
+            Move to…
+          </ContextMenuItem>
           <ContextMenuItem onClick={() => onRenameNoteRequest(note)}>
             <Pencil data-icon="inline-start" />
             Rename

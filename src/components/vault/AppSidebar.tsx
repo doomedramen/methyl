@@ -53,6 +53,7 @@ import {
   type NoteRow,
   type SidebarRow,
 } from "./sidebar-rows";
+import type { MoveItem } from "./MoveToDialog";
 import { DragPreview, EmptyFolderRow, FolderAfterDropZone, Row } from "./SidebarRow";
 import { sidebarCollisionDetection, useSidebarDnd } from "./use-sidebar-dnd";
 
@@ -76,6 +77,8 @@ interface AppSidebarProps {
   onRenameAsset: (treeId: TreeID, name: string) => void;
   onDeleteAsset: (treeId: TreeID) => void;
   onMove: (target: MoveTarget) => void;
+  /** Open the "Move to…" folder picker for a row. */
+  onRequestMove: (item: MoveItem) => void;
   onOpenCommandMenu: () => void;
   pluginFeatures: PluginFeatures;
   collection: LibraryCollection | null;
@@ -100,6 +103,7 @@ export function AppSidebar({
   onRenameAsset,
   onDeleteAsset,
   onMove,
+  onRequestMove,
   onOpenCommandMenu,
   pluginFeatures,
   collection,
@@ -382,6 +386,7 @@ export function AppSidebar({
                         onDeleteFolderRequest={setDeleteFolderTarget}
                         onRenameAssetRequest={setRenameAssetTarget}
                         onDeleteAssetRequest={setDeleteAssetTarget}
+                        onMoveRequest={onRequestMove}
                       />
                     ),
                   )}

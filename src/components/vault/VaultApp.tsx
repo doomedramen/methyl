@@ -60,6 +60,8 @@ import { useOsEntryPoints } from "./use-os-entry-points";
 import { useTreeActions } from "./use-tree-actions";
 import { VaultHeader } from "./VaultHeader";
 
+import { MoveToDialog, type MoveItem } from "./MoveToDialog";
+
 export { forwardingApp } from "./VaultPluginBridge";
 /**
  * The graph editor (ReactFlow ~100KB+) and the command palette (cmdk) are
@@ -93,6 +95,7 @@ export function VaultApp() {
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [moveItem, setMoveItem] = useState<MoveItem | null>(null);
   const [pluginsDialogOpen, setPluginsDialogOpen] = useState(false);
   const [obsidianImportOpen, setObsidianImportOpen] = useState(false);
   const [saveRequest, setSaveRequest] = useState<{ nonce: number; documentId: string } | null>(null);
@@ -313,6 +316,7 @@ export function VaultApp() {
     quickSwitcherOpen ||
     backlinksOpen ||
     newFolderOpen ||
+    moveItem !== null ||
     pluginsDialogOpen ||
     obsidianImportOpen ||
     templateDialogMode !== null;
@@ -333,6 +337,14 @@ export function VaultApp() {
     ? { documentId: activeId, isGraph: activeNote?.isGraph ?? false }
     : null;
   const isWriterTab = Boolean(engine?.releaseWriterLock);
+  const moveActiveNote = useCallback(() => {
+    const node = activeId && engine ? engine.tree.findByDocumentId(activeId) : null;
+    if (!node) {
+      toast("Open a note to move it.");
+      return;
+    }
+    setMoveItem({ treeId: node.treeId, name: notes.find((n) => n.id === activeId)?.title ?? node.name });
+  }, [activeId, engine, notes]);
   const searchNotes = useCallback(
     (query: string, limit?: number) => engine?.search(query, limit) ?? [],
     [engine],
@@ -481,6 +493,7 @@ export function VaultApp() {
       onManagePlugins={() => setPluginsDialogOpen(true)}
       onManageTemplates={() => openTemplates("manage")}
       onOpenTemplatePicker={() => openTemplates("create")}
+      onMoveActiveNote={moveActiveNote}
     >{(pluginFeatures) => (
       <>
       <AppSidebar
@@ -499,6 +512,7 @@ export function VaultApp() {
         onRenameAsset={onRenameAsset}
         onDeleteAsset={onDeleteAsset}
         onMove={onMove}
+        onRequestMove={setMoveItem}
         onOpenCommandMenu={() => setCommandOpen(true)}
         pluginFeatures={pluginFeatures}
         collection={focusedCollection}
@@ -570,6 +584,12 @@ export function VaultApp() {
           onCreate={onCreate}
         />
       )}
+      <MoveToDialog
+        item={moveItem}
+        rows={rows}
+        onOpenChange={(open) => !open && setMoveItem(null)}
+        onMove={(target) => void onMove(target)}
+      />
       <PluginsDialog open={pluginsDialogOpen} onOpenChange={setPluginsDialogOpen} />
       <ObsidianImportDialog
         open={obsidianImportOpen}
