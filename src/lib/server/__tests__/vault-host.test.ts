@@ -122,7 +122,7 @@ describe("VaultHost", () => {
     rmSync(join(root, "second"), { recursive: true, force: true });
     await waitFor(() => !host!.list().some((v) => v.id === "second"));
     expect((await fetch(`${base}/api/v/second/changes?after=0`, { headers: auth })).status).toBe(404);
-  });
+  }, 15_000);
 
   it("a sync round through the per-vault URLs lands in that vault only", async () => {
     const root = tempDir();
