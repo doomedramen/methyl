@@ -149,6 +149,8 @@ All of section 3 applies to `src/lib/server/sync-server.ts`, `src/server/main.ts
 
 **Acceptance.** Issue link in code and `TODO.md`.
 
+**As built.** The standalone repro is `docs/upstream/loro-codemirror-first-edit.mjs` (Node + jsdom, public `LoroSyncPlugin` only; exits 1 while the bug exists), and the issue text, with the cause and a one-line fix, is `docs/upstream/loro-codemirror-first-edit.md`. The code comment in `NoteEditor.tsx`, the repro test and `TODO.md` point to it. **Filing is left to the maintainer**: it posts to another project, so the link in code and `TODO.md` gets filled in once it's filed.
+
 ### 4.3 Multiple vault support (item 9)
 
 **Problem.** Everything assumes one vault. The browser uses one fixed OPFS root (`ROOT_KEY = "adhd-vault"`, `src/lib/vault/opfs.ts:4`). The server takes one `METHYL_VAULT_PATH` (`src/server/main.ts:9`), and rooms, change log and assets share one namespace. `TODO.md` says SPEC covers multi-vault, but it doesn't.

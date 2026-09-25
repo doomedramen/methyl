@@ -47,6 +47,9 @@ described in README.md and SPEC.md §33.
 - [ ] **Upstream bug not reported:** `loro-codemirror`'s `LoroSyncPluginValue`
       swallows the first view update when the initial content already matches
       (worked around in `NoteEditor.tsx`). Repro: `loro-codemirror-swallow.test.ts`.
+      The issue is drafted, with a standalone repro, in
+      [docs/upstream/loro-codemirror-first-edit.md](docs/upstream/loro-codemirror-first-edit.md);
+      it needs filing at loro-dev/loro-codemirror, and the link recorded here.
 
 ## Editor polish
 

@@ -268,7 +268,9 @@ export function NoteEditor({
         // reload. Consuming the flag ourselves, right after mount, on a
         // harmless no-op dispatch — scheduled after the plugin's own
         // microtask so it "wins" the swallow instead of a real edit —
-        // fixes this without patching the vendored package.
+        // fixes this without patching the vendored package. Upstream report
+        // (to file): docs/upstream/loro-codemirror-first-edit.md. Remove this
+        // once fixed; loro-codemirror-swallow.test.ts starts failing then.
         Promise.resolve().then(() => {
           if (disposed || !view) return;
           view.dispatch({ selection: view.state.selection });
