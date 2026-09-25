@@ -177,6 +177,9 @@ export function NoteEditor({
           onPersistStart: () => callbacksRef.current.onPersisting?.(documentId),
           onPersistError: () => callbacksRef.current.onSaveError?.(documentId),
         });
+        // The document can finish loading after the placeholder was written;
+        // EditorView appends to its parent, so remove that text before mounting.
+        host.replaceChildren();
         view = new EditorView({
           parent: host,
           state: EditorState.create({
